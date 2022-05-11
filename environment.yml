@@ -1,0 +1,19 @@
+name: killscreen
+channels:
+  - conda-forge
+dependencies:
+  - python=3.9
+  - boto3
+  - cytoolz
+  - dustgoggles
+  - fire
+  - flask
+  - pandas
+  - pip
+  - requests
+  - rich
+  - sh
+
+
+
+
