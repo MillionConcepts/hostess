@@ -77,6 +77,9 @@ class Viewer:
         self.process = command
         if isinstance(command, sh.RunningCommand):
             self._populate_from_running_command()
+        elif isinstance(command, partial):
+            if isinstance(command.func, sh.RunningCommand):
+                self._populate_from_running_command()
         self.host = _host
 
     process = None
@@ -95,7 +98,7 @@ class Viewer:
     _pid_records = None
 
     def _populate_from_running_command(self):
-        self.initialized = True
+        self._initialized = True
         self.pid = self.process.pid
         self.cmd = " ".join([token.decode() for token in self.process.cmd])
         self.kill = self.process.kill
