@@ -183,6 +183,7 @@ class Netstat:
             else:
                 self.interval[interface] = bytes_ - self.last[interface]
                 self.total[interface] += self.interval[interface]
+                self.last[interface] = bytes_
 
     def __repr__(self):
         return str(self.absolute)
