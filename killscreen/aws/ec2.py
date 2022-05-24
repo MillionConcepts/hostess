@@ -1,11 +1,10 @@
+from functools import cache, wraps
 import re
 import time
-from functools import cache, partial, wraps
-from typing import Union, Collection, Literal, List, Sequence
+from typing import Union, Collection, Literal, Sequence
 
-import sh
 from cytoolz import concat
-from sh import RunningCommand
+import sh
 
 from killscreen.aws.utilities import tag_dict, init_client, init_resource
 import killscreen.shortcuts as ks
@@ -13,9 +12,10 @@ from killscreen.ssh import (
     jupyter_connect,
     wrap_ssh,
     ssh_key_add,
-    find_conda_env, interpret_command,
+    find_conda_env,
+    interpret_command,
 )
-from killscreen.subutils import Viewer, run, Processlike, Commandlike
+from killscreen.subutils import Viewer, Processlike, Commandlike
 
 
 def ls_instances(
@@ -36,14 +36,7 @@ def ls_instances(
     return tuple(concat(res["Instances"] for res in instances["Reservations"]))
 
 
-def descriptions_from_ips(ips, client=None, session=None):
-    client = init_client("ec2", client, session)
-    return ls_instances(
-        client, raw_filters=[{"Name": "ip-address", "Values": ips}]
-    )
-
-
-def instance_description_dict(
+def describe(
     tag_filters=None,
     states=("running",),
     raw_filters=None,
@@ -51,7 +44,7 @@ def instance_description_dict(
     session=None,
 ):
     """
-    dict of key:description for all instances accessible to aws user
+    return dict of key:description for all instances accessible to aws user
     with tags matching tag_filters (using simple string inclusion for now)
     and state in states. post-filters on the tag filters so that we can use
     string inclusion rather than exact matching (which the ec2 api does not
@@ -91,7 +84,7 @@ def instance_ips(
     string inclusion rather than exact matching (which the ec2 api does not
     support).
     """
-    descriptions = instance_description_dict(
+    descriptions = describe(
         tag_filters, states, raw_filters, client, session
     )
     return {
@@ -114,7 +107,7 @@ def instance_ids(
     string inclusion rather than exact matching (which the ec2 api does not
     support).
     """
-    descriptions = instance_description_dict(
+    descriptions = describe(
         tag_filters, states, raw_filters, client, session
     )
     return tuple(descriptions.keys())
@@ -149,7 +142,12 @@ class Instance:
             # if it's got periods in it, assume it's a public IPv4 address
             if "." in description:
                 client = init_client("ec2", client, session)
-                instance_id = descriptions_from_ips([description], client)[0]
+                instance_id = ls_instances(
+                    raw_filters=[
+                        {"Name": "ip-address", "Values": [description]}
+                    ],
+                    client=client
+                )
             # otherwise assume it's the instance id
             else:
                 instance_id = description
@@ -173,10 +171,6 @@ class Instance:
         self.zone = instance_.placement["AvailabilityZone"]
         self.key, self.uname = key, uname
         self.instance_ = instance_
-        self._command = wrap_ssh(self.ip, self.key, self.uname)
-
-    def initialize_command(self, ip, key, uname):
-        self.ip, self.key, self.uname = ip, key, uname
         self._command = wrap_ssh(self.ip, self.key, self.uname)
 
     @wraps(interpret_command)
@@ -231,7 +225,7 @@ class Instance:
     def update(self):
         self.instance_.load()
         self.ip = self.instance_.public_ip_address
-        self.command = wrap_ssh(self.ip, self.key, self.uname)
+        self._command = wrap_ssh(self.ip, self.key, self.uname)
 
     def wait_until_running(self, update=True):
         if self.state == "running":
