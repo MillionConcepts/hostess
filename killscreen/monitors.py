@@ -85,6 +85,8 @@ class Stopwatch(FakeStopwatch):
         self.silent = silent
 
     def peek(self):
+        if self.last_time is None:
+            return 0
         return round(time.time() - self.last_time, self.digits)
 
     def start(self):
