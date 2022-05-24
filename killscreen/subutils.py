@@ -2,17 +2,16 @@
 helper functions for interacting with subprocesses, including the sh library
 """
 import re
+import time
 import warnings
 from functools import partial
 from multiprocessing import Pipe
-from operator import or_
 from pathlib import Path
-import time
 from typing import Sequence, Union
 
-from cytoolz import juxt, valfilter, first, last
 import sh
-from dustgoggles.func import zero, are_in
+from cytoolz import juxt, valfilter
+from dustgoggles.func import zero
 
 
 def append_write(path, text):
