@@ -103,6 +103,11 @@ class Stopwatch(FakeStopwatch):
             print(f"{self.peek()} elapsed seconds, restarting timer")
         self.last_time = time.time()
 
+    def total(self):
+        if self.last_time is None:
+            return 0
+        return round(time.time() - self.start_time, self.digits)
+
 
 class TimeSwitcher:
     """
