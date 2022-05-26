@@ -14,6 +14,10 @@ from killscreen.ssh import (
     ssh_key_add,
     find_conda_env,
     interpret_command,
+    scp_from,
+    scp_to,
+    scp_read,
+    scp_read_csv
 )
 from killscreen.subutils import Viewer, Processlike, Commandlike
 
@@ -206,6 +210,20 @@ class Instance:
         response = self.instance_.terminate()
         if return_response is True:
             return response
+
+    def add_key(self):
+        ssh_key_add(self.ip)
+
+    def get(self, source, target="."):
+        return scp_from(source, target, self.ip, self.uname, self.key)
+
+    def put(self, source, target="."):
+        return scp_to(source, target, self.ip, self.uname, self.key)
+
+    def read(self, source, as_csv=True):
+        if source.endswith("csv") and (as_csv is True):
+            return scp_read_csv(source, self.ip, self.uname, self.key)
+        return scp_read(source, self.ip, self.uname, self.key)
 
     @cache
     def conda_env(self, env):
