@@ -69,7 +69,22 @@ class LogMB:
 class FakeStopwatch:
     """fake simple timer object"""
 
+    def __init__(self, digits=2, silent=False):
+        self.digits = digits
+        self.last_time = None
+        self.start_time = None
+        self.silent = silent
+
+    def peek(self):
+        return
+
+    def start(self):
+        return
+
     def click(self):
+        return
+
+    def total(self):
         return
 
 
@@ -77,12 +92,8 @@ class Stopwatch(FakeStopwatch):
     """
     simple timer object
     """
-
     def __init__(self, digits=2, silent=False):
-        self.digits = digits
-        self.last_time = None
-        self.start_time = None
-        self.silent = silent
+        super().__init__(digits, silent)
 
     def peek(self):
         if self.last_time is None:
@@ -149,9 +160,8 @@ PROC_NET_DEV_FIELDS = (
 
 
 def catprocnetdev():
-    return subprocess.run(
-        ("cat", "/proc/net/dev"), stdout=subprocess.PIPE
-    ).stdout.decode()
+    with open("/proc/net/dev") as stream:
+        return stream.read()
 
 
 def parseprocnetdev(procnetdev, rejects=("lo",)):
@@ -172,11 +182,21 @@ def parseprocnetdev(procnetdev, rejects=("lo",)):
     return entries
 
 
-class Netstat:
-    # TODO: monitor TX as well as RX, etc.
+class FakeNetstat:
+    """fake simple network monitor."""
     def __init__(self, rejects=("lo",)):
         self.rejects = rejects
         self.absolute, self.last, self.interval, self.total = None, {}, {}, {}
+
+    def update(self):
+        return
+
+
+class Netstat(FakeNetstat):
+    """simple network monitor. works only on *nix at present."""
+    # TODO: monitor TX as well as RX, etc.
+    def __init__(self, rejects=("lo",)):
+        super().__init__(rejects)
         self.update()
 
     def update(self):
@@ -194,3 +214,4 @@ class Netstat:
 
     def __repr__(self):
         return str(self.absolute)
+
