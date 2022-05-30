@@ -109,6 +109,7 @@ def tunnel(ip, key, uname, local_port="8888", remote_port="8888"):
         f"{uname}@{ip}",
         "sleep infinity",
         _bg=True,
+        _host=ip
     )
 
 
@@ -117,21 +118,21 @@ def ssh_command(ip, key, uname):
     return sh.ssh.bake(f"-i{key}", f"{uname}@{ip}")
 
 
-def wrap_ssh(ip, key, uname):
+def wrap_ssh(ip, key, uname, caller=None):
     """baked ssh command for a server with extra management."""
     ssh = sh.ssh.bake(f"-i{key}", f"{uname}@{ip}")
+    caller = ip if caller is None else caller
 
     @wraps(interpret_command)
     def run_with_ssh(*args, **kwargs):
-        return interpret_command(ssh, ip, *args, **kwargs)
-
+        return interpret_command(ssh, *args, _host=caller, **kwargs)
     return run_with_ssh
 
 
 def interpret_command(
     interpreter,
-    host,
     *args,
+    _host=None,
     _viewer=False,
     _capture=True,
     _disown=False,
@@ -184,7 +185,7 @@ def interpret_command(
         return Viewer.from_command(
             interpreter,
             *command_args,
-            _host=host,
+            _host=_host,
             _handlers=_capture,
             _get_children=_get_children,
             _quit=_quit,
@@ -256,13 +257,16 @@ def jupyter_connect(
     )
     if kill_on_exit is True:
 
-        def done(_, __, ___):
+        def done(*_):
             jupyter_command("stop", f"--NbserverStopApp.port={remote_port}")
 
     else:
         done = zero
     jupyter_launch = Viewer.from_command(
-        jupyter_command, f"--port {remote_port} --no-browser", _done=done
+        jupyter_command,
+        f"--port {remote_port} --no-browser",
+        _done=done,
+        _host=ip
     )
     if get_token:
         token = get_jupyter_token(jupyter_command, remote_port)

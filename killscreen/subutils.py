@@ -203,7 +203,9 @@ class Viewer:
                     "can't do managed child process id (_get_children=True) "
                     "with no stream handlers (_handlers=False)."
                 )
-
+        # add new viewer to callback (for things like host introspection)
+        if "_done" in command_kwargs.keys():
+            command_kwargs["_done"] = partial(command_kwargs["_done"], viewer)
         if _handlers is True:
             if _get_children is True:
                 pid_records = []
@@ -224,7 +226,9 @@ class Viewer:
                     else:
                         out.append(message)
 
-                command_kwargs |= console_stream_handlers((handle_out,), (err,))
+                command_kwargs |= console_stream_handlers(
+                    (handle_out,), (err,)
+                )
                 command_args = list(command_args)
                 connector = re.match(r".*(;|&|\|)+ *$", command_args[-1])
                 if connector is not None:

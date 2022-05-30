@@ -1,10 +1,16 @@
+import io
+from collections import defaultdict
 from functools import cache, wraps
 import re
 import time
-from typing import Union, Collection, Literal, Sequence
+from pathlib import Path
+from typing import (
+    Union, Collection, Literal, Sequence, MutableMapping, Optional, Callable
+)
 
 from cytoolz import concat
 import sh
+from dustgoggles.func import zero
 
 from killscreen.aws.utilities import tag_dict, init_client, init_resource
 import killscreen.shortcuts as ks
@@ -175,7 +181,7 @@ class Instance:
         self.zone = instance_.placement["AvailabilityZone"]
         self.key, self.uname = key, uname
         self.instance_ = instance_
-        self._command = wrap_ssh(self.ip, self.key, self.uname)
+        self._command = wrap_ssh(self.ip, self.key, self.uname, self)
 
     @wraps(interpret_command)
     def command(self, *args, **kwargs) -> Union[Viewer, sh.RunningCommand]:
@@ -214,16 +220,54 @@ class Instance:
     def add_key(self):
         ssh_key_add(self.ip)
 
-    def get(self, source, target="."):
-        return scp_from(source, target, self.ip, self.uname, self.key)
+    def put(self, source, target, *args, _literal_str=False, **kwargs):
+        """
+        copy file from local disk or object from memory to target file on
+        instance using scp.
+        """
+        if isinstance(source, str) and (_literal_str is True):
+            source_file = "/dev/stdin"
+        elif not isinstance(source, (str, Path)):
+            source_file = "/dev/stdin"
+        else:
+            source_file = source
+        command_parts = [
+            f"-i{self.key}", source_file, f"{self.uname}@{self.ip}:{target}"
+        ]
+        if source_file == "/dev/stdin":
+            command_parts.append(source)
+        return interpret_command(
+            sh.scp, *command_parts, *args, _host=self, **kwargs
+        )
 
-    def put(self, source, target="."):
-        return scp_to(source, target, self.ip, self.uname, self.key)
+    def get(self, source, target, *args, **kwargs):
+        """copy source file from instance to local target file with scp."""
+        command_parts = [
+            f"-i{self.key}", f"{self.uname}@{self.ip}:{source}", target
+        ]
+        return interpret_command(
+            sh.scp, *command_parts, *args, _host=self, **kwargs
+        )
 
-    def read(self, source, as_csv=True):
-        if source.endswith("csv") and (as_csv is True):
-            return scp_read_csv(source, self.ip, self.uname, self.key)
-        return scp_read(source, self.ip, self.uname, self.key)
+    def read(self, source, *args, **kwargs):
+        """copy source file from instance into memory using scp."""
+        command_parts = [
+            f"-i{self.key}", f"{self.uname}@{self.ip}:{source}", "/dev/stdout"
+        ]
+        return interpret_command(
+            sh.scp, *command_parts, *args, _host=self, **kwargs
+        ).stdout
+
+    def read_csv(self, source, **csv_kwargs):
+        """
+        reads csv-like file from remote host into pandas DataFrame using scp.
+        """
+        import pandas as pd
+
+        buffer = io.StringIO()
+        buffer.write(self.read(source).decode())
+        buffer.seek(0)
+        return pd.read_csv(buffer, **csv_kwargs)
 
     @cache
     def conda_env(self, env):
@@ -243,7 +287,7 @@ class Instance:
     def update(self):
         self.instance_.load()
         self.ip = self.instance_.public_ip_address
-        self._command = wrap_ssh(self.ip, self.key, self.uname)
+        self._command = wrap_ssh(self.ip, self.key, self.uname, self)
 
     def wait_until_running(self, update=True):
         if self.state == "running":
@@ -317,6 +361,57 @@ class Cluster:
         if return_response is True:
             return responses
 
+    def gather_files(
+        self,
+        source_path,
+        target_path: str = ".",
+        process_states: Optional[
+            MutableMapping[str, Literal["running", "done"]]
+        ] = None,
+        callback: Callable = zero,
+        delay=0.02
+    ):
+        status = {
+            instance.instance_id: "ready" for instance in self.instances
+        }
+
+        def finish_factory(instance_id):
+            def finisher(*args, **kwargs):
+                status[instance_id] = transition_state
+                callback(*args, **kwargs)
+
+            return finisher
+
+        if process_states is None:
+            return {
+                instance.instance_id: instance.get(
+                    f"{source_path}/*", target_path, _bg=True, _viewer=True
+                )
+                for instance in self.instances
+            }
+        commands = defaultdict(list)
+
+        while any(s != "complete" for s in status.values()):
+            for instance in self.instances:
+                if status[instance.instance_id] in ("complete", "fetching"):
+                    continue
+                if process_states[instance.instance_id] == "done":
+                    transition_state = "complete"
+                else:
+                    transition_state = "ready"
+                status[instance.instance_id] = "fetching"
+                command = instance.get(
+                    f"{source_path}/*",
+                    target_path,
+                    _bg=True,
+                    _bg_exc=False,
+                    _viewer=True,
+                    _done=finish_factory(instance.instance_id)
+                )
+                commands[instance.instance_id].append(command)
+            time.sleep(delay)
+        return commands
+
     @classmethod
     def from_descriptions(cls, descriptions, *args, **kwargs):
         instances = [Instance(d, *args, **kwargs) for d in descriptions]
@@ -331,6 +426,7 @@ class Cluster:
         client=None,
         session=None,
         *instance_args,
+        wait=True,
         **instance_kwargs,
     ):
         client = init_client("ec2", client, session)
@@ -360,8 +456,10 @@ class Cluster:
         )
         cluster = Cluster(instances)
         cluster.fleet_request = fleet
+        if wait is False:
+            print("launched fleet; _wait=False passed, not checking status")
+            return cluster
         print("launched fleet; waiting until instances are running")
-        # TODO: make this asynchronous
         for instance in cluster.instances:
             instance.wait_until_running()
             print(f"{instance} is running")
