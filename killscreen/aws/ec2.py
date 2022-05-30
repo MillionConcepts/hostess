@@ -1,29 +1,25 @@
 import io
-from collections import defaultdict
-from functools import cache, wraps
 import re
 import time
+from collections import defaultdict
+from functools import cache, wraps
 from pathlib import Path
 from typing import (
     Union, Collection, Literal, Sequence, MutableMapping, Optional, Callable
 )
 
-from cytoolz import concat
 import sh
+from cytoolz import concat
 from dustgoggles.func import zero
 
-from killscreen.aws.utilities import tag_dict, init_client, init_resource
 import killscreen.shortcuts as ks
+from killscreen.aws.utilities import tag_dict, init_client, init_resource
 from killscreen.ssh import (
     jupyter_connect,
     wrap_ssh,
     ssh_key_add,
     find_conda_env,
-    interpret_command,
-    scp_from,
-    scp_to,
-    scp_read,
-    scp_read_csv
+    interpret_command
 )
 from killscreen.subutils import Viewer, Processlike, Commandlike
 
@@ -146,6 +142,7 @@ class Instance:
         client=None,
         resource=None,
         session=None,
+        use_private_ip=False
     ):
         resource = init_resource("ec2", resource, session)
         if isinstance(description, str):
@@ -167,8 +164,9 @@ class Instance:
             instance_id = description["InstanceId"]
         instance_ = resource.Instance(instance_id)
         self.instance_id = instance_id
-        if "public_ip_address" in dir(instance_):
-            self.ip = instance_.public_ip_address
+        self.address_type = "private" if use_private_ip is True else "public"
+        if f"{self.address_type}_ip_address" in dir(instance_):
+            self.ip = getattr(instance_, f"{self.address_type}_ip_address")
         self.instance_type = instance_.instance_type
         self.tags = tag_dict(instance_.tags)
         self.launch_time = instance_.launch_time
@@ -286,7 +284,7 @@ class Instance:
 
     def update(self):
         self.instance_.load()
-        self.ip = self.instance_.public_ip_address
+        self.ip = getattr(self.instance_, f"{self.address_type}_ip_address")
         self._command = wrap_ssh(self.ip, self.key, self.uname, self)
 
     def wait_until_running(self, update=True):
