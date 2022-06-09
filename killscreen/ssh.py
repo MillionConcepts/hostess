@@ -13,7 +13,6 @@ import warnings
 
 from dustgoggles.func import are_in, zero
 from dustgoggles.structures import listify, separate_by
-import pandas as pd
 import sh
 
 import killscreen.shortcuts as ks
@@ -89,6 +88,8 @@ def scp_merge_csv(server_dict, filename, username, ssh_key, **csv_kwargs):
     merges csv files -- logs, perhaps -- from across a defined group
     of remote servers.
     """
+    import pandas as pd
+
     framelist = []
     for name, ip in server_dict.items():
         csv_df = scp_read_csv(filename, ip, username, ssh_key, **csv_kwargs)
