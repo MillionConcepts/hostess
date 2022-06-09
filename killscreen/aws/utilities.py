@@ -53,14 +53,14 @@ def make_boto_session(profile=None, credential_file=None, region=None):
 
 
 def make_boto_client(
-    service, profile="default", credential_file=None, region=None
+    service, profile=None, credential_file=None, region=None
 ):
     session = make_boto_session(profile, credential_file, region)
     return session.client(service)
 
 
 def make_boto_resource(
-    service, profile="default", credential_file=None, region=None
+    service, profile=None, credential_file=None, region=None
 ):
     session = make_boto_session(profile, credential_file, region)
     return session.resource(service)
@@ -82,7 +82,7 @@ def init_resource(
     service: str,
     resource: Optional[boto3.resources.base.ServiceResource] = None,
     session: Optional[boto3.Session] = None,
-) -> botocore.client.BaseClient:
+):
     if resource is not None:
         return resource
     if session is not None:
