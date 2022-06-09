@@ -24,6 +24,7 @@ if LOG_DIR_PATH is None:
         "No writable log path found, logging will behave unpredictably"
     )
 
+
 def stamp() -> str:
     return f"{gethostname()} {dt.datetime.utcnow().isoformat()[:-7]}: "
 

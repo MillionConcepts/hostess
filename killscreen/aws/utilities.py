@@ -44,7 +44,7 @@ def read_aws_config_file(path):
     return parsed
 
 
-def make_boto_session(profile="default", credential_file=None, region=None):
+def make_boto_session(profile=None, credential_file=None, region=None):
     if credential_file is None:
         return boto3.Session(profile_name=profile, region_name=region)
     return boto3.Session(
