@@ -2,14 +2,14 @@
 import _io
 import datetime as dt
 import logging
+import os
 import re
-import sys
 from pathlib import Path
 from socket import gethostname
 
 import rich.console
-
-LOG_DIR_PATH = Path(Path(sys.modules["killscreen"].__file__).parent, "logs")
+os.path.expanduser(".")
+LOG_DIR_PATH = Path(os.path.expanduser("~/.killscreen"))
 
 if not LOG_DIR_PATH.exists():
     LOG_DIR_PATH.mkdir()
