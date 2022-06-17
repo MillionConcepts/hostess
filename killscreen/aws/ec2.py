@@ -9,6 +9,7 @@ from typing import (
 )
 
 import sh
+from botocore.exceptions import ClientError
 from cytoolz import concat
 from dustgoggles.func import zero
 
@@ -446,12 +447,26 @@ class Cluster:
             TagSpecifications=[{"Tags": tags}],
             Type="instant",
         )
-        instances = instances_from_ids(
-            fleet["Instances"][0]["InstanceIds"],
-            *instance_args,
-            client=client,
-            **instance_kwargs,
-        )
+
+        def instance_hook():
+            return instances_from_ids(
+                fleet["Instances"][0]["InstanceIds"],
+                *instance_args,
+                client=client,
+                **instance_kwargs,
+            )
+        instances = []
+        for _ in range(5):
+            try:
+                instances = instance_hook()
+                break
+            except ClientError as ce:
+                if "does not exist" in str(ce):
+                    time.sleep(0.2)
+            raise TimeoutError(
+                "launched instances successfully, but unable to run "
+                "DescribeInstances. Perhaps permissions are wrong."
+            )
         cluster = Cluster(instances)
         cluster.fleet_request = fleet
         if wait is False:
