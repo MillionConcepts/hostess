@@ -1,3 +1,4 @@
+import datetime as dt
 import io
 import json
 import sys
@@ -14,6 +15,7 @@ from typing import (
     Mapping,
     Callable,
     IO,
+    Any,
 )
 import warnings
 
@@ -185,7 +187,7 @@ def get(
     client: Optional[botocore.client.BaseClient] = None,
     session: Optional[boto3.Session] = None,
     config=None,
-) -> tuple[Union[Path, str, io.IOBase]]:
+) -> tuple[Union[Path, str, io.IOBase], Any]:
     # TODO: add more useful error messages for streams opened in text mode
     bucket = Bucket.bind(bucket, client, session)
     if config is None:
@@ -203,6 +205,7 @@ def get(
     return destination, response
 
 
+# TODO: scary, refactor
 def ls(
     bucket: Union[str, Bucket],
     prefix: str = "",
@@ -212,8 +215,9 @@ def ls(
     client: Optional[botocore.client.BaseClient] = None,
     session: Optional[boto3.Session] = None,
     start_after: str = "",
+    cache_only=False,
     config=None,
-) -> tuple[Union[Path, str, io.IOBase]]:
+) -> Union[tuple, "pd.DataFrame"]:
     # TODO: add more useful error messages for streams opened in text mode
     bucket = Bucket.bind(bucket, client, session)
     truncated = True
@@ -257,12 +261,18 @@ def ls(
             else:
                 stream = cache
             try:
-                json.dump(response.get("Contents"), stream)
+                contents = response['Contents']
+                if isinstance(contents[0].get("LastModified"), dt.datetime):
+                    for rec in contents:
+                        rec['LastModified'] = rec['LastModified'].isoformat()
+                json.dump(response["Contents"], stream)
                 if truncated is True:
                     stream.write(",\n")
             finally:
                 if isinstance(cache, Path):
                     stream.close()
+                if cache_only and (len(responses) > 2):
+                    del responses[0]
     if formatting == "raw":
         return responses
     contents, prefixes = [], []
