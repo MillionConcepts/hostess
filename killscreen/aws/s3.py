@@ -202,6 +202,8 @@ def get(
         response = bucket.client.download_file(
             bucket.name, key, destination, Config=config
         )
+    if "seek" in dir(destination):
+        destination.seek(0)
     return destination, response
 
 
@@ -240,10 +242,10 @@ def ls(
             response = list_objects(Delimiter="/")
             # try to automatically treat 'directories' as directories
             if (
-                ("Contents" not in response.keys())
-                and ("CommonPrefixes" in response.keys())
-                and not (prefix.endswith("/"))
-                and (prefix != "")
+                    ("Contents" not in response.keys())
+                    and ("CommonPrefixes" in response.keys())
+                    and not (prefix.endswith("/"))
+                    and (prefix != "")
             ):
                 response = list_objects(Prefix=f"{prefix}/", Delimiter="/")
         else:
@@ -262,12 +264,14 @@ def ls(
                 stream = cache
             try:
                 contents = response['Contents']
+                if len(responses) == 1:
+                    stream.write(
+                        ",".join([k for k in contents[0].keys()]) + "\n"
+                    )
                 if isinstance(contents[0].get("LastModified"), dt.datetime):
                     for rec in contents:
                         rec['LastModified'] = rec['LastModified'].isoformat()
-                json.dump(response["Contents"], stream)
-                if truncated is True:
-                    stream.write(",\n")
+                        stream.write(",".join(map(str, rec.values())) + "\n")
             finally:
                 if isinstance(cache, Path):
                     stream.close()
