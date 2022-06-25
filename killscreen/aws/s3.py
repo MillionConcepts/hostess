@@ -313,6 +313,16 @@ def rm(
     return bucket.client.delete_object(Bucket=bucket.name, Key=key)
 
 
+def ls_multipart(
+    bucket: Union[str, Bucket],
+    client: Optional[botocore.client.BaseClient] = None,
+    session: Optional[boto3.Session] = None,
+    config=None
+):
+    bucket = Bucket.bind(bucket, client, session, config)
+    return bucket.client.list_multipart_uploads(Bucket=bucket.name)
+
+
 def create_multipart_upload(
     bucket: Union[str, Bucket],
     key: str,
