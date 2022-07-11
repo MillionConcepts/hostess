@@ -215,24 +215,6 @@ def get(
     return destination, response
 
 
-# def cp(
-#     bucket: Union[str, Bucket],
-#     source: str,
-#     destination_key: str,
-#     destination_bucket: Optional[str] = None,
-#     client: Optional[botocore.client.BaseClient] = None,
-#     session: Optional[boto3.Session] = None,
-#     config=None,
-# ) -> tuple[Union[Path, str, io.IOBase], Any]:
-#     bucket = Bucket.bind(bucket, client, session)
-#     if destination_bucket is None:
-#         destination_bucket = bucket.name
-#     sourcedict = {'Bucket': bucket.name, 'Key': source}
-#     response = bucket.client.copy(
-#         sourcedict, destination_bucket, destination_key
-#     )
-#     return f"s3://{destination_bucket}:{destination_key}", response
-
 # TODO, maybe: rewrite this using lower-level methods. This may not be
 #  required, because flexibility with S3 -> S3 copies is less often useful
 #  than with uploads.
