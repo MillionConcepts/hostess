@@ -1,6 +1,5 @@
 import datetime as dt
 import io
-import json
 import sys
 from functools import partial
 from inspect import getmembers
@@ -55,6 +54,7 @@ class Bucket:
     # annotations to aid both population and static analysis
     abort_multipart_upload: Callable
     complete_multipart_upload: Callable
+    cp: Callable
     create_multipart_upload: Callable
     freeze: Callable
     get: Callable
@@ -141,7 +141,6 @@ def put(
     :param bucket: bucket name as str, or Bucket object
     :param obj: str, Path, or filelike / buffer object to upload; None for
         'touch' behavior
-    :param client: name of bucket to upload it to, or bound boto Bucket object
     :param key: S3 key. If not specified then str(
         file_or_buffer) is used -- will most likely look bad if it's a buffer
     :param client: boto s3 client; makes a default client if None; used
@@ -205,6 +204,25 @@ def get(
     if "seek" in dir(destination):
         destination.seek(0)
     return destination, response
+
+
+def cp(
+    bucket: Union[str, Bucket],
+    source: str,
+    destination_key: str,
+    destination_bucket: Optional[str] = None,
+    client: Optional[botocore.client.BaseClient] = None,
+    session: Optional[boto3.Session] = None,
+    config=None,
+) -> tuple[Union[Path, str, io.IOBase], Any]:
+    bucket = Bucket.bind(bucket, client, session)
+    if destination_bucket is None:
+        destination_bucket = bucket.name
+    sourcedict = {'Bucket': bucket.name, 'Key': source}
+    response = bucket.client.copy(
+        sourcedict, destination_bucket, destination_key
+    )
+    return f"s3://{destination_bucket}:{destination_key}", response
 
 
 # TODO: scary, refactor
