@@ -1,10 +1,14 @@
 """tracking, logging, and synchronization objects"""
+from typing import MutableMapping, Callable
 
-import subprocess
+import datetime as dt
+import re
 import threading
 import time
 
+from cytoolz import first
 from dateutil import parser as dtp
+from dustgoggles.func import zero
 
 from killscreen.utilities import mb, console_and_log, stamp
 
@@ -275,17 +279,16 @@ def dcom(string):
     return re.sub('[,\n]', ';', string.strip())
 
 
-def lprint(message):
-    print(message)
-    with open(LOGFILE, "a") as stream:
-        stream.write(message)
+def log_factory(stamper, stat, log_fields, logfile):
+    def lprint(message):
+        print(message)
+        with open(logfile, "a") as stream:
+            stream.write(message)
 
-
-def log_factory(stamp, stat, log_fields):
     def log(event, **kwargs):
         center = ",".join(
             [event, *[kwargs.get(field, "") for field in log_fields]]
         )
-        lprint(f"{logstamp()},{center},{stat()}\n")
+        lprint(f"{stamper()},{center},{stat()}\n")
 
     return log
