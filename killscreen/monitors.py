@@ -215,3 +215,77 @@ class Netstat(FakeNetstat):
     def __repr__(self):
         return str(self.absolute)
 
+
+def record_and_yell(message: str, cache: MutableMapping, loud: bool = False):
+    """
+    place message into a cache object with a timestamp; optionally print it
+    """
+    if loud is True:
+        print(message)
+    cache[dt.datetime.now().isoformat()] = message
+
+
+def notary(cache):
+
+    def note(message, loud: bool = False, eject: bool = False):
+        if eject is True:
+            return cache
+        return record_and_yell(message, cache, loud)
+    return note
+
+
+def print_stats(watch, netstat):
+    watch.start(), netstat.update()
+
+    def printer(total=False, eject=False):
+        netstat.update()
+        if eject is True:
+            return watch, netstat
+        if total is True:
+            text = (
+                f"{watch.total()} total s,"
+                f"{mb(round(first(netstat.total.values())))} total MB"
+            )
+        else:
+            text = (
+                f"{watch.peek()} s,"
+                f"{mb(round(first(netstat.interval.values())))} MB"
+            )
+            watch.click()
+        return text
+    return printer
+
+
+def make_monitors(
+    fake: bool = False, silent: bool = True
+) -> tuple[Callable, Callable]:
+    if fake is True:
+        stat, note = zero, zero
+    else:
+        log, watch, netstat = {}, Stopwatch(silent=silent), Netstat()
+        stat, note = print_stats(watch, netstat), notary(log)
+    return stat, note
+
+
+def logstamp() -> str:
+    return f"{dt.datetime.utcnow().isoformat()[:-7]}"
+
+
+def dcom(string):
+    return re.sub('[,\n]', ';', string.strip())
+
+
+def lprint(message):
+    print(message)
+    with open(LOGFILE, "a") as stream:
+        stream.write(message)
+
+
+def log_factory(stamp, stat, log_fields):
+    def log(event, **kwargs):
+        center = ",".join(
+            [event, *[kwargs.get(field, "") for field in log_fields]]
+        )
+        lprint(f"{logstamp()},{center},{stat()}\n")
+
+    return log
