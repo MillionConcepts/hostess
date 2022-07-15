@@ -1,6 +1,17 @@
+"""
+This module provides methods for operations on AWS S3 objects. Its centerpiece
+is a Bucket object providing a high-level interface to operations on a single
+S3 bucket. The original motivation for this module was quickly constructing
+inventories of large buckets in pandas DataFrames.
+
+Much of this module wraps lower-level methods of boto3, so it is in some sense
+an alternative implementation of boto3's own high-level managed S3 methods
+and objects, designed for cases in which deeper indexing, more response
+introspection, or more flexible I/O stream manipulation are required. We also
+like the syntax better.
+"""
 import datetime as dt
 import io
-import json
 import sys
 from functools import partial
 from inspect import getmembers
@@ -28,10 +39,10 @@ from dustgoggles.func import naturals
 
 from killscreen.aws.utilities import init_client
 
-# general note: we're largely avoiding use of the boto3 s3.Bucket object,
-# as it performs similar types of abstraction which collide with ours -- for
-# instance, it often prevents us from getting the API's responses, which we
-# may in some cases want.
+# general note: we're largely, although not completely, avoiding use of the
+# boto3 s3.Bucket object, as it performs similar types of abstraction which
+# collide with ours -- for instance, it often prevents us from getting the
+# API's responses, which we in some cases want.
 from killscreen.subutils import piped, clean_process_records
 from killscreen.utilities import stamp, console_and_log, infer_stream_length
 
@@ -55,6 +66,7 @@ class Bucket:
     # annotations to aid both population and static analysis
     abort_multipart_upload: Callable
     complete_multipart_upload: Callable
+    cp: Callable
     create_multipart_upload: Callable
     freeze: Callable
     get: Callable
@@ -62,6 +74,7 @@ class Bucket:
     put: Callable
     put_stream: Callable
     put_stream_chunk: Callable
+    restore: Callable
     rm: Callable
 
     def update_contents(self, prefix="", cache=None):
@@ -88,10 +101,6 @@ class Bucket:
                 "Asynchronous downloads are not yet implemented; "
                 "please pass download_threads=None"
             )
-        # threaded = any(
-        #     map(lambda x: isinstance(x, int),
-        #         [upload_threads, download_threads])
-        # )
         parts = {}
         multipart = self.create_multipart_upload(key, config=config)
         kwargs = {
@@ -141,7 +150,6 @@ def put(
     :param bucket: bucket name as str, or Bucket object
     :param obj: str, Path, or filelike / buffer object to upload; None for
         'touch' behavior
-    :param client: name of bucket to upload it to, or bound boto Bucket object
     :param key: S3 key. If not specified then str(
         file_or_buffer) is used -- will most likely look bad if it's a buffer
     :param client: boto s3 client; makes a default client if None; used
@@ -205,6 +213,38 @@ def get(
     if "seek" in dir(destination):
         destination.seek(0)
     return destination, response
+
+
+# TODO, maybe: rewrite this using lower-level methods. This may not be
+#  required, because flexibility with S3 -> S3 copies is less often useful
+#  than with uploads.
+def cp(
+    bucket: Union[str, Bucket],
+    source: str,
+    destination: Optional[str] = None,
+    destination_bucket: Optional[str] = None,
+    extra_args: Optional[Mapping[str, str]] = None,
+    client: Optional[botocore.client.BaseClient] = None,
+    session: Optional[boto3.Session] = None,
+    config=None,
+) -> tuple[Union[Path, str, io.IOBase], Any]:
+    bucket = Bucket.bind(bucket, client, session)
+    if config is None:
+        config = bucket.config
+    if destination_bucket is None:
+        destination_bucket = bucket.name
+    if destination is None:
+        # supporting copy-self-to-self for storage class changes etc.
+        destination = source
+    sourcedict = {'Bucket': bucket.name, 'Key': source}
+    # use boto3's high-level Bucket object to perform a managed transfer
+    # (in order to easily support objects > 5 GB)
+    destination_bucket_object = bucket.client.Bucket(destination_bucket)
+    copy_source = {'Bucket': bucket.name, 'Key': source}
+    response = destination_bucket_object.copy(
+        copy_source, destination, ExtraArgs=extra_args, Config=config
+    )
+    return f"s3://{destination_bucket}:{destination}", response
 
 
 # TODO: scary, refactor
@@ -371,19 +411,6 @@ def complete_multipart_upload(
     )
 
 
-def freeze(
-    bucket: Union[str, Bucket],
-    key: str,
-    client: Optional[botocore.client.BaseClient] = None,
-    session: Optional[boto3.Session] = None,
-    config=None,
-):
-    # unlike awscli s3, storage class can't be changed for objects > 5 GB in
-    # boto3 / s3api without using explicit unmanaged multipart copy, which
-    # I'll need to implement separately.
-    raise NotImplementedError
-
-
 def put_stream(
     bucket: Union[str, Bucket],
     obj: Union[Iterator, Callable, IO, str, Path],
@@ -513,3 +540,32 @@ def put_stream_chunk(
         parts[number] = {"process": process, "pipe": pipe}
     else:
         parts[number] = {"result": bucket.client.upload_part(**kwargs)}
+
+
+def freeze(
+    bucket: Union[str, Bucket],
+    key: str,
+    storage_class: str = "DEEP_ARCHIVE",
+    client: Optional[botocore.client.BaseClient] = None,
+    session: Optional[boto3.Session] = None,
+    config=None,
+):
+    bucket = Bucket.bind(bucket, client, session, config)
+    return bucket.cp(key, extra_args={"StorageClass": storage_class})
+
+
+def restore(
+    bucket: Union[str, Bucket],
+    key: str,
+    tier: str = 'Bulk',
+    days: int = 5,
+    client: Optional[botocore.client.BaseClient] = None,
+    session: Optional[boto3.Session] = None,
+    config=None,
+):
+    bucket = Bucket.bind(bucket, client, session, config)
+    job_parameters = {'Tier': tier}
+    restore_request = {'Days': days, 'GlacierJobParameters': job_parameters}
+    return client.restore_object(
+        Bucket=bucket.name, Key=key, RestoreRequest=restore_request
+    )
