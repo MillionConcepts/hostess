@@ -159,7 +159,7 @@ def task_server(
     app.debug = True
 
     if run is True:
-        app.run(host, port)
+        app.run(host, port, use_reloader=False)
         dump_state()
 
     return app

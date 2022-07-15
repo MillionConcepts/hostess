@@ -114,6 +114,31 @@ def tunnel(ip, key, uname, local_port="8888", remote_port="8888"):
     )
 
 
+def tunnel_through(
+    gateway,
+    server,
+    gateway_key,
+    uname,
+    tunnel_port="8888",
+    gateway_port="22"
+):
+    """
+    open ssh tunnel binding tunnel_port on localhost to tunnel_port on server,
+    going through gateway port on gateway. returns Viewer on ssh process.
+    default arguments bind to default jupyter port.
+    """
+    return Viewer.from_command(
+        "ssh",
+        f"-i{gateway_key}",
+        f"-L",
+        f"{tunnel_port}:{server}:{gateway_port}",
+        f"{uname}@{gateway}",
+        "sleep infinity",
+        _bg=True,
+        _host=gateway
+    )
+
+
 def ssh_command(ip, key, uname):
     """baked ssh command for a server."""
     return sh.ssh.bake(f"-i{key}", f"{uname}@{ip}")

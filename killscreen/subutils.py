@@ -105,17 +105,18 @@ class Viewer:
         self.wait = self.process.wait
         self.is_alive = self.process.is_alive
 
-    def wait_for_output(self, polling_interval=0.05, timeout=10):
+    def wait_for_output(self, use_err=False, polling_interval=0.05, timeout=10):
         if self.is_alive() in (False, None):
             return
-        if isinstance(self.out, Sequence):
-            starting_length, start_time = len(self.out), time.time()
+        stream = self.out if use_err is False else self.err
+        if isinstance(stream, Sequence):
+            starting_length, start_time = len(stream), time.time()
             while (
                 ((time.time() - start_time) < timeout)
-                and (len(self.out) == starting_length)
+                and (len(stream) == starting_length)
             ):
                 time.sleep(polling_interval)
-            if len(self.out) == starting_length:
+            if len(stream) == starting_length:
                 raise TimeoutError
             return
         self.process.next()
