@@ -48,8 +48,9 @@ def make_boto_session(profile=None, credential_file=None, region=None):
     if credential_file is None:
         return boto3.Session(profile_name=profile, region_name=region)
     creds = read_aws_config_file(credential_file)
-    if 'user_name' in creds.keys():
-        del creds['user_name']
+    for disliked_kwarg in ('user_name', 'password'):
+        if disliked_kwarg in creds.keys():
+            del creds[disliked_kwarg]
     return boto3.Session(**creds, region_name=region)
 
 
