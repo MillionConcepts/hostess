@@ -236,7 +236,6 @@ def cp(
     if destination is None:
         # supporting copy-self-to-self for storage class changes etc.
         destination = source
-    sourcedict = {'Bucket': bucket.name, 'Key': source}
     # use boto3's high-level Bucket object to perform a managed transfer
     # (in order to easily support objects > 5 GB)
     destination_bucket_object = bucket.client.Bucket(destination_bucket)
@@ -566,6 +565,6 @@ def restore(
     bucket = Bucket.bind(bucket, client, session, config)
     job_parameters = {'Tier': tier}
     restore_request = {'Days': days, 'GlacierJobParameters': job_parameters}
-    return client.restore_object(
+    return bucket.client.restore_object(
         Bucket=bucket.name, Key=key, RestoreRequest=restore_request
     )
