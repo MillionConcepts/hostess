@@ -37,7 +37,7 @@ import botocore.client
 import requests
 from dustgoggles.func import naturals
 
-from killscreen.aws.utilities import init_client
+from killscreen.aws.utilities import init_client, init_resource
 
 # general note: we're largely, although not completely, avoiding use of the
 # boto3 s3.Bucket object, as it performs similar types of abstraction which
@@ -49,9 +49,15 @@ from killscreen.utilities import stamp, console_and_log, infer_stream_length
 
 class Bucket:
     def __init__(
-        self, bucket_name: str, client=None, session=None, config=None
+        self,
+        bucket_name: str,
+        client=None,
+        resource=None,
+        session=None,
+        config=None
     ):
         self.client = init_client("s3", client, session)
+        self.resource = init_resource("s3", resource, session)
         self.name = bucket_name
         self.contents = []
         if config is None:
@@ -238,7 +244,7 @@ def cp(
         destination = source
     # use boto3's high-level Bucket object to perform a managed transfer
     # (in order to easily support objects > 5 GB)
-    destination_bucket_object = bucket.client.Bucket(destination_bucket)
+    destination_bucket_object = bucket.resource.Bucket(destination_bucket)
     copy_source = {'Bucket': bucket.name, 'Key': source}
     response = destination_bucket_object.copy(
         copy_source, destination, ExtraArgs=extra_args, Config=config
