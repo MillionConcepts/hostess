@@ -42,11 +42,16 @@ def console_and_log(message, level="info", style=None):
 
 
 def mb(b, round_to=2):
-    return round(int(b) / 10 ** 6, round_to)
+    value = int(b) / 10 ** 6
+    if round_to is not None:
+        return round(value, round_to)
+    return value
 
 
 def gb(b, round_to=2):
-    return round(int(b) / 10 ** 9, round_to)
+    value = int(b) / 10 ** 9
+    if round_to is not None:
+        return round(value, round_to)
 
 
 def keygrab(mapping_list, key, value):

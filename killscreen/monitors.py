@@ -1,11 +1,13 @@
 """tracking, logging, and synchronization objects"""
-from typing import MutableMapping, Callable
+from types import MappingProxyType
+from typing import MutableMapping, Callable, Optional, Mapping
 
 import datetime as dt
 import re
 import threading
 import time
 
+import psutil
 from cytoolz import first
 from dateutil import parser as dtp
 from dustgoggles.func import zero
@@ -91,11 +93,14 @@ class FakeStopwatch:
     def total(self):
         return
 
+    fake = True
+
 
 class Stopwatch(FakeStopwatch):
     """
     simple timer object
     """
+
     def __init__(self, digits=2, silent=False):
         super().__init__(digits, silent)
 
@@ -123,32 +128,69 @@ class Stopwatch(FakeStopwatch):
             return 0
         return round(time.time() - self.start_time, self.digits)
 
+    fake = False
 
-class TimeSwitcher:
-    """
-    little object that tracks changing times
-    """
 
-    def __init__(self, start_time: str = None):
-        if start_time is not None:
-            self.times = [start_time]
+class FakeCPUMonitor:
+    """fake simple CPU usage monitor."""
+    def __init__(self, times=('user', 'system', 'iowait', 'idle'), round_to=2):
+        self.times = times
+        self.round_to = round_to
+        self.interval = {}
+        self.last = {}
+        self.absolute = {}
+        self.total = {}
+
+    def update(self):
+        return
+
+    def display(self, which="interval"):
+        return ""
+
+    fake = True
+
+
+class CPUMonitor(FakeCPUMonitor):
+    """simple CPU usage monitor."""
+    def __init__(self, times=('user', 'system', 'iowait', 'idle'), round_to=2):
+        super().__init__(times, round_to)
+        self.update()
+
+    def update(self):
+        cputimes = psutil.cpu_times()
+        self.absolute = {
+            time_type: getattr(cputimes, time_type)
+            for time_type in self.times
+        }
+        if len(self.interval) == 0:
+            self.interval = {t: 0 for t in self.times}
+            self.total = {t: 0 for t in self.times}
         else:
-            self.times = []
+            self.interval = {
+                t: self.absolute[t] - self.last[t]
+                for t in self.times
+            }
+            self.total = {
+                t: self.interval[t] + self.total[t]
+                for t in self.times
+            }
+        self.last = self.absolute
 
-    def check_time(self, string):
-        try:
-            self.times.append(dtp.parse(string).isoformat())
-            return True
-        except dtp.ParserError:
-            return False
+    def display(self, which="interval"):
+        items = getattr(self, which).items()
+        infix = f"{which} " if which != "interval" else ""
+        if self.round_to is not None:
+            string = ";".join(
+                [f"{k} {round(v, self.round_to)}" for k, v in items]
+            )
+        else:
+            string = ";".join([f"{k} {v}" for k, v in items])
+        return string + f" {infix}s"
 
     def __repr__(self):
-        if len(self.times) > 0:
-            return self.times[-1]
-        return None
+        return str(self.absolute)
 
-    def __str__(self):
-        return self.__repr__()
+    fake = False
 
 
 PROC_NET_DEV_FIELDS = (
@@ -188,19 +230,27 @@ def parseprocnetdev(procnetdev, rejects=("lo",)):
 
 class FakeNetstat:
     """fake simple network monitor."""
-    def __init__(self, rejects=("lo",)):
+
+    def __init__(self, rejects=("lo",), round_to=2):
         self.rejects = rejects
+        self.round_to = round_to
         self.absolute, self.last, self.interval, self.total = None, {}, {}, {}
 
     def update(self):
         return
 
+    def display(self, which="interval", interface=None):
+        return ""
+
+    fake = True
+
 
 class Netstat(FakeNetstat):
     """simple network monitor. works only on *nix at present."""
+
     # TODO: monitor TX as well as RX, etc.
-    def __init__(self, rejects=("lo",)):
-        super().__init__(rejects)
+    def __init__(self, rejects=("lo",), round_to=2):
+        super().__init__(rejects, round_to)
         self.update()
 
     def update(self):
@@ -216,8 +266,45 @@ class Netstat(FakeNetstat):
                 self.total[interface] += self.interval[interface]
                 self.last[interface] = bytes_
 
+    def display(self, which="interval", interface=None):
+        infix = f"{which} " if which != "interval" else ""
+        if interface is None:
+            value = first(getattr(self, which).values())
+        else:
+            value = getattr(self, which)[interface]
+        return f"{mb(value, self.round_to)} {infix}MB"
+
     def __repr__(self):
         return str(self.absolute)
+
+    fake = False
+
+
+class TimeSwitcher:
+    """
+    little object that tracks changing times
+    """
+
+    def __init__(self, start_time: str = None):
+        if start_time is not None:
+            self.times = [start_time]
+        else:
+            self.times = []
+
+    def check_time(self, string):
+        try:
+            self.times.append(dtp.parse(string).isoformat())
+            return True
+        except dtp.ParserError:
+            return False
+
+    def __repr__(self):
+        if len(self.times) > 0:
+            return self.times[-1]
+        return None
+
+    def __str__(self):
+        return self.__repr__()
 
 
 def record_and_yell(message: str, cache: MutableMapping, loud: bool = False):
@@ -230,34 +317,12 @@ def record_and_yell(message: str, cache: MutableMapping, loud: bool = False):
 
 
 def notary(cache):
-
     def note(message, loud: bool = False, eject: bool = False):
         if eject is True:
             return cache
         return record_and_yell(message, cache, loud)
+
     return note
-
-
-def print_stats(watch, netstat):
-    watch.start(), netstat.update()
-
-    def printer(total=False, eject=False):
-        netstat.update()
-        if eject is True:
-            return watch, netstat
-        if total is True:
-            text = (
-                f"{watch.total()} total s,"
-                f"{mb(round(first(netstat.total.values())))} total MB"
-            )
-        else:
-            text = (
-                f"{watch.peek()} s,"
-                f"{mb(round(first(netstat.interval.values())))} MB"
-            )
-            watch.click()
-        return text
-    return printer
 
 
 def make_monitors(
@@ -292,3 +357,31 @@ def log_factory(stamper, stat, log_fields, logfile):
         lprint(f"{stamper()},{center},{stat()}\n")
 
     return log
+
+
+def print_stats(
+    watch: Optional[FakeStopwatch] = None,
+    netstat: Optional[FakeNetstat] = None,
+    cpumon: Optional[FakeCPUMonitor] = None,
+):
+    watch = FakeStopwatch() if watch is None else watch
+    netstat = FakeNetstat() if netstat is None else netstat
+    cpumon = FakeCPUMonitor() if cpumon is None else cpumon
+    watch.start(), netstat.update(), cpumon.update()
+
+    def printer(total=False, eject=False):
+        if eject is True:
+            return watch, netstat, cpumon
+        netstat.update(), cpumon.update()
+        if total is True:
+            sec = None if watch.fake is True else f"{watch.total()} total s"
+            vol = None if netstat.fake is True else netstat.display("total")
+            cpu = None if cpumon.fake is True else cpumon.display("total")
+        else:
+            sec = None if watch.fake is True else f"{watch.peek()} s"
+            vol = None if netstat.fake is True else netstat.display("interval")
+            cpu = None if cpumon.fake is True else cpumon.display("interval")
+            watch.click()
+        return ",".join(filter(None, [sec, vol, cpu]))
+
+    return printer
