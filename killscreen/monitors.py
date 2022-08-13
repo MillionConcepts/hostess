@@ -1,6 +1,7 @@
 """tracking, logging, and synchronization objects"""
 from types import MappingProxyType
-from typing import MutableMapping, Callable, Optional, Mapping
+from typing import MutableMapping, Callable, Optional, Mapping, Sequence, \
+    Union, Literal
 
 import datetime as dt
 import re
@@ -341,13 +342,19 @@ def notary(cache):
 
 
 def make_monitors(
-    fake: bool = False, silent: bool = True
+    fake: bool = False,
+    silent: bool = True,
+    round_to: Optional[int] = None,
+    reject_interfaces: Sequence[str] = ("lo",),
+    cpu_time_types: Union[Literal["all"], Sequence[str]] = "all"
 ) -> tuple[Callable, Callable]:
     if fake is True:
-        stat, note = zero, zero
-    else:
-        log, watch, netstat = {}, Stopwatch(silent=silent), Netstat()
-        stat, note = print_stats(watch, netstat), notary(log)
+        return zero, zero
+    log = {}
+    watch = Stopwatch(silent=silent, digits=round_to)
+    netstat = Netstat(round_to=round_to, rejects=reject_interfaces)
+    cpumon = CPUMonitor(round_to=round_to, times=cpu_time_types)
+    stat, note = print_stats(watch, netstat, cpumon), notary(log)
     return stat, note
 
 
