@@ -97,17 +97,17 @@ class FakeStopwatch:
 
 
 class Stopwatch(FakeStopwatch):
-    """
-    simple timer object
-    """
-
+    """simple timer object"""
     def __init__(self, digits=2, silent=False):
         super().__init__(digits, silent)
 
     def peek(self):
         if self.last_time is None:
             return 0
-        return round(time.time() - self.last_time, self.digits)
+        value = time.time() - self.last_time
+        if self.digits is None:
+            return value
+        return round(value, self.digits)
 
     def start(self):
         if self.silent is False:
@@ -126,7 +126,10 @@ class Stopwatch(FakeStopwatch):
     def total(self):
         if self.last_time is None:
             return 0
-        return round(time.time() - self.start_time, self.digits)
+        value = time.time() - self.start_time
+        if self.digits is None:
+            return value
+        return round(value, self.digits)
 
     fake = False
 
