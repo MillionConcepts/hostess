@@ -385,6 +385,7 @@ def print_stats(
             vol = None if netstat.fake is True else netstat.display("interval")
             cpu = None if cpumon.fake is True else cpumon.display("interval")
             watch.click()
+        # noinspection PyTypeChecker
         return ",".join(filter(None, [sec, vol, cpu]))
 
     return printer

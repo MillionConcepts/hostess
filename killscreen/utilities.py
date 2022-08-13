@@ -93,3 +93,9 @@ def infer_stream_length(stream):
         if length is not None:
             break
     return length
+
+
+def roundstring(string, digits=2):
+    return re.sub(
+        r"\d+\.\d+", lambda m: str(round(float(m.group()), digits)), string
+    )
