@@ -98,6 +98,7 @@ class FakeStopwatch:
 
 class Stopwatch(FakeStopwatch):
     """simple timer object"""
+
     def __init__(self, digits=2, silent=False):
         super().__init__(digits, silent)
 
@@ -136,7 +137,8 @@ class Stopwatch(FakeStopwatch):
 
 class FakeCPUMonitor:
     """fake simple CPU usage monitor."""
-    def __init__(self, times=('user', 'system', 'iowait', 'idle'), round_to=2):
+
+    def __init__(self, times="all", round_to=2):
         self.times = times
         self.round_to = round_to
         self.interval = {}
@@ -147,7 +149,7 @@ class FakeCPUMonitor:
     def update(self):
         return
 
-    def display(self, which="interval"):
+    def display(self, which="interval", simple=False):
         return ""
 
     fake = True
@@ -155,33 +157,43 @@ class FakeCPUMonitor:
 
 class CPUMonitor(FakeCPUMonitor):
     """simple CPU usage monitor."""
-    def __init__(self, times=('user', 'system', 'iowait', 'idle'), round_to=2):
+
+    def __init__(self, times="all", round_to=2):
         super().__init__(times, round_to)
+        if self.times == "all":
+            # noinspection PyProtectedMember
+            self.times = psutil.cpu_times()._fields
         self.update()
 
     def update(self):
         cputimes = psutil.cpu_times()
         self.absolute = {
-            time_type: getattr(cputimes, time_type)
-            for time_type in self.times
+            time_type: getattr(cputimes, time_type) for time_type in self.times
         }
         if len(self.interval) == 0:
             self.interval = {t: 0 for t in self.times}
             self.total = {t: 0 for t in self.times}
         else:
             self.interval = {
-                t: self.absolute[t] - self.last[t]
-                for t in self.times
+                t: self.absolute[t] - self.last[t] for t in self.times
             }
             self.total = {
-                t: self.interval[t] + self.total[t]
-                for t in self.times
+                t: self.interval[t] + self.total[t] for t in self.times
             }
         self.last = self.absolute
 
-    def display(self, which="interval"):
-        items = getattr(self, which).items()
+    def display(self, which="interval", simple=False):
         infix = f"{which} " if which != "interval" else ""
+        period = getattr(self, which)
+        if simple is True:
+            if "idle" not in period:
+                raise KeyError("simple=True requires idle time monitoring.")
+            items = (
+                ("idle", period["idle"]),
+                ("busy", sum([v for k, v in period.items() if k != "idle"])),
+            )
+        else:
+            items = period.items()
         if self.round_to is not None:
             string = ";".join(
                 [f"{k} {round(v, self.round_to)}" for k, v in items]
@@ -344,7 +356,7 @@ def logstamp() -> str:
 
 
 def dcom(string):
-    return re.sub('[,\n]', ';', string.strip())
+    return re.sub("[,\n]", ";", string.strip())
 
 
 def log_factory(stamper, stat, log_fields, logfile):
@@ -372,18 +384,25 @@ def print_stats(
     cpumon = FakeCPUMonitor() if cpumon is None else cpumon
     watch.start(), netstat.update(), cpumon.update()
 
-    def printer(total=False, eject=False):
+    def printer(total=False, eject=False, simple_cpu=False, no_lap=None):
         if eject is True:
             return watch, netstat, cpumon
         netstat.update(), cpumon.update()
+        if no_lap is None:
+            no_lap = True if total is True else False
         if total is True:
             sec = None if watch.fake is True else f"{watch.total()} total s"
             vol = None if netstat.fake is True else netstat.display("total")
-            cpu = None if cpumon.fake is True else cpumon.display("total")
+            cpu = None
+            if cpumon.fake is False:
+                cpu = cpumon.display("total", simple=simple_cpu)
         else:
             sec = None if watch.fake is True else f"{watch.peek()} s"
             vol = None if netstat.fake is True else netstat.display("interval")
-            cpu = None if cpumon.fake is True else cpumon.display("interval")
+            cpu = None
+            if cpumon.fake is False:
+                cpu = cpumon.display("interval", simple=simple_cpu)
+        if no_lap is False:
             watch.click()
         # noinspection PyTypeChecker
         return ",".join(filter(None, [sec, vol, cpu]))
