@@ -402,13 +402,13 @@ def print_stats(
             vol = None if netstat.fake is True else netstat.display("total")
             cpu = None
             if cpumon.fake is False:
-                cpu = cpumon.display("total", simple=simple_cpu)
+                cpu = "cpu " + cpumon.display("total", simple=simple_cpu)
         else:
             sec = None if watch.fake is True else f"{watch.peek()} s"
             vol = None if netstat.fake is True else netstat.display("interval")
             cpu = None
             if cpumon.fake is False:
-                cpu = cpumon.display("interval", simple=simple_cpu)
+                cpu = "cpu " + cpumon.display("interval", simple=simple_cpu)
         if no_lap is False:
             watch.click()
         # noinspection PyTypeChecker
