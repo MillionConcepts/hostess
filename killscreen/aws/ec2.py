@@ -217,6 +217,7 @@ class Instance:
         for _ in range(tries):
             try:
                 ssh_key_add(self.ip)
+                return
             except sh.ErrorReturnCode:
                 time.sleep(delay)
                 continue
