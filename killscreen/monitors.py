@@ -1,17 +1,22 @@
 """tracking, logging, and synchronization objects"""
-from types import MappingProxyType
-from typing import MutableMapping, Callable, Optional, Mapping, Sequence, \
-    Union, Literal
-
 import datetime as dt
 import re
 import threading
 import time
+from typing import (
+    MutableMapping,
+    Callable,
+    Optional,
+    Sequence,
+    Union,
+    Literal,
+)
 
-import psutil
 from cytoolz import first
+from cytoolz.curried import get
 from dateutil import parser as dtp
 from dustgoggles.func import zero
+import psutil
 
 from killscreen.utilities import mb, console_and_log, stamp
 
@@ -27,16 +32,21 @@ class FakeBouncer:
         pass
 
 
-class Bouncer:
+class Bouncer(FakeBouncer):
     """blocking rate-limiter"""
 
-    def __init__(self, ratelimit, window=1, blockdelay=None):
+    def __init__(self, ratelimit=0.1, window=1, blockdelay=None):
         self.events = []
         self.ratelimit = ratelimit
         self.window = window
         if blockdelay is None:
             blockdelay = window / ratelimit
         self.blockdelay = blockdelay
+
+    def __new__(cls, ratelimit=0.1, window=1, blockdelay=None, fake=False):
+        if fake is True:
+            return FakeBouncer()
+        return object.__new__(cls)
 
     def clean(self):
         now = time.time()
@@ -153,6 +163,12 @@ class FakeCPUMonitor:
     def display(self, which="interval", simple=False):
         return ""
 
+    def __repr__(self):
+        return str(self.absolute)
+
+    def __str__(self):
+        return self.__repr__()
+
     fake = True
 
 
@@ -203,9 +219,6 @@ class CPUMonitor(FakeCPUMonitor):
             string = ";".join([f"{k} {v}" for k, v in items])
         return string + f" {infix}s"
 
-    def __repr__(self):
-        return str(self.absolute)
-
     fake = False
 
 
@@ -250,7 +263,8 @@ class FakeNetstat:
     def __init__(self, rejects=("lo",), round_to=2):
         self.rejects = rejects
         self.round_to = round_to
-        self.absolute, self.last, self.interval, self.total = None, {}, {}, {}
+        self.full = ()
+        self.absolute, self.last, self.interval, self.total = {}, {}, {}, {}
 
     def update(self):
         return
@@ -268,11 +282,19 @@ class Netstat(FakeNetstat):
     def __init__(self, rejects=("lo",), round_to=2):
         super().__init__(rejects, round_to)
         self.update()
+        try:
+            heaviest_traffic = max(map(get("bytes"), self.full))
+            self.default_interface = first(
+                filter(lambda v: v["bytes"] == heaviest_traffic, self.full)
+            )['interface']
+        except (KeyError, StopIteration):
+            self.default_interface = None
 
     def update(self):
-        self.absolute = parseprocnetdev(catprocnetdev(), self.rejects)
-        for line in self.absolute:
+        self.full = parseprocnetdev(catprocnetdev(), self.rejects)
+        for line in self.full:
             interface, bytes_ = line["interface"], line["bytes"]
+            self.absolute[interface] = bytes_
             if interface not in self.interval.keys():
                 self.total[interface] = 0
                 self.interval[interface] = 0
@@ -283,6 +305,12 @@ class Netstat(FakeNetstat):
                 self.last[interface] = bytes_
 
     def display(self, which="interval", interface=None):
+        if which not in ("absolute", "total", "interval", "last"):
+            raise ValueError(
+                "'which' argument to Netstat.display() must be 'absolute', "
+                "'total', 'interface', or 'last'."
+            )
+        interface = self.default_interface if interface is None else interface
         infix = f"{which} " if which != "interval" else ""
         if interface is None:
             value = first(getattr(self, which).values())
@@ -346,7 +374,7 @@ def make_monitors(
     silent: bool = True,
     round_to: Optional[int] = None,
     reject_interfaces: Sequence[str] = ("lo",),
-    cpu_time_types: Union[Literal["all"], Sequence[str]] = "all"
+    cpu_time_types: Union[Literal["all"], Sequence[str]] = "all",
 ) -> tuple[Callable, Callable]:
     if fake is True:
         return zero, zero
@@ -362,8 +390,13 @@ def logstamp() -> str:
     return f"{dt.datetime.utcnow().isoformat()[:-7]}"
 
 
-def dcom(string):
-    return re.sub("[,\n]", ";", string.strip())
+def dcom(string, sep=";", bad=(",", "\n")):
+    """
+    simple string sanitization function. defaults assume that you want to jam
+    the string into a CSV field. assumes you don't care about distinguishing
+    different forbidden characters from one another in the output.
+    """
+    return re.sub(rf"[{re.escape(''.join(bad))}]", sep, string.strip())
 
 
 def log_factory(stamper, stat, log_fields, logfile):
@@ -385,10 +418,16 @@ def print_stats(
     watch: Optional[FakeStopwatch] = None,
     netstat: Optional[FakeNetstat] = None,
     cpumon: Optional[FakeCPUMonitor] = None,
+    new: bool = False,
 ):
-    watch = FakeStopwatch() if watch is None else watch
-    netstat = FakeNetstat() if netstat is None else netstat
-    cpumon = FakeCPUMonitor() if cpumon is None else cpumon
+    if new is True:
+        watch = Stopwatch() if watch is None else watch
+        netstat = Netstat() if netstat is None else netstat
+        cpumon = CPUMonitor() if cpumon is None else cpumon
+    else:
+        watch = FakeStopwatch() if watch is None else watch
+        netstat = FakeNetstat() if netstat is None else netstat
+        cpumon = FakeCPUMonitor() if cpumon is None else cpumon
     watch.start(), netstat.update(), cpumon.update()
 
     def printer(total=False, eject=False, simple_cpu=False, no_lap=None):
