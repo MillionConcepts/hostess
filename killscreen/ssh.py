@@ -9,14 +9,17 @@ from itertools import product
 from operator import or_
 import os
 import re
+from pathlib import Path
 from typing import Callable, Union
 import warnings
 
 from dustgoggles.func import are_in, zero
 from dustgoggles.structures import listify, separate_by
 import sh
+from magic import Magic
 
 import killscreen.shortcuts as ks
+from killscreen.config import DEFAULTS
 from killscreen.subutils import Viewer, split_sh_stream
 from killscreen.utilities import filestamp
 
@@ -40,39 +43,40 @@ def ssh_key_add(ip_list):
             sh.ssh_keyscan("-t", "rsa", ip, _out=hostfile)
 
 
-def scp_to(source, target, ip, uname, key):
+def scp_to(source, target, ip, uname=DEFAULTS["uname"], key=None):
     """
     copy file from memory to remote host using scp.
     currently only key-based authentication is supported.
     """
-    return sh.scp(
-        "-i" + key,
-        source,
-        uname + "@" + ip + ":" + target,
-    ).stdout.decode()
+    arguments = [source, uname + "@" + ip + ":" + target]
+    if key is not None:
+        arguments = ["-i" + key] + arguments
+    return sh.scp(*arguments).stdout.decode()
 
 
-def scp_from(source, target, ip, uname, key):
+def scp_from(source, target, ip, uname=DEFAULTS["uname"], key=None):
     """
     copy file from remote host to file using scp.
     currently only key-based authentication is supported.
     """
-    return sh.scp(
-        "-i" + key, uname + "@" + ip + ":" + source, target
-    ).stdout.decode()
+    arguments = [uname + "@" + ip + ":" + source, target]
+    if key is not None:
+        arguments = ["-i" + key] + arguments
+    return sh.scp(*arguments).stdout.decode()
 
 
-def scp_read(fname, ip, uname, key):
+def scp_read(fname, ip, uname=DEFAULTS["uname"], key=None):
     """
     copy file from remote host into memory using scp.
     currently only key-based authentication is supported.
     """
-    return sh.scp(
-        "-i" + key, uname + "@" + ip + ":" + fname, "/dev/stdout"
-    ).stdout
+    arguments = [uname + "@" + ip + ":" + fname, "/dev/stdout"]
+    if key is not None:
+        arguments = ["-i" + key] + arguments
+    return sh.scp(*arguments).stdout
 
 
-def scp_read_csv(fname, ip, uname, key, **csv_kwargs):
+def scp_read_csv(fname, ip, uname=DEFAULTS["uname"], key=None, **csv_kwargs):
     """
     reads csv-like file from remote host into pandas DataFrame using csv.
     """
@@ -85,7 +89,9 @@ def scp_read_csv(fname, ip, uname, key, **csv_kwargs):
     return pd.read_csv(buffer, **csv_kwargs)
 
 
-def scp_merge_csv(server_dict, filename, username, ssh_key, **csv_kwargs):
+def scp_merge_csv(
+    server_dict, filename, uname=DEFAULTS["uname"], key=None, **csv_kwargs
+):
     """
     merges csv files -- logs, perhaps -- from across a defined group
     of remote servers.
@@ -94,7 +100,7 @@ def scp_merge_csv(server_dict, filename, username, ssh_key, **csv_kwargs):
 
     framelist = []
     for name, ip in server_dict.items():
-        csv_df = scp_read_csv(filename, ip, username, ssh_key, **csv_kwargs)
+        csv_df = scp_read_csv(filename, ip, uname, key, **csv_kwargs)
         csv_df["server"] = name
         framelist.append(csv_df)
     return pd.concat(framelist).reset_index(drop=True)
@@ -102,7 +108,12 @@ def scp_merge_csv(server_dict, filename, username, ssh_key, **csv_kwargs):
 
 # TODO, maybe: add an atexit thing warning users about open tunnels
 def tunnel(
-    ip, key, uname, local_port="8888", remote_port="8888", kill=True
+    ip,
+    uname=DEFAULTS["uname"],
+    key=None,
+    local_port="8888",
+    remote_port="8888",
+    kill=True,
 ):
     """
     open ssh tunnel binding local_port to remote_port. returns pid of ssh
@@ -115,19 +126,20 @@ def tunnel(
         f"-L {local_port}:localhost:{remote_port}",
         f"{uname}@{ip}",
         _bg=True,
-        _host=ip
+        _host=ip,
     )
     if kill is True:
         atexit.register(viewer.kill)
+    return viewer
 
 
 def tunnel_through(
     gateway,
     server,
-    gateway_key,
-    uname,
+    uname=DEFAULTS["uname"],
+    gateway_key=None,
     tunnel_port="8888",
-    gateway_port="22"
+    gateway_port="22",
 ):
     """
     open ssh tunnel binding tunnel_port on localhost to tunnel_port on server,
@@ -142,23 +154,27 @@ def tunnel_through(
         f"{tunnel_port}:{server}:{gateway_port}",
         f"{uname}@{gateway}",
         _bg=True,
-        _host=gateway
+        _host=gateway,
     )
 
 
-def ssh_command(ip, key, uname):
+def ssh_command(ip, uname=DEFAULTS["uname"], key=None):
     """baked ssh command for a server."""
-    return sh.ssh.bake(f"-i{key}", f"{uname}@{ip}")
+    arguments = [f"{uname}@{ip}"]
+    if key is not None:
+        arguments = [f"-i{key}"] + arguments
+    return sh.ssh.bake(*arguments)
 
 
-def wrap_ssh(ip, key, uname, caller=None):
+def wrap_ssh(ip, uname=DEFAULTS["uname"], key=None, caller=None):
     """baked ssh command for a server with extra management."""
-    ssh = sh.ssh.bake(f"-i{key}", f"{uname}@{ip}")
+    ssh = ssh_command(ip, uname, key)
     caller = ip if caller is None else caller
 
     @wraps(interpret_command)
     def run_with_ssh(*args, **kwargs):
         return interpret_command(ssh, *args, _host=caller, **kwargs)
+
     return run_with_ssh
 
 
@@ -229,7 +245,7 @@ def interpret_command(
     return interpreter(*command_args, **kwargs)
 
 
-def ssh_dict(server_dict, key, uname, namelist=None):
+def ssh_dict(server_dict, uname=DEFAULTS["uname"], key=None, namelist=None):
     # returns a dict of ssh commands corresponding to
     # a passed dict of name: ip.
     # if namelist is not passed, names them
@@ -237,7 +253,7 @@ def ssh_dict(server_dict, key, uname, namelist=None):
     if not namelist:
         namelist = list(server_dict.keys())
     return {
-        namelist[server_number]: ssh_command(ip, key, uname)
+        namelist[server_number]: ssh_command(ip, uname, key)
         for server_number, ip in enumerate(server_dict.values())
         if ip is not None
     }
@@ -272,17 +288,17 @@ CONDA_SEARCH_PATHS = tuple(
 
 def jupyter_connect(
     ip,
-    key,
-    uname,
+    uname=DEFAULTS["uname"],
+    key=None,
     local_port="8888",
     remote_port="8888",
     env=None,
     get_token=True,
     kill_on_exit=True,
     _bg=True,
-    **command_kwargs
+    **command_kwargs,
 ):
-    command = wrap_ssh(ip, key, uname)
+    command = wrap_ssh(ip, uname, key)
     if env is not None:
         jupyter = f"{find_conda_env(command, env)}" f"/bin/jupyter notebook"
     else:
@@ -300,14 +316,14 @@ def jupyter_connect(
         _done=done,
         _viewer=True,
         _bg=True,
-        **command_kwargs
+        **command_kwargs,
     )
     if get_token:
         token = get_jupyter_token(command, jupyter, remote_port)
         jupyter_url = f"http://localhost:{local_port}/?token={token}"
     else:
         jupyter_url = f"http://localhost:{local_port}"
-    jupyter_tunnel = tunnel(ip, key, uname, local_port, remote_port)
+    jupyter_tunnel = tunnel(ip, uname, key, local_port, remote_port)
     return jupyter_url, jupyter_tunnel, jupyter_launch
 
 
@@ -335,3 +351,19 @@ def find_conda_env(cmd: Callable, env: str) -> str:
         if "True" in line:
             return f"{path}/{suffix}"
     raise FileNotFoundError("conda environment not found.")
+
+
+def find_ssh_key(keyname, paths=None) -> Union[Path, None]:
+    if paths is None:
+        paths = DEFAULTS["secrets_folders"] + [os.getcwd()]
+    paths = listify(paths)
+    for directory in filter(lambda p: p.exists(), map(Path, paths)):
+        matching_private_keys = filter(
+            lambda x: "private key" in Magic().from_file(x),
+            filter(lambda x: keyname in x.name, Path(directory).iterdir())
+        )
+        try:
+            return next(matching_private_keys)
+        except StopIteration:
+            continue
+    return None

@@ -12,13 +12,15 @@ from typing import (
     Sequence,
     MutableMapping,
     Optional,
-    Callable, Mapping,
+    Callable,
+    Mapping,
 )
 
 from botocore.exceptions import ClientError
 from cytoolz.curried import get
 from dustgoggles.func import zero
 import sh
+from dustgoggles.structures import listify
 
 import killscreen.shortcuts as ks
 from killscreen.aws.utilities import (
@@ -32,8 +34,9 @@ from killscreen.ssh import (
     wrap_ssh,
     ssh_key_add,
     find_conda_env,
-    interpret_command,
+    interpret_command, find_ssh_key,
 )
+from killscreen.config import DEFAULTS
 from killscreen.subutils import Viewer, Processlike, Commandlike
 from killscreen.utilities import gmap
 
@@ -50,10 +53,12 @@ def summarize_instance_description(description):
         "state": description.get("State")["Name"],
         "type": description.get("InstanceType"),
         "ip_private": description.get("PrivateIpAddress"),
+        "keyname": description.get("KeyName"),
     }
 
 
 def ls_instances(
+    identifier: Optional[str] = None,
     states: Sequence[str] = ("running", "stopped"),
     raw_filters: Optional[Sequence[Mapping[str, str]]] = None,
     client=None,
@@ -67,9 +72,14 @@ def ls_instances(
     if long=True is not passed, includes only the most regularly-pertinent
     information, flattened, with succint field names.
     """
-    # TODO, maybe: implement abstractions to other parts of the filter system
     client = init_client("ec2", client, session)
     filters = [] if raw_filters is None else raw_filters
+    if identifier is not None:
+        identifier = listify(identifier)
+        if "." in identifier[0]:
+            filters.append({"Name": "ip-address", "Values": identifier})
+        else:
+            filters.append({"Name": "instance-id", "Values": identifier})
     filters.append({"Name": "instance-state-name", "Values": list(states)})
     response = client.describe_instances(Filters=filters)
     descriptions = chain.from_iterable(
@@ -104,8 +114,8 @@ class Instance:
     def __init__(
         self,
         description,
+        uname=DEFAULTS["uname"],
         key=None,
-        uname=None,
         client=None,
         resource=None,
         session=None,
@@ -116,12 +126,7 @@ class Instance:
             # if it's got periods in it, assume it's a public IPv4 address
             if "." in description:
                 client = init_client("ec2", client, session)
-                instance_id = ls_instances(
-                    raw_filters=[
-                        {"Name": "ip-address", "Values": [description]}
-                    ],
-                    client=client,
-                )
+                instance_id = ls_instances(description, client=client)[0]["id"]
             # otherwise assume it's the instance id
             else:
                 instance_id = description
@@ -148,16 +153,32 @@ class Instance:
         else:
             self.name = None
         self.zone = instance_.placement["AvailabilityZone"]
-        self.key, self.uname = key, uname
+        if key is None:
+            key = find_ssh_key(instance_.key_name)
+        self.uname, self.key = uname, key
         self.instance_ = instance_
-        self._command = wrap_ssh(self.ip, self.key, self.uname, self)
+        self._command = wrap_ssh(self.ip, self.uname, self.key, self)
+
+    def _is_unready(self):
+        return (
+            (self.state != "running")
+            or any(p is None for p in (self.ip, self.uname, self.key))
+        )
+
+    def _raise_unready(self):
+        if not self._is_unready():
+            return
+        self.update()
+        if self._is_unready():
+            raise ConnectionError(
+                f"Unable to execute commands on {self.instance_id}. This is "
+                f"most likely because it is not running or because its access "
+                f"key has not been provided."
+            )
 
     @wraps(interpret_command)
     def command(self, *args, **kwargs) -> Union[Viewer, sh.RunningCommand]:
-        if any(p is None for p in (self.ip, self.key, self.uname)):
-            raise AttributeError(
-                "ip, key, and uname must all be set to run ssh commands."
-            )
+        self._raise_unready()
         return self._command(*args, **kwargs)
 
     def commands(
@@ -169,7 +190,8 @@ class Instance:
         return self.command(ks.chain(commands, op), **kwargs)
 
     def notebook(self, **connect_kwargs):
-        return jupyter_connect(self.ip, self.key, self.uname, **connect_kwargs)
+        self._raise_unready()
+        return jupyter_connect(self.ip, self.uname, self.key, **connect_kwargs)
 
     def start(self, return_response=False):
         response = self.instance_.start()
@@ -187,6 +209,7 @@ class Instance:
             return response
 
     def add_key(self):
+        self._raise_unready()
         ssh_key_add(self.ip)
 
     def put(self, source, target, *args, _literal_str=False, **kwargs):
@@ -194,6 +217,7 @@ class Instance:
         copy file from local disk or object from memory to target file on
         instance using scp.
         """
+        self._raise_unready()
         if isinstance(source, str) and (_literal_str is True):
             source_file = "/dev/stdin"
         elif not isinstance(source, (str, Path)):
@@ -213,6 +237,7 @@ class Instance:
 
     def get(self, source, target, *args, **kwargs):
         """copy source file from instance to local target file with scp."""
+        self._raise_unready()
         command_parts = [
             f"-i{self.key}",
             f"{self.uname}@{self.ip}:{source}",
@@ -224,6 +249,7 @@ class Instance:
 
     def read(self, source, *args, **kwargs):
         """copy source file from instance into memory using scp."""
+        self._raise_unready()
         command_parts = [
             f"-i{self.key}",
             f"{self.uname}@{self.ip}:{source}",
@@ -237,6 +263,7 @@ class Instance:
         """
         reads csv-like file from remote host into pandas DataFrame using scp.
         """
+        self._raise_unready()
         import pandas as pd
 
         buffer = io.StringIO()
@@ -263,7 +290,7 @@ class Instance:
     def update(self):
         self.instance_.load()
         self.ip = getattr(self.instance_, f"{self.address_type}_ip_address")
-        self._command = wrap_ssh(self.ip, self.key, self.uname, self)
+        self._command = wrap_ssh(self.ip, self.uname, self.key, self)
 
     def wait_until_running(self, update=True):
         if self.state == "running":
@@ -463,3 +490,12 @@ class Cluster:
         if added is False:
             print("warning: timed out adding keys for one or more instances")
         return cluster
+
+    def __getitem__(self, item):
+        return self.instances[0]
+
+    def __repr__(self):
+        return "\n".join([inst.__repr__() for inst in self.instances])
+
+    def __str__(self):
+        return "\n".join([inst.__str__() for inst in self.instances])
