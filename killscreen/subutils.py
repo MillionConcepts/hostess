@@ -283,6 +283,9 @@ def clean_process_records(
 def run(cmd: str, shell="bash", _viewer=False, **kwargs):
     """
     run the literal text of cmd in the specified shell using `sh`.
+    provides more control than os.system and creates less hassle than
+    `subprocess`, although will not always be preferable to either
+    of those strategies.
     """
     if _viewer is False:
         return getattr(sh, shell)(sh.echo(cmd), **kwargs)

@@ -19,14 +19,15 @@ from typing import (
 from botocore.exceptions import ClientError
 from cytoolz.curried import get
 from dustgoggles.func import zero
-import sh
 from dustgoggles.structures import listify
+import sh
 
+from killscreen.config import DEFAULTS
 import killscreen.shortcuts as ks
 from killscreen.aws.utilities import (
-    tag_dict,
     init_client,
     init_resource,
+    tag_dict,
     tagfilter,
 )
 from killscreen.ssh import (
@@ -34,9 +35,10 @@ from killscreen.ssh import (
     wrap_ssh,
     ssh_key_add,
     find_conda_env,
-    interpret_command, find_ssh_key,
+    interpret_command,
+    find_ssh_key,
+    tunnel,
 )
-from killscreen.config import DEFAULTS
 from killscreen.subutils import Viewer, Processlike, Commandlike
 from killscreen.utilities import gmap
 
@@ -59,7 +61,7 @@ def summarize_instance_description(description):
 
 def ls_instances(
     identifier: Optional[str] = None,
-    states: Sequence[str] = ("running", "stopped"),
+    states: Sequence[str] = ("running", "pending", "stopped"),
     raw_filters: Optional[Sequence[Mapping[str, str]]] = None,
     client=None,
     session=None,
@@ -160,9 +162,8 @@ class Instance:
         self._command = wrap_ssh(self.ip, self.uname, self.key, self)
 
     def _is_unready(self):
-        return (
-            (self.state != "running")
-            or any(p is None for p in (self.ip, self.uname, self.key))
+        return (self.state not in ("running", "pending")) or any(
+            p is None for p in (self.ip, self.uname, self.key)
         )
 
     def _raise_unready(self):
@@ -195,22 +196,31 @@ class Instance:
 
     def start(self, return_response=False):
         response = self.instance_.start()
+        self.update()
         if return_response is True:
             return response
 
     def stop(self, return_response=False):
         response = self.instance_.stop()
+        self.update()
         if return_response is True:
             return response
 
     def terminate(self, return_response=False):
         response = self.instance_.terminate()
+        self.update()
         if return_response is True:
             return response
 
-    def add_key(self):
+    def add_key(self, tries=5, delay=1.5):
         self._raise_unready()
-        ssh_key_add(self.ip)
+        for _ in range(tries):
+            try:
+                ssh_key_add(self.ip)
+            except sh.ErrorReturnCode:
+                time.sleep(delay)
+                continue
+        raise TimeoutError("timed out adding key. try again in a moment.")
 
     def put(self, source, target, *args, _literal_str=False, **kwargs):
         """
@@ -287,8 +297,13 @@ class Instance:
         ).stdout.decode()
         return re.search(r"Location:\s+(.*?)\n", result).group(1)
 
+    def compile_env(self):
+        """"""
+        pass
+
     def update(self):
         self.instance_.load()
+        self.state = self.instance_.state["Name"]
         self.ip = getattr(self.instance_, f"{self.address_type}_ip_address")
         self._command = wrap_ssh(self.ip, self.uname, self.key, self)
 
@@ -298,6 +313,12 @@ class Instance:
         self.instance_.wait_until_running()
         if update is True:
             self.update()
+
+    def tunnel(self, local_port, remote_port, kill=True):
+        self._raise_unready()
+        return tunnel(
+            self.ip, self.uname, self.key, local_port, remote_port, kill
+        )
 
     def __repr__(self):
         string = f"{self.instance_type} in {self.zone} at {self.ip}"
@@ -488,7 +509,10 @@ class Cluster:
                 [instance.update() for instance in cluster.instances]
                 tries += 1
         if added is False:
-            print("warning: timed out adding keys for one or more instances")
+            print(
+                "warning: timed out adding keys for one or more instances. "
+                "try running .add_keys() again in a moment."
+            )
         return cluster
 
     def __getitem__(self, item):

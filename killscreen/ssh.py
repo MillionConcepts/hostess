@@ -129,7 +129,12 @@ def tunnel(
         _host=ip,
     )
     if kill is True:
-        atexit.register(viewer.kill)
+
+        def kill_if_present():
+            if viewer.is_alive():
+                viewer.kill()
+
+        atexit.register(kill_if_present())
     return viewer
 
 
