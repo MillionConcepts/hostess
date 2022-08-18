@@ -1,12 +1,13 @@
-"""generic conversion and utility objects for killscreen"""
+"""generic utility objects for killscreen"""
 import _io
 import datetime as dt
 import logging
 import os
 import re
-import warnings
 from pathlib import Path
 from socket import gethostname
+from typing import Callable, Iterable, Any
+import warnings
 
 import rich.console
 
@@ -99,3 +100,20 @@ def roundstring(string, digits=2):
     return re.sub(
         r"\d+\.\d+", lambda m: str(round(float(m.group()), digits)), string
     )
+
+
+# TODO: temporarily vendored here until the next dustgoggles release
+def gmap(
+    func: Callable,
+    *iterables: Iterable,
+    mapper: Callable[[Callable, tuple[Iterable]], Iterable] = map,
+    evaluator: Callable[[Iterable], Any] = tuple,
+):
+    """
+    'greedy map' function. map func across iterables using mapper and
+    evaluate with evaluator.
+
+    for cases in which you need a terse or configurable way to map and
+    immediately evaluate functions.
+    """
+    return evaluator(mapper(func, *iterables))

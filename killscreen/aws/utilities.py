@@ -1,10 +1,13 @@
 import csv
+from operator import contains
 import os
+import re
 from typing import Optional
 
 import boto3
 import boto3.resources.base
 import botocore.client
+from cytoolz import identity, flip
 
 
 def clear_constructor(semaphore, chunkfile, part_number):
@@ -23,8 +26,9 @@ def clear_constructor(semaphore, chunkfile, part_number):
     return clear_when_done
 
 
-def tag_dict(tag_records):
-    return {tag["Key"]: tag["Value"] for tag in tag_records}
+def tag_dict(tag_records, lower=False):
+    formatter = str.lower if lower is True else identity
+    return {formatter(tag["Key"]): tag["Value"] for tag in tag_records}
 
 
 def read_aws_config_file(path):
@@ -48,15 +52,13 @@ def make_boto_session(profile=None, credential_file=None, region=None):
     if credential_file is None:
         return boto3.Session(profile_name=profile, region_name=region)
     creds = read_aws_config_file(credential_file)
-    for disliked_kwarg in ('user_name', 'password'):
+    for disliked_kwarg in ("user_name", "password"):
         if disliked_kwarg in creds.keys():
             del creds[disliked_kwarg]
     return boto3.Session(**creds, region_name=region)
 
 
-def make_boto_client(
-    service, profile=None, credential_file=None, region=None
-):
+def make_boto_client(service, profile=None, credential_file=None, region=None):
     session = make_boto_session(profile, credential_file, region)
     return session.client(service)
 
@@ -90,3 +92,15 @@ def init_resource(
     if session is not None:
         return session.resource(service)
     return make_boto_resource(service)
+
+
+def tagfilter(description, filters, regex=True):
+    tags = tag_dict(description.get("Tags", []), lower=True)
+    # noinspection PyArgumentList
+    matcher = flip(contains) if regex is True else re.search
+    for key, value in filters.items():
+        if key.lower() not in tags.keys():
+            return False
+        if not matcher(value, tags[key]):
+            return False
+    return True

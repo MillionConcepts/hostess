@@ -2,6 +2,7 @@
 ssh file ops and process functions.
 currently only key-based authentication is supported.
 """
+import atexit
 import io
 from functools import wraps
 from itertools import product
@@ -80,6 +81,7 @@ def scp_read_csv(fname, ip, uname, key, **csv_kwargs):
     buffer = io.StringIO()
     buffer.write(scp_read(fname, ip, uname, key).decode())
     buffer.seek(0)
+    # noinspection PyTypeChecker
     return pd.read_csv(buffer, **csv_kwargs)
 
 
@@ -98,20 +100,25 @@ def scp_merge_csv(server_dict, filename, username, ssh_key, **csv_kwargs):
     return pd.concat(framelist).reset_index(drop=True)
 
 
-def tunnel(ip, key, uname, local_port="8888", remote_port="8888"):
+# TODO, maybe: add an atexit thing warning users about open tunnels
+def tunnel(
+    ip, key, uname, local_port="8888", remote_port="8888", kill=True
+):
     """
     open ssh tunnel binding local_port to remote_port. returns pid of ssh
     process. default arguments bind to default jupyter port.
     """
-    return Viewer.from_command(
+    viewer = Viewer.from_command(
         "ssh",
+        f"-nN",
         f"-i{key}",
         f"-L {local_port}:localhost:{remote_port}",
         f"{uname}@{ip}",
-        "sleep infinity",
         _bg=True,
         _host=ip
     )
+    if kill is True:
+        atexit.register(viewer.kill)
 
 
 def tunnel_through(
@@ -129,11 +136,11 @@ def tunnel_through(
     """
     return Viewer.from_command(
         "ssh",
+        f"-nN",
         f"-i{gateway_key}",
         f"-L",
         f"{tunnel_port}:{server}:{gateway_port}",
         f"{uname}@{gateway}",
-        "sleep infinity",
         _bg=True,
         _host=gateway
     )
@@ -241,10 +248,10 @@ def ssh_dict(server_dict, key, uname, namelist=None):
 TOKEN_PATTERN = re.compile(r"(?<=\?token=)([a-z]|\d)+")
 
 
-def get_jupyter_token(jupyter_command, remote_port):
+def get_jupyter_token(command, jupyter_executable, remote_port):
     for attempt in range(5):
         try:
-            jlist = jupyter_command("list", "")
+            jlist = command(jupyter_executable, "list", "")
             for line in [out.decode() for out in jlist.stdout.splitlines()]:
                 if remote_port in line:
                     return re.search(TOKEN_PATTERN, line).group()
@@ -272,30 +279,31 @@ def jupyter_connect(
     env=None,
     get_token=True,
     kill_on_exit=True,
+    _bg=True,
+    **command_kwargs
 ):
-    command = ssh_command(ip, key, uname)
+    command = wrap_ssh(ip, key, uname)
     if env is not None:
         jupyter = f"{find_conda_env(command, env)}" f"/bin/jupyter notebook"
     else:
         jupyter = "jupyter notebook"
-    jupyter_command = sh.ssh.bake(
-        f"-i{key}", f"{uname}@{ip}", f"{jupyter}", _bg=True, _bg_exc=False
-    )
     if kill_on_exit is True:
 
         def done(*_):
-            jupyter_command("stop", f"--NbserverStopApp.port={remote_port}")
+            command(jupyter, "stop", f"--NbserverStopApp.port={remote_port}")
 
     else:
         done = zero
-    jupyter_launch = Viewer.from_command(
-        jupyter_command,
+    jupyter_launch = command(
+        jupyter,
         f"--port {remote_port} --no-browser",
         _done=done,
-        _host=ip
+        _viewer=True,
+        _bg=True,
+        **command_kwargs
     )
     if get_token:
-        token = get_jupyter_token(jupyter_command, remote_port)
+        token = get_jupyter_token(command, jupyter, remote_port)
         jupyter_url = f"http://localhost:{local_port}/?token={token}"
     else:
         jupyter_url = f"http://localhost:{local_port}"
@@ -312,9 +320,9 @@ def find_conda_env(cmd: Callable, env: str) -> str:
             str(cmd(f"cat", "~/.conda/environments.txt")).split("\n"),
         )
         if env == "base":
-            return next(filter(lambda line: "envs" not in line, envs))
+            return next(filter(lambda l: "envs" not in l, envs))
         else:
-            return next(filter(lambda line: suffix in line, envs))
+            return next(filter(lambda l: suffix in l, envs))
     except (sh.ErrorReturnCode, StopIteration):
         pass
     search = cmd(

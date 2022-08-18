@@ -2,122 +2,88 @@ import io
 import re
 import time
 from collections import defaultdict
-from functools import cache, wraps
+from functools import cache, wraps, partial
+from itertools import chain
 from pathlib import Path
 from typing import (
-    Union, Collection, Literal, Sequence, MutableMapping, Optional, Callable
+    Union,
+    Collection,
+    Literal,
+    Sequence,
+    MutableMapping,
+    Optional,
+    Callable, Mapping,
 )
 
-import sh
 from botocore.exceptions import ClientError
-from cytoolz import concat
+from cytoolz.curried import get
 from dustgoggles.func import zero
+import sh
 
 import killscreen.shortcuts as ks
-from killscreen.aws.utilities import tag_dict, init_client, init_resource
+from killscreen.aws.utilities import (
+    tag_dict,
+    init_client,
+    init_resource,
+    tagfilter,
+)
 from killscreen.ssh import (
     jupyter_connect,
     wrap_ssh,
     ssh_key_add,
     find_conda_env,
-    interpret_command
+    interpret_command,
 )
 from killscreen.subutils import Viewer, Processlike, Commandlike
+from killscreen.utilities import gmap
+
+
+def summarize_instance_description(description):
+    """
+    convert an Instance element of a JSON structure returned by a
+    DescribeInstances operation to a more concise format.
+    """
+    return {
+        "name": tag_dict(description.get("Tags", {})).get("Name"),
+        "ip": description.get("PublicIpAddress"),
+        "id": description.get("InstanceId"),
+        "state": description.get("State")["Name"],
+        "type": description.get("InstanceType"),
+        "ip_private": description.get("PrivateIpAddress"),
+    }
 
 
 def ls_instances(
-    states=None, raw_filters=None, client=None, session=None, flatten=True
+    states: Sequence[str] = ("running", "stopped"),
+    raw_filters: Optional[Sequence[Mapping[str, str]]] = None,
+    client=None,
+    session=None,
+    long: bool = False,
+    tag_regex: bool = True,
+    **tag_filters,
 ):
     """
-    return list describing all instances accessible to aws user,
-    or optionally dict containing instances nested by reservation
+    return tuple of records describing all instances accessible to aws user.
+    if long=True is not passed, includes only the most regularly-pertinent
+    information, flattened, with succint field names.
     """
     # TODO, maybe: implement abstractions to other parts of the filter system
     client = init_client("ec2", client, session)
     filters = [] if raw_filters is None else raw_filters
-    if states is not None:
-        filters.append({"Name": "instance-state-name", "Values": list(states)})
-    instances = client.describe_instances(Filters=filters)
-    if flatten is False:
-        return instances
-    return tuple(concat(res["Instances"] for res in instances["Reservations"]))
-
-
-def describe(
-    tag_filters=None,
-    states=("running",),
-    raw_filters=None,
-    client=None,
-    session=None,
-):
-    """
-    return dict of key:description for all instances accessible to aws user
-    with tags matching tag_filters (using simple string inclusion for now)
-    and state in states. post-filters on the tag filters so that we can use
-    string inclusion rather than exact matching (which the ec2 api does not
-    support).
-    """
-    if tag_filters is None:
-        tag_filters = {}
-    if raw_filters is None:
-        raw_filters = []
-    descriptions = {}
-    for instance in ls_instances(states, raw_filters, client, session):
-        tags = tag_dict(instance.get("Tags", []))
-        match = True
-        for key, value in tag_filters.items():
-            if key not in tags.keys():
-                match = False
-                break
-            if value not in tags[key]:
-                match = False
-                break
-        if match is True:
-            descriptions[instance["InstanceId"]] = instance
-    return descriptions
-
-
-def instance_ips(
-    tag_filters=None,
-    states=("running",),
-    raw_filters=None,
-    client=None,
-    session=None,
-):
-    """
-    dict of key:ip for all instances accessible to aws user
-    with tags matching tag_filters (using simple string inclusion for now)
-    and state in states. post-filters on the tag filters so that we can use
-    string inclusion rather than exact matching (which the ec2 api does not
-    support).
-    """
-    descriptions = describe(
-        tag_filters, states, raw_filters, client, session
+    filters.append({"Name": "instance-state-name", "Values": list(states)})
+    response = client.describe_instances(Filters=filters)
+    descriptions = chain.from_iterable(
+        map(get("Instances"), response["Reservations"])
     )
-    return {
-        instance_id: description.get("PublicIpAddress")
-        for instance_id, description in descriptions.items()
-    }
-
-
-def instance_ids(
-    tag_filters=None,
-    states=("running",),
-    raw_filters=None,
-    client=None,
-    session=None,
-):
-    """
-    tuple of instance ids for all instances accessible to aws user
-    with tags matching tag_filters (using simple string inclusion for now)
-    and state in states. post-filters on the tag filters so that we can use
-    string inclusion rather than exact matching (which the ec2 api does not
-    support).
-    """
-    descriptions = describe(
-        tag_filters, states, raw_filters, client, session
+    # the ec2 api does not support string inclusion or other fuzzy filters.
+    # we would like to be able to fuzzy-filter, so we apply our tag filters to
+    # the structure returned by boto3 from its DescribeInstances call.
+    descriptions = filter(
+        partial(tagfilter, filters=tag_filters, regex=tag_regex), descriptions
     )
-    return tuple(descriptions.keys())
+    if long is False:
+        return gmap(summarize_instance_description, descriptions)
+    return tuple(descriptions)
 
 
 def instances_from_ids(
@@ -143,7 +109,7 @@ class Instance:
         client=None,
         resource=None,
         session=None,
-        use_private_ip=False
+        use_private_ip=False,
     ):
         resource = init_resource("ec2", resource, session)
         if isinstance(description, str):
@@ -154,15 +120,19 @@ class Instance:
                     raw_filters=[
                         {"Name": "ip-address", "Values": [description]}
                     ],
-                    client=client
+                    client=client,
                 )
             # otherwise assume it's the instance id
             else:
                 instance_id = description
         # otherwise assume it's a full description like from
         # ls_instances / ec2.describe_instance*
-        else:
+        elif "id" in description.keys():
+            instance_id = description["id"]
+        elif "InstanceId" in description.keys():
             instance_id = description["InstanceId"]
+        else:
+            raise ValueError("can't interpret this description.")
         instance_ = resource.Instance(instance_id)
         self.instance_id = instance_id
         self.address_type = "private" if use_private_ip is True else "public"
@@ -194,7 +164,7 @@ class Instance:
         self,
         commands: Sequence[Commandlike],
         op: Literal["and", "xor", "then"] = "then",
-        **kwargs
+        **kwargs,
     ) -> Processlike:
         return self.command(ks.chain(commands, op), **kwargs)
 
@@ -231,7 +201,9 @@ class Instance:
         else:
             source_file = source
         command_parts = [
-            f"-i{self.key}", source_file, f"{self.uname}@{self.ip}:{target}"
+            f"-i{self.key}",
+            source_file,
+            f"{self.uname}@{self.ip}:{target}",
         ]
         if source_file == "/dev/stdin":
             command_parts.append(source)
@@ -242,7 +214,9 @@ class Instance:
     def get(self, source, target, *args, **kwargs):
         """copy source file from instance to local target file with scp."""
         command_parts = [
-            f"-i{self.key}", f"{self.uname}@{self.ip}:{source}", target
+            f"-i{self.key}",
+            f"{self.uname}@{self.ip}:{source}",
+            target,
         ]
         return interpret_command(
             sh.scp, *command_parts, *args, _host=self, **kwargs
@@ -251,7 +225,9 @@ class Instance:
     def read(self, source, *args, **kwargs):
         """copy source file from instance into memory using scp."""
         command_parts = [
-            f"-i{self.key}", f"{self.uname}@{self.ip}:{source}", "/dev/stdout"
+            f"-i{self.key}",
+            f"{self.uname}@{self.ip}:{source}",
+            "/dev/stdout",
         ]
         return interpret_command(
             sh.scp, *command_parts, *args, _host=self, **kwargs
@@ -266,6 +242,7 @@ class Instance:
         buffer = io.StringIO()
         buffer.write(self.read(source).decode())
         buffer.seek(0)
+        # noinspection PyTypeChecker
         return pd.read_csv(buffer, **csv_kwargs)
 
     @cache
@@ -311,10 +288,7 @@ class Cluster:
         self.fleet_request = None
 
     def command(
-        self,
-        *args,
-        _viewer=True,
-        **kwargs
+        self, *args, _viewer=True, **kwargs
     ) -> tuple[Processlike, ...]:
         return tuple(
             [
@@ -368,11 +342,9 @@ class Cluster:
             MutableMapping[str, Literal["running", "done"]]
         ] = None,
         callback: Callable = zero,
-        delay=0.02
+        delay=0.02,
     ):
-        status = {
-            instance.instance_id: "ready" for instance in self.instances
-        }
+        status = {instance.instance_id: "ready" for instance in self.instances}
 
         def finish_factory(instance_id):
             def finisher(*args, **kwargs):
@@ -405,7 +377,7 @@ class Cluster:
                     _bg=True,
                     _bg_exc=False,
                     _viewer=True,
-                    _done=finish_factory(instance.instance_id)
+                    _done=finish_factory(instance.instance_id),
                 )
                 commands[instance.instance_id].append(command)
             time.sleep(delay)
@@ -455,6 +427,7 @@ class Cluster:
                 client=client,
                 **instance_kwargs,
             )
+
         instances = []
         for _ in range(5):
             try:
@@ -479,15 +452,14 @@ class Cluster:
         print("scanning instance ssh keys")
         added = False
         tries = 0
-        while (tries < 10) and (added is False):
+        while (tries < 12) and (added is False):
             try:
                 cluster.add_keys()
                 added = True
-            except sh.ErrorReturnCode as error:
+            except sh.ErrorReturnCode:
                 time.sleep(max(6 - tries, 2))
                 [instance.update() for instance in cluster.instances]
                 tries += 1
         if added is False:
             print("warning: timed out adding keys for one or more instances")
         return cluster
-
