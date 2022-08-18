@@ -134,7 +134,7 @@ def tunnel(
             if viewer.is_alive():
                 viewer.kill()
 
-        atexit.register(kill_if_present())
+        atexit.register(kill_if_present)
     return viewer
 
 
