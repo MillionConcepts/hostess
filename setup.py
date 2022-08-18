@@ -16,6 +16,7 @@ setup(
         "flask",
         "pandas",
         "pip",
+        "python-magic",
         "requests",
         "rich",
         "sh"
