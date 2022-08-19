@@ -97,10 +97,10 @@ def init_resource(
 def tagfilter(description, filters, regex=True):
     tags = tag_dict(description.get("Tags", []), lower=True)
     # noinspection PyArgumentList
-    matcher = flip(contains) if regex is True else re.search
+    matcher = flip(contains) if regex is False else re.search
     for key, value in filters.items():
         if key.lower() not in tags.keys():
             return False
-        if not matcher(value, tags[key]):
+        if not matcher(value, tags[key.lower()]):
             return False
     return True
