@@ -6,10 +6,14 @@ import os
 from pathlib import Path
 
 home = os.path.expanduser("~")
-DEFAULTS = {
-    "uname": os.getlogin(),
+GENERAL_DEFAULTS = {
     "secrets_folders": [
         Path(home, ".killscreen", "secrets"),
         Path(home, ".ssh"),
     ],
+    "uname": os.getlogin(),
+}
+EC2_DEFAULTS = {
+    "instance_type": "t3.small",
+    "volume_type": "gp3"
 }

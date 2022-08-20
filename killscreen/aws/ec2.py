@@ -24,7 +24,7 @@ from dustgoggles.func import zero
 from dustgoggles.structures import listify
 import sh
 
-from killscreen.config import DEFAULTS
+from killscreen.config import EC2_DEFAULTS, GENERAL_DEFAULTS
 import killscreen.shortcuts as ks
 from killscreen.aws.utilities import (
     init_client,
@@ -118,7 +118,7 @@ class Instance:
     def __init__(
         self,
         description,
-        uname=DEFAULTS["uname"],
+        uname=GENERAL_DEFAULTS["uname"],
         key=None,
         client=None,
         resource=None,

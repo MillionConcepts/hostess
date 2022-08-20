@@ -19,7 +19,7 @@ import sh
 from magic import Magic
 
 import killscreen.shortcuts as ks
-from killscreen.config import DEFAULTS
+from killscreen.config import GENERAL_DEFAULTS
 from killscreen.subutils import Viewer, split_sh_stream
 from killscreen.utilities import filestamp
 
@@ -43,7 +43,7 @@ def ssh_key_add(ip_list):
             sh.ssh_keyscan("-t", "rsa", ip, _out=hostfile)
 
 
-def scp_to(source, target, ip, uname=DEFAULTS["uname"], key=None):
+def scp_to(source, target, ip, uname=GENERAL_DEFAULTS["uname"], key=None):
     """
     copy file from memory to remote host using scp.
     currently only key-based authentication is supported.
@@ -54,7 +54,7 @@ def scp_to(source, target, ip, uname=DEFAULTS["uname"], key=None):
     return sh.scp(*arguments).stdout.decode()
 
 
-def scp_from(source, target, ip, uname=DEFAULTS["uname"], key=None):
+def scp_from(source, target, ip, uname=GENERAL_DEFAULTS["uname"], key=None):
     """
     copy file from remote host to file using scp.
     currently only key-based authentication is supported.
@@ -65,7 +65,7 @@ def scp_from(source, target, ip, uname=DEFAULTS["uname"], key=None):
     return sh.scp(*arguments).stdout.decode()
 
 
-def scp_read(fname, ip, uname=DEFAULTS["uname"], key=None):
+def scp_read(fname, ip, uname=GENERAL_DEFAULTS["uname"], key=None):
     """
     copy file from remote host into memory using scp.
     currently only key-based authentication is supported.
@@ -76,7 +76,9 @@ def scp_read(fname, ip, uname=DEFAULTS["uname"], key=None):
     return sh.scp(*arguments).stdout
 
 
-def scp_read_csv(fname, ip, uname=DEFAULTS["uname"], key=None, **csv_kwargs):
+def scp_read_csv(
+    fname, ip, uname=GENERAL_DEFAULTS["uname"], key=None, **csv_kwargs
+):
     """
     reads csv-like file from remote host into pandas DataFrame using csv.
     """
@@ -90,7 +92,11 @@ def scp_read_csv(fname, ip, uname=DEFAULTS["uname"], key=None, **csv_kwargs):
 
 
 def scp_merge_csv(
-    server_dict, filename, uname=DEFAULTS["uname"], key=None, **csv_kwargs
+    server_dict,
+    filename,
+    uname=GENERAL_DEFAULTS["uname"],
+    key=None,
+    **csv_kwargs,
 ):
     """
     merges csv files -- logs, perhaps -- from across a defined group
@@ -109,7 +115,7 @@ def scp_merge_csv(
 # TODO, maybe: add an atexit thing warning users about open tunnels
 def tunnel(
     ip,
-    uname=DEFAULTS["uname"],
+    uname=GENERAL_DEFAULTS["uname"],
     key=None,
     local_port="8888",
     remote_port="8888",
@@ -141,7 +147,7 @@ def tunnel(
 def tunnel_through(
     gateway,
     server,
-    uname=DEFAULTS["uname"],
+    uname=GENERAL_DEFAULTS["uname"],
     gateway_key=None,
     tunnel_port="8888",
     gateway_port="22",
@@ -163,7 +169,7 @@ def tunnel_through(
     )
 
 
-def ssh_command(ip, uname=DEFAULTS["uname"], key=None):
+def ssh_command(ip, uname=GENERAL_DEFAULTS["uname"], key=None):
     """baked ssh command for a server."""
     arguments = [f"{uname}@{ip}"]
     if key is not None:
@@ -171,7 +177,7 @@ def ssh_command(ip, uname=DEFAULTS["uname"], key=None):
     return sh.ssh.bake(*arguments)
 
 
-def wrap_ssh(ip, uname=DEFAULTS["uname"], key=None, caller=None):
+def wrap_ssh(ip, uname=GENERAL_DEFAULTS["uname"], key=None, caller=None):
     """baked ssh command for a server with extra management."""
     ssh = ssh_command(ip, uname, key)
     caller = ip if caller is None else caller
@@ -250,7 +256,9 @@ def interpret_command(
     return interpreter(*command_args, **kwargs)
 
 
-def ssh_dict(server_dict, uname=DEFAULTS["uname"], key=None, namelist=None):
+def ssh_dict(
+    server_dict, uname=GENERAL_DEFAULTS["uname"], key=None, namelist=None
+):
     # returns a dict of ssh commands corresponding to
     # a passed dict of name: ip.
     # if namelist is not passed, names them
@@ -293,7 +301,7 @@ CONDA_SEARCH_PATHS = tuple(
 
 def jupyter_connect(
     ip,
-    uname=DEFAULTS["uname"],
+    uname=GENERAL_DEFAULTS["uname"],
     key=None,
     local_port="8888",
     remote_port="8888",
@@ -360,12 +368,12 @@ def find_conda_env(cmd: Callable, env: str) -> str:
 
 def find_ssh_key(keyname, paths=None) -> Union[Path, None]:
     if paths is None:
-        paths = DEFAULTS["secrets_folders"] + [os.getcwd()]
+        paths = GENERAL_DEFAULTS["secrets_folders"] + [os.getcwd()]
     paths = listify(paths)
     for directory in filter(lambda p: p.exists(), map(Path, paths)):
         matching_private_keys = filter(
             lambda x: "private key" in Magic().from_file(x),
-            filter(lambda x: keyname in x.name, Path(directory).iterdir())
+            filter(lambda x: keyname in x.name, Path(directory).iterdir()),
         )
         try:
             return next(matching_private_keys)
