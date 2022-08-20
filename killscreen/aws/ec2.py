@@ -195,18 +195,21 @@ class Instance:
         return jupyter_connect(self.ip, self.uname, self.key, **connect_kwargs)
 
     def start(self, return_response=False):
+        """ Start the instance. """
         response = self.instance_.start()
         self.update()
         if return_response is True:
             return response
 
     def stop(self, return_response=False):
+        """ Stop the instance. """
         response = self.instance_.stop()
         self.update()
         if return_response is True:
             return response
 
     def terminate(self, return_response=False):
+        """ Terminate (aka delete) the instance. """
         response = self.instance_.terminate()
         self.update()
         if return_response is True:
@@ -303,12 +306,15 @@ class Instance:
         pass
 
     def update(self):
+        """ Update locally available information about the instance. """
         self.instance_.load()
         self.state = self.instance_.state["Name"]
         self.ip = getattr(self.instance_, f"{self.address_type}_ip_address")
         self._command = wrap_ssh(self.ip, self.uname, self.key, self)
 
     def wait_until_running(self, update=True):
+        """ Pause execution until the instance state=='running'
+        Will update the locally available information by default. """
         if self.state == "running":
             return
         self.instance_.wait_until_running()
@@ -363,6 +369,7 @@ class Cluster:
 
     # TODO: make these run asynchronously
     def start(self, return_response=False):
+        """ Start the instances. """
         responses = []
         for instance in self.instances:
             responses.append(instance.start(return_response))
@@ -370,6 +377,7 @@ class Cluster:
             return responses
 
     def stop(self, return_response=False):
+        """ Stop the instances. """
         responses = []
         for instance in self.instances:
             responses.append(instance.stop(return_response))
@@ -377,6 +385,7 @@ class Cluster:
             return responses
 
     def terminate(self, return_response=False):
+        """ Terminate (aka delete) the instances. """
         responses = []
         for instance in self.instances:
             responses.append(instance.terminate(return_response))

@@ -28,7 +28,7 @@ git clone https://github.com/MillionConcepts/killscreen.git
 cd killscreen
 mamba env create -f environment.yml
 conda activate killscreen
-pip install -e.
+pip install -e .
 ```
 
 ## compatibility
