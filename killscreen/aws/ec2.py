@@ -1,3 +1,4 @@
+import datetime as dt
 import io
 import re
 import time
@@ -18,6 +19,7 @@ from typing import (
 
 from botocore.exceptions import ClientError
 from cytoolz.curried import get
+import dateutil.parser as dtp
 from dustgoggles.func import zero
 from dustgoggles.structures import listify
 import sh
@@ -195,21 +197,21 @@ class Instance:
         return jupyter_connect(self.ip, self.uname, self.key, **connect_kwargs)
 
     def start(self, return_response=False):
-        """ Start the instance. """
+        """Start the instance."""
         response = self.instance_.start()
         self.update()
         if return_response is True:
             return response
 
     def stop(self, return_response=False):
-        """ Stop the instance. """
+        """Stop the instance."""
         response = self.instance_.stop()
         self.update()
         if return_response is True:
             return response
 
     def terminate(self, return_response=False):
-        """ Terminate (aka delete) the instance. """
+        """Terminate (aka delete) the instance."""
         response = self.instance_.terminate()
         self.update()
         if return_response is True:
@@ -306,15 +308,15 @@ class Instance:
         pass
 
     def update(self):
-        """ Update locally available information about the instance. """
+        """Update locally available information about the instance."""
         self.instance_.load()
         self.state = self.instance_.state["Name"]
         self.ip = getattr(self.instance_, f"{self.address_type}_ip_address")
         self._command = wrap_ssh(self.ip, self.uname, self.key, self)
 
     def wait_until_running(self, update=True):
-        """ Pause execution until the instance state=='running'
-        Will update the locally available information by default. """
+        """Pause execution until the instance state=='running'
+        Will update the locally available information by default."""
         if self.state == "running":
             return
         self.instance_.wait_until_running()
@@ -369,7 +371,7 @@ class Cluster:
 
     # TODO: make these run asynchronously
     def start(self, return_response=False):
-        """ Start the instances. """
+        """Start the instances."""
         responses = []
         for instance in self.instances:
             responses.append(instance.start(return_response))
@@ -377,7 +379,7 @@ class Cluster:
             return responses
 
     def stop(self, return_response=False):
-        """ Stop the instances. """
+        """Stop the instances."""
         responses = []
         for instance in self.instances:
             responses.append(instance.stop(return_response))
@@ -385,7 +387,7 @@ class Cluster:
             return responses
 
     def terminate(self, return_response=False):
-        """ Terminate (aka delete) the instances. """
+        """Terminate (aka delete) the instances."""
         responses = []
         for instance in self.instances:
             responses.append(instance.terminate(return_response))
@@ -533,3 +535,60 @@ class Cluster:
 
     def __str__(self):
         return "\n".join([inst.__str__() for inst in self.instances])
+
+
+def get_canonical_images(
+    architecture: Literal["x86_64", "arm64", "i386"] = "x86_64",
+    client=None,
+    session=None
+) -> list[dict]:
+    """
+    fetch the subset of official Canonical images we might
+    plausibly want to offer as defaults to users. this will still
+    generally return hundreds of images and take > 1.5 seconds because
+    of the number of unsupported daily builds available.
+    """
+    client = init_client("ec2", client, session)
+    # this perhaps excessive-looking optimization is intended to reduce the
+    # time of the API call and the chance we will pick a 'bad' image.
+    # Canonical generally drops LTS images at a quicker cadence than 7 months.
+    month_globs = [
+        f"{(dt.datetime.now() - dt.timedelta(days=30 * n)).isoformat()[:7]}*"
+        for n in range(7)
+    ]
+    return client.describe_images(
+        Filters=[
+            {'Name': 'creation-date', 'Values': list(set(month_globs))},
+            {'Name': 'block-device-mapping.volume-size', 'Values': ['8']},
+            {'Name': 'architecture', 'Values': [architecture]}
+        ],
+        Owners=['099720109477']
+    )['Images']
+
+
+def get_stock_ubuntu_image(
+    architecture: Literal["x86_64", "arm64", "i386"] = "x86_64",
+    client=None,
+    session=None
+) -> str:
+    """
+    retrieve image ID of the most recent officially-supported
+    Canonical Ubuntu Server LTS AMI for the provided architecture.
+    """
+    available_images = get_canonical_images(architecture, client, session)
+    supported_lts_images = [
+        i for i in available_images if (
+            ("UNSUPPORTED" not in i['Description'])
+            and ("LTS" in i['Description'])
+            and ('FIPS' not in i['Description'])
+        )
+    ]
+    dates = {
+        ix: date for ix, date in enumerate(
+            map(dtp.parse, map(get("CreationDate"), supported_lts_images))
+        )
+    }
+    idxmax = [
+        ix for ix, date in dates.items() if date == max(dates.values())
+    ][0]
+    return supported_lts_images[idxmax]['ImageId']
