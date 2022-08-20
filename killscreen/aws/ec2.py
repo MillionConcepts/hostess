@@ -24,6 +24,7 @@ from dustgoggles.func import zero
 from dustgoggles.structures import listify
 import sh
 
+from killscreen.aws.pricing import get_on_demand_price, get_cpu_credit_price
 from killscreen.config import EC2_DEFAULTS, GENERAL_DEFAULTS
 import killscreen.shortcuts as ks
 from killscreen.aws.utilities import (
@@ -315,38 +316,44 @@ class Instance:
         self._command = wrap_ssh(self.ip, self.uname, self.key, self)
 
     def wait_until(self, state):
-        """ Pause execution until the instance state is met.
+        """Pause execution until the instance state is met.
         Will update locally available information."""
-        assert state in ['running', 'stopped', 'terminated', # likely useful
-                         'stopping', 'pending', 'shutting-down'] # unlikely
-        while self.state!=state:
+        assert state in [
+            "running",
+            "stopped",
+            "terminated",  # likely useful
+            "stopping",
+            "pending",
+            "shutting-down",
+        ]  # unlikely
+        while self.state != state:
             self.update()
             continue
 
     def wait_until_running(self):
         """Pause execution until the instance state=='running'
         Will update the locally available information by default."""
-        self.wait_until('running')
+        self.wait_until("running")
 
     def wait_until_stopped(self):
         """Pause execution until the instance state=='stopped'
         Will update the locally available information by default."""
-        self.wait_until('stopped')
+        self.wait_until("stopped")
 
     def wait_until_terminated(self):
         """Pause execution until the instance state=='stopped'
         Will update the locally available information by default."""
-        self.wait_until('terminated')
+        self.wait_until("terminated")
 
-    def reboot(self,wait_until_running=True):
-        """ Reboot the instance. Pause execution until done. """
+    def reboot(self, wait_until_running=True):
+        """Reboot the instance. Pause execution until done."""
         self.stop()
         self.wait_until_stopped()
         self.start()
         if wait_until_running:
             self.wait_until_running()
 
-    def restart(self,wait_until_running=True):
+    def restart(self, wait_until_running=True):
         # an alias for reboot()
         self.reboot(wait_until_running=wait_until_running)
 
@@ -567,7 +574,7 @@ class Cluster:
 def get_canonical_images(
     architecture: Literal["x86_64", "arm64", "i386"] = "x86_64",
     client=None,
-    session=None
+    session=None,
 ) -> list[dict]:
     """
     fetch the subset of official Canonical images we might
@@ -585,18 +592,18 @@ def get_canonical_images(
     ]
     return client.describe_images(
         Filters=[
-            {'Name': 'creation-date', 'Values': list(set(month_globs))},
-            {'Name': 'block-device-mapping.volume-size', 'Values': ['8']},
-            {'Name': 'architecture', 'Values': [architecture]}
+            {"Name": "creation-date", "Values": list(set(month_globs))},
+            {"Name": "block-device-mapping.volume-size", "Values": ["8"]},
+            {"Name": "architecture", "Values": [architecture]},
         ],
-        Owners=['099720109477']
-    )['Images']
+        Owners=["099720109477"],
+    )["Images"]
 
 
 def get_stock_ubuntu_image(
     architecture: Literal["x86_64", "arm64", "i386"] = "x86_64",
     client=None,
-    session=None
+    session=None,
 ) -> str:
     """
     retrieve image ID of the most recent officially-supported
@@ -604,18 +611,99 @@ def get_stock_ubuntu_image(
     """
     available_images = get_canonical_images(architecture, client, session)
     supported_lts_images = [
-        i for i in available_images if (
-            ("UNSUPPORTED" not in i['Description'])
-            and ("LTS" in i['Description'])
-            and ('FIPS' not in i['Description'])
+        i
+        for i in available_images
+        if (
+            ("UNSUPPORTED" not in i["Description"])
+            and ("LTS" in i["Description"])
+            and ("FIPS" not in i["Description"])
         )
     ]
     dates = {
-        ix: date for ix, date in enumerate(
+        ix: date
+        for ix, date in enumerate(
             map(dtp.parse, map(get("CreationDate"), supported_lts_images))
         )
     }
-    idxmax = [
-        ix for ix, date in dates.items() if date == max(dates.values())
-    ][0]
-    return supported_lts_images[idxmax]['ImageId']
+    release_date = max(dates.values())[0]
+    idxmax = [ix for ix, date in dates.items() if date == release_date][0]
+    return supported_lts_images[idxmax]["ImageId"]
+
+
+# noinspection PyTypedDict
+def summarize_instance_type_structure(structure) -> dict:
+    """
+    summarize an individual instance type description from a wrapped
+    description call
+    """
+    attributes = {
+        "instance_type": structure["InstanceType"],
+        "architecture": structure["ProcessorInfo"]["SupportedArchitectures"][
+            0
+        ],
+        "cpus": structure["VCpuInfo"]["DefaultVCpus"],
+        "cpu_speed": structure["ProcessorInfo"]["SustainedClockSpeedInGhz"],
+        "ram": structure["MemoryInfo"]["SizeInMiB"] / 1024,
+        "bw": structure["NetworkInfo"]["NetworkPerformance"],
+    }
+    if "EbsOptimizedInfo" in structure["EbsInfo"].keys():
+        ebs = structure["EbsInfo"]["EbsOptimizedInfo"]
+        attributes["ebs_bw"] = (
+            ebs["BaselineThroughputInMBps"],
+            ebs["MaximumThroughputInMBps"],
+        )
+        attributes["ebs_iops"] = (ebs["BaselineIops"], ebs["MaximumIops"])
+    else:
+        attributes["ebs_bw"], attributes["ebs_iops"] = "unknown", "unknown"
+    if structure["InstanceStorageSupported"] is True:
+        attributes["disks"] = structure["InstanceStorageInfo"]["Disks"]
+        attributes["local_storage"] = structure["InstanceStorageInfo"][
+            "TotalSizeInGB"
+        ]
+    else:
+        attributes["disks"] = []
+        attributes["local_storage"] = 0
+    attributes["cpu_surcharge"] = structure["BurstablePerformanceSupported"]
+    return attributes
+
+
+def summarize_instance_type_response(response) -> tuple[dict]:
+    """
+    summarize a series of instance type descriptions as returned from a
+    boto3-wrapped
+    DescribeInstanceTypes or DescribeInstanceTypeOfferings call
+    """
+    types = response["InstanceTypes"]
+    return gmap(summarize_instance_type_structure, types)
+
+
+# TODO: maybe we need to do something fancier to support passing a session
+#  or region/credentials around to support the pricing features here
+def describe_instance_type(
+    instance_type: str,
+    pricing: bool = True,
+    ec2_client=None,
+    pricing_client=None,
+    session=None,
+) -> dict:
+    """
+    note that this function will report i386 architecture for the
+    very limited number of instance types that support both i386
+    and x86_64.
+    """
+    ec2_client = init_client("ec2", ec2_client, session)
+    response = ec2_client.describe_instance_types(
+        InstanceTypes=[instance_type]
+    )
+    summary = summarize_instance_type_response(response)[0]
+    if pricing is False:
+        return summary
+    pricing_client = init_client("pricing", pricing_client, session)
+    summary["on_demand_price"] = get_on_demand_price(
+        instance_type, None, pricing_client
+    )
+    if instance_type.startswith("t"):
+        summary["cpu_credit_price"] = get_cpu_credit_price(
+            instance_type, None, pricing_client
+        )
+    return summary
