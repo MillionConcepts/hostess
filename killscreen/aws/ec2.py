@@ -314,14 +314,41 @@ class Instance:
         self.ip = getattr(self.instance_, f"{self.address_type}_ip_address")
         self._command = wrap_ssh(self.ip, self.uname, self.key, self)
 
-    def wait_until_running(self, update=True):
+    def wait_until(self, state):
+        """ Pause execution until the instance state is met.
+        Will update locally available information."""
+        assert state in ['running', 'stopped', 'terminated', # likely useful
+                         'stopping', 'pending', 'shutting-down'] # unlikely
+        while self.state!=state:
+            self.update()
+            continue
+
+    def wait_until_running(self):
         """Pause execution until the instance state=='running'
         Will update the locally available information by default."""
-        if self.state == "running":
-            return
-        self.instance_.wait_until_running()
-        if update is True:
-            self.update()
+        self.wait_until('running')
+
+    def wait_until_stopped(self):
+        """Pause execution until the instance state=='stopped'
+        Will update the locally available information by default."""
+        self.wait_until('stopped')
+
+    def wait_until_terminated(self):
+        """Pause execution until the instance state=='stopped'
+        Will update the locally available information by default."""
+        self.wait_until('terminated')
+
+    def reboot(self,wait_until_running=True):
+        """ Reboot the instance. Pause execution until done. """
+        self.stop()
+        self.wait_until_stopped()
+        self.start()
+        if wait_until_running:
+            self.wait_until_running()
+
+    def restart(self,wait_until_running=True):
+        # an alias for reboot()
+        self.reboot(wait_until_running=wait_until_running)
 
     def tunnel(self, local_port, remote_port, kill=True):
         self._raise_unready()
