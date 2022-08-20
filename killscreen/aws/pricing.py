@@ -5,6 +5,13 @@ from dustgoggles.structures import dig_for_value
 from killscreen.aws.utilities import init_client
 
 
+# TODO: we'll want to cache these, but it's somewhat challenging to do so
+#  with PSL objects because we need to be able to pass clients / sessions to
+#  them, and we want to get the same answers for instance_type and region
+#  even if we pass different clients and sessions. cachetools
+#  (https://github.com/tkem/cachetools) is an option, as is something
+#  handrolled.
+
 def get_on_demand_price(instance_type, region=None, client=None, session=None):
     """
     fetch on-dmeand pricing information for a specific instance type.
