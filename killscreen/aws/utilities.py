@@ -8,6 +8,7 @@ import boto3
 import boto3.resources.base
 import botocore.client
 from cytoolz import identity, flip
+from cytoolz.curried import mapcat, get
 
 
 def clear_constructor(semaphore, chunkfile, part_number):
@@ -104,3 +105,27 @@ def tagfilter(description, filters, regex=True):
         if not matcher(value, tags[key.lower()]):
             return False
     return True
+
+
+# noinspection PyProtectedMember
+def clarify_region(region=None, boto_obj=None):
+    if region is not None:
+        return region
+    if "region_name" in dir(boto_obj):
+        return boto_obj.region_name
+    elif "_client_config" in dir(boto_obj):
+        return boto_obj._client_config.region_name
+    raise AttributeError(f"Don't know how to read region from {boto_obj}.")
+
+
+def autopage(client, operation, agg=None, *args, **kwargs):
+    assert client.can_paginate(operation)
+    if isinstance(agg, str):
+        agg = mapcat(get(agg))
+    pager = iter(client.get_paginator(operation).paginate(*args, **kwargs))
+    if agg is not None:
+        return tuple(agg(pager))
+    page = next(pager)
+    lengths = [(k, len(v)) for k, v in page.items() if isinstance(v, list)]
+    aggkey = [k for k, v in lengths if v == max([v for _, v in lengths])][0]
+    return tuple(get(aggkey)(page) + list(mapcat(get(aggkey))(pager)))

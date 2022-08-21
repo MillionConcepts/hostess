@@ -31,7 +31,7 @@ from killscreen.aws.utilities import (
     init_client,
     init_resource,
     tag_dict,
-    tagfilter,
+    tagfilter, autopage,
 )
 from killscreen.ssh import (
     jupyter_connect,
@@ -636,25 +636,21 @@ def summarize_instance_type_structure(structure) -> dict:
     summarize an individual instance type description from a wrapped
     description call
     """
+    proc = structure["ProcessorInfo"]
     attributes = {
         "instance_type": structure["InstanceType"],
-        "architecture": structure["ProcessorInfo"]["SupportedArchitectures"][
-            0
-        ],
+        "architecture": proc["SupportedArchitectures"][0],
         "cpus": structure["VCpuInfo"]["DefaultVCpus"],
-        "cpu_speed": structure["ProcessorInfo"]["SustainedClockSpeedInGhz"],
+        "cpu_speed": proc.get("SustainedClockSpeedInGhz"),
         "ram": structure["MemoryInfo"]["SizeInMiB"] / 1024,
         "bw": structure["NetworkInfo"]["NetworkPerformance"],
     }
     if "EbsOptimizedInfo" in structure["EbsInfo"].keys():
         ebs = structure["EbsInfo"]["EbsOptimizedInfo"]
-        attributes["ebs_bw"] = (
-            ebs["BaselineThroughputInMBps"],
-            ebs["MaximumThroughputInMBps"],
-        )
-        attributes["ebs_iops"] = (ebs["BaselineIops"], ebs["MaximumIops"])
-    else:
-        attributes["ebs_bw"], attributes["ebs_iops"] = "unknown", "unknown"
+        attributes["ebs_bw_min"] = ebs["BaselineThroughputInMBps"]
+        attributes["ebs_bw_max"] = ebs["MaximumThroughputInMBps"]
+        attributes["ebs_iops_min"] = ebs["BaselineIops"]
+        attributes["ebs_iops_max"] = ebs["MaximumIops"]
     if structure["InstanceStorageSupported"] is True:
         attributes["disks"] = structure["InstanceStorageInfo"]["Disks"]
         attributes["local_storage"] = structure["InstanceStorageInfo"][
@@ -679,6 +675,8 @@ def summarize_instance_type_response(response) -> tuple[dict]:
 
 # TODO: maybe we need to do something fancier to support passing a session
 #  or region/credentials around to support the pricing features here
+
+# TODO: fail only partially if denied permissions for Price List
 def describe_instance_type(
     instance_type: str,
     pricing: bool = True,
@@ -707,3 +705,9 @@ def describe_instance_type(
             instance_type, None, pricing_client
         )
     return summary
+
+
+def get_all_instance_types(client, session):
+    client = init_client("ec2", client, session)
+    return autopage(client, "describe_instance_types")
+

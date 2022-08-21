@@ -2,7 +2,7 @@ import json
 
 from dustgoggles.structures import dig_for_value
 
-from killscreen.aws.utilities import init_client
+from killscreen.aws.utilities import init_client, clarify_region
 
 
 # TODO: we'll want to cache these, but it's somewhat challenging to do so
@@ -17,8 +17,7 @@ def get_on_demand_price(instance_type, region=None, client=None, session=None):
     fetch on-dmeand pricing information for a specific instance type.
     """
     client = init_client("pricing", client, session)
-    if region is None:
-        region = client._client_config.region_name
+    region = clarify_region(region, client)
     product = client.get_products(
         ServiceCode="AmazonEC2",
         Filters=[
@@ -43,9 +42,7 @@ def get_cpu_credit_price(
     instance_type, region=None, client=None, session=None
 ):
     client = init_client("pricing", client, session)
-    if region is None:
-        # noinspection PyProtectedMember
-        region = client._client_config.region_name
+    region = clarify_region(region, client)
     product = client.get_products(
         ServiceCode="AmazonEC2",
         Filters=[
@@ -58,3 +55,4 @@ def get_cpu_credit_price(
         ],
     )["PriceList"][0]
     return float(dig_for_value(json.loads(product), "USD"))
+
