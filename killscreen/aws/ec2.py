@@ -717,8 +717,9 @@ def instance_catalog(family=None, df=True, client=None, session=None):
     types = get_all_instance_types(client, session)
     summaries = gmap(summarize_instance_type_structure, types)
     if family is not None:
-        summaries = [s for s in summaries if
-                     s["instance_type"].split(".")[0] == family]
+        summaries = [
+            s for s in summaries if s["instance_type"].split(".")[0] == family
+        ]
     if df is False:
         return summaries
     import pandas as pd
