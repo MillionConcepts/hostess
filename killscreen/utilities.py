@@ -117,3 +117,9 @@ def gmap(
     immediately evaluate functions.
     """
     return evaluator(mapper(func, *iterables))
+
+
+def my_external_ip():
+    import requests
+
+    return requests.get("https://ident.me").content.decode()

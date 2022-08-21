@@ -1,11 +1,14 @@
 import datetime as dt
 import io
+import os
 import re
 import time
 from collections import defaultdict
 from functools import cache, wraps, partial
 from itertools import chain
 from pathlib import Path
+from random import choices
+from string import ascii_lowercase
 from typing import (
     Union,
     Collection,
@@ -31,7 +34,8 @@ from killscreen.aws.utilities import (
     init_client,
     init_resource,
     tag_dict,
-    tagfilter, autopage,
+    tagfilter,
+    autopage,
 )
 from killscreen.ssh import (
     jupyter_connect,
@@ -43,7 +47,7 @@ from killscreen.ssh import (
     tunnel,
 )
 from killscreen.subutils import Viewer, Processlike, Commandlike
-from killscreen.utilities import gmap
+from killscreen.utilities import gmap, my_external_ip
 
 
 def summarize_instance_description(description):
@@ -625,7 +629,7 @@ def get_stock_ubuntu_image(
             map(dtp.parse, map(get("CreationDate"), supported_lts_images))
         )
     }
-    release_date = max(dates.values())[0]
+    release_date = max(dates.values())
     idxmax = [ix for ix, date in dates.items() if date == release_date][0]
     return supported_lts_images[idxmax]["ImageId"]
 
@@ -725,3 +729,250 @@ def instance_catalog(family=None, df=True, client=None, session=None):
     import pandas as pd
 
     return pd.DataFrame(summaries)
+
+
+def _interpret_ebs_args(
+    volume_type, volume_size, iops, throughput, volume_list
+):
+    if ((volume_type is not None) or (volume_size is not None)) and (
+        volume_list is not None
+    ):
+        raise ValueError(
+            "Please pass either a list of volumes (volume_list) or "
+            "volume_type and size, not both."
+        )
+    if volume_list is None:
+        if (volume_type is None) or (volume_size is None):
+            raise ValueError(
+                "If a list of volumes (volume_list) is not specified, "
+                "volume_type and volume_size cannot be None."
+            )
+        return [
+            _ebs_device_mapping(volume_type, volume_size, 0, iops, throughput)
+        ]
+    return [
+        _ebs_device_mapping(index=index, **specification)
+        for index, specification in enumerate(volume_list)
+    ]
+
+
+EBS_VOLUME_TYPES = ("gp2", "gp3", "io1", "io2", "st1", "sc1")
+
+
+def _ebs_device_mapping(
+    volume_type,
+    volume_size,
+    index=0,
+    iops=None,
+    throughput=None,
+    device_name=None,
+):
+    if volume_type not in EBS_VOLUME_TYPES:
+        raise ValueError(f"{volume_type} is not a recognized EBS volume type.")
+    if volume_type.startswith("io"):
+        raise NotImplementedError(
+            "Handling for io1 and io2 volumes is not yet supported."
+        )
+    if volume_type not in ("io1", "io2", "gp3") and (
+        (iops is not None) or (throughput is not None)
+    ):
+        raise ValueError(
+            f"{volume_type} does not support specifying explicit values for "
+            f"throughput or IOPS."
+        )
+    if device_name is None:
+        device_name = f"/dev/sd{ascii_lowercase[1:][index]}"
+    mapping = {
+        "DeviceName": device_name,
+        "Ebs": {"VolumeType": volume_type, "VolumeSize": volume_size},
+    }
+    if iops is not None:
+        mapping["Ebs"]["Iops"] = iops
+    if throughput is not None:
+        mapping["Ebs"]["Throughput"] = throughput
+    return mapping
+
+
+def create_security_group(
+    name=None, description=None, client=None, resource=None, session=None
+):
+    client = init_client("ec2", client, session)
+    try:
+        default_vpc_id = client.describe_vpcs(
+            Filters=[{"Name": "is-default", "Values": ["true"]}]
+        )["Vpcs"][0]["VpcId"]
+    except IndexError:
+        raise EnvironmentError(
+            "Could not find a default VPC for automated security group "
+            "creation."
+        )
+    resource = init_resource("ec2", resource, session)
+    if name is None:
+        name = killscreen_placeholder()
+    if description is None:
+        description = "killscreen-generated security group"
+    sg = resource.create_security_group(
+        Description=description,
+        GroupName=name,
+        VpcId=default_vpc_id,
+        TagSpecifications=[
+            {
+                "ResourceType": "security-group",
+                "Tags": [{"Key": "killscreen-generated", "Value": "True"}],
+            },
+        ],
+    )
+    my_ip = my_external_ip()
+    sg.authorize_ingress(
+        IpPermissions=[
+            {
+                "FromPort": 22,
+                "ToPort": 22,
+                "IpProtocol": "tcp",
+                "IpRanges": [
+                    {
+                        "CidrIp": f"{my_ip}/32",
+                        "Description": "SSH access from creating IP",
+                    }
+                ],
+            },
+            {
+                "FromPort": 6000,
+                "ToPort": 6000,
+                "IpProtocol": "tcp",
+                "IpRanges": [
+                    {
+                        "CidrIp": f"{my_ip}/32",
+                        "Description": "default killscreen port access from "
+                        "creating IP",
+                    }
+                ],
+            },
+        ]
+    )
+    sg.authorize_ingress(SourceSecurityGroupName=sg.group_name)
+    return sg
+
+
+def killscreen_placeholder():
+    return f"killscreen-{''.join(choices(ascii_lowercase, k=10))}"
+
+
+def create_ec2_key(key_name=None, save_key=True, resource=None, session=None):
+    if key_name is None:
+        key_name = killscreen_placeholder()
+    resource = init_resource("ec2", resource, session)
+    key = resource.create_key_pair(KeyName=key_name)
+    keydir = Path(os.path.expanduser("~/.ssh"))
+    keydir.mkdir(exist_ok=True)
+    if save_key is True:
+        keyfile = Path(keydir, f"{key_name}.pem")
+        with keyfile.open("w") as stream:
+            stream.write(key.key_material)
+        keyfile.chmod(0o700)
+    return key
+
+
+def create_launch_template(
+    template_name=None,
+    instance_type=EC2_DEFAULTS["instance_type"],
+    volume_type=EC2_DEFAULTS["volume_type"],
+    volume_size=EC2_DEFAULTS["volume_size"],
+    image_id=None,
+    iops=None,
+    throughput=None,
+    volume_list=None,
+    instance_name=None,
+    security_group_name=None,
+    tags=None,
+    key_name=None,
+    client=None,
+    session=None,
+):
+    default_name = killscreen_placeholder()
+    if volume_list is None:
+        volume_type = (
+            EC2_DEFAULTS["volume_type"] if volume_type is None else volume_type
+        )
+        volume_size = (
+            EC2_DEFAULTS["volume_size"] if volume_size is None else volume_size
+        )
+    client = init_client("ec2", client, session)
+    if (image_id is not None) and not image_id.startswith("ami-"):
+        try:
+            image_id = client.describe_images(
+                Filters=[{"Name": "tag:Name", "Values": [image_id]}]
+            )[0]["ImageId"]
+        except KeyError:
+            raise ValueError(
+                f"Can't find an image corresponding to the name {image_id}."
+            )
+    if image_id is None:
+        description = describe_instance_type(
+            instance_type, pricing=False, ec2_client=client
+        )
+        image_id = get_stock_ubuntu_image(description["architecture"], client)
+        print(
+            f"No AMI specified, using most recent Ubuntu Server LTS "
+            f"image from Canonical ({image_id})."
+        )
+    block_device_mappings = _interpret_ebs_args(
+        volume_type, volume_size, iops, throughput, volume_list
+    )
+    if tags is None:
+        tags = []
+    elif isinstance(tags, Mapping):
+        tags = [{"Key": k, "Value": v} for k, v in tags.items()]
+    tags.append({"Key": "killscreen-generated", "Value": "True"})
+    resource_tags = tags.copy()
+    if instance_name is not None:
+        resource_tags.append({"Key": "Name", "Value": instance_name})
+    if security_group_name is not None:
+        sg_response = client.describe_security_groups(
+            GroupNames=["fornax-testing"]
+        )["SecurityGroups"]
+        if len(sg_response) == 0:
+            create_security_group(security_group_name, None, client)
+            print(
+                f"No security group named {security_group_name} exists; "
+                f"created one."
+            )
+    else:
+        security_group_name = create_security_group(
+            default_name, client=client
+        ).group_name
+        print(
+            f"No security group specified; created a new one named "
+            f"{default_name}."
+        )
+    if key_name is not None:
+        key_response = client.describe_key_pairs(KeyNames=[key_name])[
+            "KeyPairs"
+        ]
+        if len(key_response) == 0:
+            create_ec2_key(key_name)
+            print(f"No key pair named {key_name} exists; created one.")
+    else:
+        key_name = create_ec2_key(default_name).key_name
+        print(
+            f"No key pair specified; created one named {default_name} "
+            "and saved key material to disk in ~/.ssh."
+        )
+    launch_template_data = {
+        "BlockDeviceMappings": block_device_mappings,
+        "ImageId": image_id,
+        "TagSpecifications": [
+            {"ResourceType": "instance", "Tags": resource_tags},
+            {"ResourceType": "volume", "Tags": resource_tags},
+        ],
+        "SecurityGroups": [security_group_name],
+        "InstanceType": instance_type,
+        "KeyName": key_name,
+    }
+    if template_name is None:
+        template_name = default_name
+    return client.create_launch_template(
+        LaunchTemplateName=template_name,
+        LaunchTemplateData=launch_template_data,
+        TagSpecifications=[{"ResourceType": "launch-template", "Tags": tags}],
+    )["LaunchTemplate"]

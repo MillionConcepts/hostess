@@ -15,5 +15,6 @@ GENERAL_DEFAULTS = {
 }
 EC2_DEFAULTS = {
     "instance_type": "t3.small",
-    "volume_type": "gp3"
+    "volume_type": "gp3",
+    "volume_size": 8,
 }
