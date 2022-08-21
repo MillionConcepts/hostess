@@ -490,7 +490,8 @@ class Cluster:
     def launch(
         cls,
         count,
-        template,
+        template=None,
+        options=None,
         tags=None,
         client=None,
         session=None,
@@ -500,6 +501,14 @@ class Cluster:
     ):
         client = init_client("ec2", client, session)
         tags = [] if tags is None else tags
+        options = {} if options is None else options
+        if template is None:
+            using_scratch_template = True
+            template = create_launch_template(
+                **options
+            )["Template"]["LaunchTemplateName"]
+        else:
+            using_scratch_template = False
         fleet = client.create_fleet(
             LaunchTemplateConfigs=[
                 {
@@ -517,6 +526,8 @@ class Cluster:
             TagSpecifications=[{"Tags": tags}],
             Type="instant",
         )
+        if using_scratch_template is True:
+            client.delete_launch_template("LaunchTemplateName")
 
         def instance_hook():
             return instances_from_ids(
