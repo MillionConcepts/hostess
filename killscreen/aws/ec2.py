@@ -707,7 +707,20 @@ def describe_instance_type(
     return summary
 
 
-def get_all_instance_types(client, session):
+def get_all_instance_types(client=None, session=None):
     client = init_client("ec2", client, session)
     return autopage(client, "describe_instance_types")
 
+
+# TODO: add pricing information
+def instance_catalog(family=None, df=True, client=None, session=None):
+    types = get_all_instance_types(client, session)
+    summaries = gmap(summarize_instance_type_structure, types)
+    if family is not None:
+        summaries = [s for s in summaries if
+                     s["instance_type"].split(".")[0] == family]
+    if df is False:
+        return summaries
+    import pandas as pd
+
+    return pd.DataFrame(summaries)
