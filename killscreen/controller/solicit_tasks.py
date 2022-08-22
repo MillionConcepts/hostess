@@ -10,8 +10,9 @@ import requests
 import rich.console
 import sh
 
+from killscreen.config import GENERAL_DEFAULTS
 from killscreen.controller.parsing import default_output_parser
-from killscreen.utilities import console_and_log, LOG_DIR_PATH, stamp
+from killscreen.utilities import console_and_log, stamp
 from killscreen.subutils import console_stream_handlers
 
 
@@ -154,11 +155,9 @@ def execute_pipeline_function(task_id, pipeline_kwargs, pipeline_function):
 def task_solicitation_server(
     base_url,
     execution_target=execute_pipeline_script,
-    log_file=None,
+    log_file=Path(GENERAL_DEFAULTS["log_path"], "pipeline.log"),
     **execution_kwargs,
 ):
-    if log_file is None:
-        log_file = Path(LOG_DIR_PATH, "pipeline.log")
     logging.basicConfig(
         filename=log_file, encoding="utf-8", level=logging.INFO
     )

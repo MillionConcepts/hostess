@@ -2,28 +2,12 @@
 import _io
 import datetime as dt
 import logging
-import os
 import re
 from pathlib import Path
 from socket import gethostname
 from typing import Callable, Iterable, Any
-import warnings
 
 import rich.console
-
-LOG_DIR_PATH = None
-for path in (os.path.expanduser("~/.killscreen"), "/tmp/killscreen"):
-    try:
-        LOG_DIR_PATH = Path(path)
-        if not LOG_DIR_PATH.exists():
-            LOG_DIR_PATH.mkdir(parents=True)
-    except OSError:
-        pass
-
-if LOG_DIR_PATH is None:
-    warnings.warn(
-        "No writable log path found, logging will behave unpredictably"
-    )
 
 
 def stamp() -> str:

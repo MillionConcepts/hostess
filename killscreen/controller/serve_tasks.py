@@ -9,8 +9,9 @@ from flask import Flask
 from flask import request
 import rich.console
 
+from killscreen.config import GENERAL_DEFAULTS
 from killscreen.monitors import Bouncer, FakeBouncer
-from killscreen.utilities import filestamp, LOG_DIR_PATH
+from killscreen.utilities import filestamp
 
 console = rich.console.Console()
 
@@ -47,7 +48,8 @@ def task_server(
     """
     if logfile is None:
         logfile = Path(
-            LOG_DIR_PATH, f"{server_name}_{filestamp()}_reports.csv"
+            GENERAL_DEFAULTS["log_path"],
+            f"{server_name}_{filestamp()}_reports.csv",
         )
     logfile = Path(logfile)
     if not logfile.parent.exists():

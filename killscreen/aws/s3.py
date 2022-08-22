@@ -54,7 +54,7 @@ class Bucket:
         client=None,
         resource=None,
         session=None,
-        config=None
+        config=None,
     ):
         self.client = init_client("s3", client, session)
         self.resource = init_resource("s3", resource, session)
@@ -245,7 +245,7 @@ def cp(
     # use boto3's high-level Bucket object to perform a managed transfer
     # (in order to easily support objects > 5 GB)
     destination_bucket_object = bucket.resource.Bucket(destination_bucket)
-    copy_source = {'Bucket': bucket.name, 'Key': source}
+    copy_source = {"Bucket": bucket.name, "Key": source}
     response = destination_bucket_object.copy(
         copy_source, destination, ExtraArgs=extra_args, Config=config
     )
@@ -287,10 +287,10 @@ def ls(
             response = list_objects(Delimiter="/")
             # try to automatically treat 'directories' as directories
             if (
-                    ("Contents" not in response.keys())
-                    and ("CommonPrefixes" in response.keys())
-                    and not (prefix.endswith("/"))
-                    and (prefix != "")
+                ("Contents" not in response.keys())
+                and ("CommonPrefixes" in response.keys())
+                and not (prefix.endswith("/"))
+                and (prefix != "")
             ):
                 response = list_objects(Prefix=f"{prefix}/", Delimiter="/")
         else:
@@ -308,14 +308,14 @@ def ls(
             else:
                 stream = cache
             try:
-                contents = response['Contents']
+                contents = response["Contents"]
                 if len(responses) == 1:
                     stream.write(
                         ",".join([k for k in contents[0].keys()]) + "\n"
                     )
                 if isinstance(contents[0].get("LastModified"), dt.datetime):
                     for rec in contents:
-                        rec['LastModified'] = rec['LastModified'].isoformat()
+                        rec["LastModified"] = rec["LastModified"].isoformat()
                         stream.write(",".join(map(str, rec.values())) + "\n")
             finally:
                 if isinstance(cache, Path):
@@ -362,7 +362,7 @@ def ls_multipart(
     bucket: Union[str, Bucket],
     client: Optional[botocore.client.BaseClient] = None,
     session: Optional[boto3.Session] = None,
-    config=None
+    config=None,
 ):
     bucket = Bucket.bind(bucket, client, session, config)
     return bucket.client.list_multipart_uploads(Bucket=bucket.name)
@@ -562,15 +562,15 @@ def freeze(
 def restore(
     bucket: Union[str, Bucket],
     key: str,
-    tier: str = 'Bulk',
+    tier: str = "Bulk",
     days: int = 5,
     client: Optional[botocore.client.BaseClient] = None,
     session: Optional[boto3.Session] = None,
     config=None,
 ):
     bucket = Bucket.bind(bucket, client, session, config)
-    job_parameters = {'Tier': tier}
-    restore_request = {'Days': days, 'GlacierJobParameters': job_parameters}
+    job_parameters = {"Tier": tier}
+    restore_request = {"Days": days, "GlacierJobParameters": job_parameters}
     return bucket.client.restore_object(
         Bucket=bucket.name, Key=key, RestoreRequest=restore_request
     )
