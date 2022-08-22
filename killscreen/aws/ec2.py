@@ -967,7 +967,7 @@ def create_launch_template(
         resource_tags.append({"Key": "Name", "Value": instance_name})
     if security_group_name is not None:
         sg_response = client.describe_security_groups(
-            GroupNames=["fornax-testing"]
+            GroupNames=[security_group_name]
         )["SecurityGroups"]
         if len(sg_response) == 0:
             create_security_group(security_group_name, None, client)
