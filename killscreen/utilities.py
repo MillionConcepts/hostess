@@ -8,6 +8,7 @@ from socket import gethostname
 from typing import Callable, Iterable, Any
 
 import rich.console
+from cytoolz import first
 
 
 def stamp() -> str:
@@ -107,3 +108,25 @@ def my_external_ip():
     import requests
 
     return requests.get("https://ident.me").content.decode()
+
+
+def check_cached_results(path, prefix, max_age=7):
+    cache_filter = filter(lambda p: p.name.startswith(prefix), path.iterdir())
+    try:
+        result = first(cache_filter)
+        timestamp = re.search(
+            r"(\d{4})_(\d{2})_(\d{2})T(\d{2})_(\d{2})_(\d{2})", result.name
+        )
+        cache_age = dt.datetime.now() - dt.datetime(
+            *map(int, timestamp.groups())
+        )
+        if cache_age.days > max_age:
+            return None
+    except StopIteration:
+        return None
+    return result
+
+
+def clear_cached_results(path, prefix):
+    for result in filter(lambda p: p.name.startswith(prefix), path.iterdir()):
+        result.unlink()

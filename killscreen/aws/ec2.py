@@ -1,6 +1,7 @@
 import datetime as dt
 import io
 import os
+import pickle
 import re
 import time
 from collections import defaultdict
@@ -27,7 +28,11 @@ from dustgoggles.func import zero
 from dustgoggles.structures import listify
 import sh
 
-from killscreen.aws.pricing import get_on_demand_price, get_cpu_credit_price
+from killscreen.aws.pricing import (
+    get_on_demand_price,
+    get_cpu_credit_price,
+    get_ec2_basic_price_list,
+)
 from killscreen.config import EC2_DEFAULTS, GENERAL_DEFAULTS
 import killscreen.shortcuts as ks
 from killscreen.aws.utilities import (
@@ -36,6 +41,7 @@ from killscreen.aws.utilities import (
     tag_dict,
     tagfilter,
     autopage,
+    clarify_region,
 )
 from killscreen.ssh import (
     jupyter_connect,
@@ -47,7 +53,13 @@ from killscreen.ssh import (
     tunnel,
 )
 from killscreen.subutils import Viewer, Processlike, Commandlike
-from killscreen.utilities import gmap, my_external_ip
+from killscreen.utilities import (
+    gmap,
+    my_external_ip,
+    filestamp,
+    check_cached_results,
+    clear_cached_results,
+)
 
 
 def summarize_instance_description(description):
@@ -504,9 +516,9 @@ class Cluster:
         options = {} if options is None else options
         if template is None:
             using_scratch_template = True
-            template = create_launch_template(
-                **options
-            )["Template"]["LaunchTemplateName"]
+            template = create_launch_template(**options)["Template"][
+                "LaunchTemplateName"
+            ]
         else:
             using_scratch_template = False
         fleet = client.create_fleet(
@@ -722,24 +734,39 @@ def describe_instance_type(
     return summary
 
 
-def get_all_instance_types(client=None, session=None):
+def get_all_instance_types(client=None, session=None, reset_cache=False):
     client = init_client("ec2", client, session)
-    return autopage(client, "describe_instance_types")
+    region = clarify_region(None, client)
+    cache_path = Path(GENERAL_DEFAULTS["cache_path"])
+    prefix = f"instance_types_{region}"
+    if reset_cache is False:
+        cached_results = check_cached_results(cache_path, prefix, max_age=7)
+        if cached_results is not None:
+            return pickle.load(cached_results.open("rb"))
+    results = autopage(client, "describe_instance_types")
+    clear_cached_results(cache_path, prefix)
+    with Path(cache_path, f"{prefix }_{filestamp()}.pkl").open("wb") as stream:
+        pickle.dump(results, stream)
+    return results
 
 
-# TODO: add pricing information
-def instance_catalog(family=None, df=True, client=None, session=None):
+# TODO: allow cleaner region specification
+# TODO: even with caching this still takes like 100ms, probably
+#  I'm assembling the df too much inside this function; probably this doesn't
+#  actually matter
+def instance_catalog(family=None, client=None, session=None):
     types = get_all_instance_types(client, session)
     summaries = gmap(summarize_instance_type_structure, types)
     if family is not None:
         summaries = [
             s for s in summaries if s["instance_type"].split(".")[0] == family
         ]
-    if df is False:
-        return summaries
     import pandas as pd
 
-    return pd.DataFrame(summaries)
+    summary_df = pd.DataFrame(summaries)
+    pricing = get_ec2_basic_price_list(session=session)["ondemand"]
+    pricing_df = pd.DataFrame(pricing)
+    return summary_df.merge(pricing_df, on="instance_type", how="left")
 
 
 def _interpret_ebs_args(
