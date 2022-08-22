@@ -131,8 +131,10 @@ def get_cpu_credit_rates(region=None, client=None, session=None):
 def unpack_on_demand_pricelist(pricelist):
     return {
         "instance_type": pricelist["product"]["attributes"]["instanceType"],
-        "usd_per_hour": dig_for_value(
-            pricelist["terms"]["OnDemand"], "USD"
+        "usd_per_hour": float(
+            dig_for_value(
+                pricelist["terms"]["OnDemand"], "USD"
+            )
         ),
     }
 
