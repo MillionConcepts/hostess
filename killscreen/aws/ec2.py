@@ -589,7 +589,7 @@ class Cluster:
         return cluster
 
     def __getitem__(self, item):
-        return self.instances[0]
+        return self.instances[item]
 
     def __repr__(self):
         return "\n".join([inst.__repr__() for inst in self.instances])
