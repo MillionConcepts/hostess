@@ -361,7 +361,7 @@ def record_and_yell(message: str, cache: MutableMapping, loud: bool = False):
 
 
 def notary(cache):
-    def note(message=None, loud: bool = False, eject: bool = False):
+    def note(message="", loud: bool = False, eject: bool = False):
         if eject is True:
             return cache
         return record_and_yell(message, cache, loud)
