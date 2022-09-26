@@ -35,6 +35,7 @@ import boto3.resources.base
 import boto3.s3.transfer
 import botocore.client
 import requests
+from cytoolz import keyfilter, keymap
 from dustgoggles.func import naturals
 
 from killscreen.aws.utilities import init_client, init_resource
@@ -76,6 +77,7 @@ class Bucket:
     create_multipart_upload: Callable
     freeze: Callable
     get: Callable
+    head: Callable
     ls: Callable
     put: Callable
     put_stream: Callable
@@ -250,6 +252,38 @@ def cp(
         copy_source, destination, ExtraArgs=extra_args, Config=config
     )
     return f"s3://{destination_bucket}:{destination}", response
+
+
+def head(
+    bucket: Union[str, Bucket],
+    key: str,
+    client: Optional[botocore.client.BaseClient] = None,
+    session: Optional[boto3.Session] = None,
+    config=None
+) -> dict:
+    bucket = Bucket.bind(bucket, client, session)
+    response = bucket.client.head_object(Bucket=bucket.name, Key=key)
+    headers = response['ResponseMetadata'].get('HTTPHeaders', {})
+    interesting_responses = (
+        'ContentLength',
+        'ContentType',
+        'ETag',
+        'LastModified',
+        'Metadata',
+        'Restore',
+        'StorageClass'
+    )
+    interesting_headers = (
+        'x-amz-restore-request-date',
+        'x-amz-restore-expiry-days',
+        'x-amz-restore-tier'
+    )
+    head_dict = {}
+    head_dict |= keyfilter(lambda k: k in interesting_responses, response)
+    head_dict |= keyfilter(lambda k: k in interesting_headers, headers)
+    if 'LastModified' in head_dict:
+        head_dict['LastModified'] = head_dict['LastModified'].isoformat()
+    return head_dict
 
 
 # TODO: scary, refactor
