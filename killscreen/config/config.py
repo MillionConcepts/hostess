@@ -2,6 +2,7 @@
 desired settings should be placed in killscreen/user_config/user_conifg.py.
 this example_config module is never referenced by anything.
 """
+import getpass
 import os
 from pathlib import Path
 
@@ -14,7 +15,7 @@ GENERAL_DEFAULTS = {
     ],
     "cache_path": f"{home}/.killscreen/cache",
     "log_path": f"{home}/.killscreen/logs",
-    "uname": os.getlogin(),
+    "uname": getpass.getuser(),
 }
 EC2_DEFAULTS = {
     "instance_type": "t3.small",
