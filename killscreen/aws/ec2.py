@@ -192,8 +192,11 @@ class Instance:
         if self._is_unready():
             raise ConnectionError(
                 f"Unable to execute commands on {self.instance_id}. This is "
-                f"most likely because it is not running or because its access "
-                f"key has not been provided."
+                f"most likely because it is not running or because its "
+                f"identity keyfile could not be located. Please try "
+                f"explicitly setting the path to the keyfile, like: "
+                f"instance.key = '/path/to/key.pem', or passing it to the "
+                f"class constructor when creating a new Instance."
             )
 
     @wraps(interpret_command)
@@ -234,8 +237,11 @@ class Instance:
         if return_response is True:
             return response
 
-    def add_key(self, tries=5, delay=1.5):
-        self._raise_unready()
+    def add_public_key(self, tries=5, delay=1.5):
+        """
+        attempts to add the instance's public key to the local known
+        hosts file so that we can interact with it via ssh.
+        """
         for _ in range(tries):
             try:
                 ssh_key_add(self.ip)
@@ -414,7 +420,7 @@ class Cluster:
             )
         )
 
-    def add_keys(self):
+    def add_public_keys(self):
         ssh_key_add(
             list(filter(None, [instance.ip for instance in self.instances]))
         )
@@ -575,7 +581,7 @@ class Cluster:
         tries = 0
         while (tries < 12) and (added is False):
             try:
-                cluster.add_keys()
+                cluster.add_public_keys()
                 added = True
             except sh.ErrorReturnCode:
                 time.sleep(max(6 - tries, 2))
@@ -584,7 +590,7 @@ class Cluster:
         if added is False:
             print(
                 "warning: timed out adding keys for one or more instances. "
-                "try running .add_keys() again in a moment."
+                "try running .add_public_keys() again in a moment."
             )
         return cluster
 

@@ -368,7 +368,7 @@ def find_conda_env(cmd: Callable, env: str) -> str:
 
 def find_ssh_key(keyname, paths=None) -> Union[Path, None]:
     if paths is None:
-        paths = GENERAL_DEFAULTS["secrets_folders"] + [os.getcwd()]
+        paths = list(GENERAL_DEFAULTS["secrets_folders"]) + [os.getcwd()]
     paths = listify(paths)
     for directory in filter(lambda p: p.exists(), map(Path, paths)):
         matching_private_keys = filter(
