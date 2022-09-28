@@ -243,12 +243,15 @@ class Instance:
         hosts file so that we can interact with it via ssh.
         """
         for _ in range(tries):
-            try:
-                ssh_key_add(self.ip)
-                return
-            except sh.ErrorReturnCode:
-                time.sleep(delay)
-                continue
+            if self.ip is None:
+                self.update()
+            if self.ip is not None:
+                try:
+                    ssh_key_add(self.ip)
+                    return
+                except sh.ErrorReturnCode:
+                    pass
+            time.sleep(delay)
         raise TimeoutError("timed out adding key. try again in a moment.")
 
     def put(self, source, target, *args, _literal_str=False, **kwargs):
