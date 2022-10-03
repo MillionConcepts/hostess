@@ -4,7 +4,7 @@ import re
 import shutil
 from typing import Mapping, Sequence, Optional, Callable
 
-from cytoolz import first, valfilter
+from cytoolz import first, valfilter, itemfilter
 from flask import Flask
 from flask import request
 import rich.console
@@ -111,18 +111,22 @@ def task_server(
     def issue_request():
         bouncer.click()
         if app_state["running"] is False:
-            return json.dumps({"command": "stop", "parameters": {}})
+            return json.dumps({"command": "stop", "payload": {}})
         try:
             task_id = task_filter(tasks)
             task = tasks[task_id]
         except StopIteration:
             console.print("[bold cyan]list complete, sending stop command")
             dump_state()
-            return json.dumps({"command": "stop", "parameters": {}})
+            return json.dumps({"command": "stop", "payload": {}})
         instruction = {"command": "execute", "task_id": task_id}
-        parameters = task.get("parameters")
-        if parameters is not None:
-            instruction["parameters"] = parameters
+        instruction |= itemfilter(
+            lambda kv: (
+                kv[0] in ("payload", "compression", "serialization")
+                and kv[1] is not None
+            ),
+            task
+        )
         tasks[task_id]["status"] = "pending"
         return json.dumps(instruction)
 
