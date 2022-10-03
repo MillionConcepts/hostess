@@ -20,7 +20,7 @@ def encode_payload(obj, serializer, compression):
         raise NotImplementedError
     if isinstance(serial, str):
         if compression is None:
-            return serial
+            return f"'{serial}'"
         serial = serial.encode("ascii")
     if compression == "gzip":
         import gzip
