@@ -397,8 +397,10 @@ class Instance:
         interpreter_path=None,
         env=None,
         compression=None,
-        serializer=None,
+        serialization=None,
         argument_unpacking="",
+        payload_encoded=False,
+        print_result=False,
         **command_kwargs
     ):
         if (interpreter_path is None) == (env is None):
@@ -415,8 +417,10 @@ class Instance:
             func,
             interpreter_path,
             compression,
-            serializer,
-            argument_unpacking
+            serialization,
+            argument_unpacking,
+            payload_encoded,
+            print_result
         )
         return self.command(python_command_string, **command_kwargs)
 
