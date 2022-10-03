@@ -33,6 +33,7 @@ from killscreen.aws.pricing import (
     get_cpu_credit_price,
     get_ec2_basic_price_list,
 )
+from killscreen.caller import construct_python_call
 from killscreen.config import EC2_DEFAULTS, GENERAL_DEFAULTS
 import killscreen.shortcuts as ks
 from killscreen.aws.utilities import (
@@ -387,6 +388,41 @@ class Instance:
         return tunnel(
             self.ip, self.uname, self.key, local_port, remote_port, kill
         )
+
+    def call_python(
+        self,
+        module,
+        payload=None,
+        func=None,
+        interpreter_path=None,
+        env=None,
+        compression=None,
+        serialization=None,
+        argument_unpacking="",
+        payload_encoded=False,
+        print_result=False,
+        **command_kwargs
+    ):
+        if (interpreter_path is None) == (env is None):
+            raise ValueError(
+                "Please pass either the name of a conda environment or the "
+                "path to "
+                "a Python interpreter (one or the other, not both)."
+            )
+        if interpreter_path is None:
+            interpreter_path = f"{self.conda_env(env)}/bin/python"
+        python_command_string = construct_python_call(
+            module,
+            payload,
+            func,
+            interpreter_path,
+            compression,
+            serialization,
+            argument_unpacking,
+            payload_encoded,
+            print_result
+        )
+        return self.command(python_command_string, **command_kwargs)
 
     def __repr__(self):
         string = f"{self.instance_type} in {self.zone} at {self.ip}"
