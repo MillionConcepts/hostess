@@ -5,22 +5,24 @@ def to_heredoc(heredoc_content, addition="", identifier="__BOUNDARYTAG__"):
     return f"{identifier} {addition}\n{heredoc_content}\n{identifier}"
 
 
-def encode_payload(obj, serializer, compression):
-    if serializer == "json":
+def encode_payload(obj, serialization, compression):
+    if serialization == "json":
         import json
 
         serial = json.dumps(obj)
-    elif serializer == "pickle":
+    elif serialization == "pickle":
         import pickle
 
         serial = pickle.dumps(obj)
-    elif serializer is None:
+    elif serialization is None:
         serial = obj.__repr__()
     else:
         raise NotImplementedError
+    if _check_mode(serialization, compression) == "text":
+        if serialization == "json":
+            return f"\"\"\"{serial}\"\"\""
+        return serial
     if isinstance(serial, str):
-        if compression is None:
-            return f"'{serial}'"
         serial = serial.encode("ascii")
     if compression == "gzip":
         import gzip
@@ -34,10 +36,10 @@ def encode_payload(obj, serializer, compression):
 
 
 def format_importer(module, func):
-    importer = f"""if __name__ == "__main__":"""
+    importer = f"""if __name__ == "__main__":
+    """
     if module.endswith(".py"):
-        importer += f"""
-    import importlib.util
+        importer += f"""import importlib.util
     import sys
     spec = importlib.util.spec_from_file_location(
         "{Path(module).stem}", "{module}"
@@ -47,7 +49,9 @@ def format_importer(module, func):
     spec.loader.exec_module(module)
     """
     else:
-        importer += f"import {module}\n"
+        importer += f"""import {module}
+    module = {module}
+    """
     if func is not None:
         importer += f"""target = getattr(module, "{func}")
     """
@@ -55,9 +59,9 @@ def format_importer(module, func):
 
 
 def format_decompressor(serialized, serialization, compression):
-    if (compression is None) and (serialization in (None, "json")):
+    if _check_mode(serialization, compression) == "text":
         return f"""payload = {serialized}
-    """ 
+    """
     if compression is None:
         return f"""import base64
     payload = base64.b64decode({serialized})
@@ -70,18 +74,37 @@ def format_decompressor(serialized, serialization, compression):
     raise NotImplementedError("only gzip compression is currently supported")
 
 
-def format_deserializer(serializer):
-    if serializer is None:
+def format_deserializer(serialization):
+    if serialization is None:
         return ""
-    if serializer == "json":
+    if serialization == "json":
         return f"""import json
     payload = json.loads(payload)
     """
-    elif serializer == "pickle":
+    elif serialization == "pickle":
         return f"""import pickle
     payload = pickle.loads(payload)
     """
     raise NotImplementedError("Unknown serializer. use 'json' or 'pickle'")
+
+
+def _check_reconstructable(typeobj, serialization, compression):
+    if (
+        (typeobj is not str)
+        and (compression is not None)
+        and (serialization is None)
+    ):
+        raise ValueError(
+            "non-string compressed objects will not reconstruct correctly "
+            "unless serialized. try compress='gzip', serialization='json' "
+            "or serialize='pickle'"
+        )
+
+
+def _check_mode(serialization, compression):
+     if (compression is None) and serialization in (None, "json"):
+        return "text"
+     return "binary"
 
 
 def generic_python_endpoint(
@@ -91,20 +114,12 @@ def generic_python_endpoint(
     compression=None,
     serialization=None,
     argument_unpacking="",
-    payload_encoded=False
+    payload_encoded=False,
+    print_result=False
 ):
     if (payload is not None) and (func is None):
         raise ValueError("Must pass a function name to pass a payload.")
-    if (
-        (compression is not None)
-        and (serialization is None)
-        and not isinstance(payload, str)
-    ):
-        raise ValueError(
-            "non-string compressed objects will not reconstruct correctly "
-            "unless serialized. try compress='gzip', serialization='json' "
-            "or serialize='pickle'"
-        )
+    _check_reconstructable(type(payload), serialization, compression)
     import_ = format_importer(module, func)
     if func is None:
         return import_
@@ -115,6 +130,8 @@ def generic_python_endpoint(
     decompress = format_decompressor(payload, serialization, compression)
     deserialize = format_deserializer(serialization)
     call = f"target({argument_unpacking}payload)"
+    if print_result is True:
+        call = f"print({call})"
     return import_ + decompress + deserialize + call
 
 
@@ -124,17 +141,19 @@ def construct_python_call(
     func=None,
     interpreter_path="python",
     compression=None,
-    serializer=None,
+    serialization=None,
     argument_unpacking="",
-    payload_encoded=False
+    payload_encoded=False,
+    print_result=False
 ):
     in_memory_endpoint = generic_python_endpoint(
-        module, 
-        payload, 
-        func, 
-        compression, 
-        serializer, 
+        module,
+        payload,
+        func,
+        compression,
+        serialization,
         argument_unpacking,
-        payload_encoded
+        payload_encoded,
+        print_result
     )
     return f"{interpreter_path} <<{to_heredoc(in_memory_endpoint)}"
