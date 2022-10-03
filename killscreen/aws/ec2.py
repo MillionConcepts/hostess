@@ -391,14 +391,14 @@ class Instance:
 
     def call_python(
         self,
-        argument,
-        module_path,
-        func,
+        module,
+        payload=None,
+        func=None,
         interpreter_path=None,
         env=None,
         compression=None,
         serializer=None,
-        unpack="",
+        argument_unpacking="",
         **command_kwargs
     ):
         if (interpreter_path is None) == (env is None):
@@ -410,13 +410,13 @@ class Instance:
         if interpreter_path is None:
             interpreter_path = f"{self.conda_env(env)}/bin/python"
         python_command_string = construct_python_call(
-            argument,
-            module_path,
+            module,
+            payload,
             func,
             interpreter_path,
             compression,
             serializer,
-            unpack
+            argument_unpacking
         )
         return self.command(python_command_string, **command_kwargs)
 
