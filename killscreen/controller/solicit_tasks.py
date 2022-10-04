@@ -1,22 +1,47 @@
 import datetime as dt
 import json
 import logging
-
+import sys
+import time
 from pathlib import Path
 from socket import gethostname
-import time
 
 import requests
 import rich.console
-import sh
 
+from killscreen.caller import generic_python_endpoint
 from killscreen.config import GENERAL_DEFAULTS
 from killscreen.controller.parsing import default_output_parser
+from killscreen.subutils import console_stream_handlers, run
 from killscreen.utilities import console_and_log, stamp
-from killscreen.subutils import console_stream_handlers
-
 
 t_console = rich.console.Console()
+
+
+def execute_pipeline_function(task_id, pipeline_kwargs, pipeline_function):
+    start_time = dt.datetime.utcnow()
+    console_and_log(stamp() + f"attempting {task_id}")
+    parsed_output = {}
+    if pipeline_kwargs is None:
+        pipeline_kwargs = {}
+    try:
+        parsed_output |= pipeline_function(**pipeline_kwargs)
+        status = "completed"
+    except Exception as error:
+        console_and_log(f"{type(error)}: {error}", "error")
+        status = "execution failure"
+        parsed_output |= {
+            "pipeline_exc_type": str(type(error)),
+            "pipeline_exc_msg": str(error),
+        }
+    parsed_output["status"] = status
+    end_time = dt.datetime.utcnow()
+    return {
+        "task_id": task_id,
+        "start_time": start_time.isoformat()[:-7],
+        "end_time": end_time.isoformat()[:-7],
+        "total_duration": (end_time - start_time).total_seconds(),
+    } | parsed_output
 
 
 def get_orders(command_url):
@@ -54,37 +79,36 @@ def pipeline_stream_handler(out_list, err_list, verbose=False):
 
 
 def execute_pipeline_script(
-    task_id,
-    pipeline_kwargs,
-    pipeline_interpreter,
-    pipeline_script,
-    cleanup_function=None,
+    module=None,
+    payload=None,
+    pipeline_func=None,
+    interpreter=None,
+    compression=None,
+    serialization=None,
+    argument_unpacking="**",
+    cleanup_func=None,
     cleanup_kwargs=None,
-    output_parser_function=None,
+    output_parser_func=None,
     verbose_handling=False,
 ):
+    if interpreter is None:
+        interpreter = sys.executable
     start_time = dt.datetime.utcnow()
     out_list, err_list = [], []
-    if output_parser_function is None:
-        output_parser_function = default_output_parser
+    if output_parser_func is None:
+        output_parser_func = default_output_parser
     process = None
-    if pipeline_kwargs is None:
-        pipeline_kwargs = {}
     try:
-        command = sh.Command(pipeline_interpreter)
-        if Path(pipeline_script).absolute().exists():
-            script = str(Path(pipeline_script).absolute())
-        else:
-            raise FileNotFoundError(
-                f"{str(Path(pipeline_script).absolute())} not found in system."
-            )
-        process = command(
-            script,
-            **pipeline_kwargs,
-            _bg=True,
-            _bg_exc=False,
-            **pipeline_stream_handler(out_list, err_list, verbose_handling),
-        )
+        hook = generic_python_endpoint(module=module, func=pipeline_func,
+                                       payload=payload,
+                                       compression=compression,
+                                       serialization=serialization,
+                                       argument_unpacking=argument_unpacking,
+                                       payload_encoded=True,
+                                       filter_kwargs=True,
+                                       interpreter=interpreter, for_bash=True)
+        handlers = pipeline_stream_handler(out_list, err_list, verbose_handling)
+        process = run(hook, _bg=True, _bg_exc=False, **handlers)
         process.wait()
         exception = None
         status = "completed"
@@ -92,11 +116,9 @@ def execute_pipeline_script(
         console_and_log(f"{type(error)}: {error}", "error")
         status = "execution failure"
         exception = error
-    parsed_output = output_parser_function(
-        process, out_list, err_list, exception
-    )
+    parsed_output = output_parser_func(process, out_list, err_list, exception)
     parsed_output["status"] = status
-    if cleanup_function is not None:
+    if cleanup_func is not None:
         cleanup_dict = {
             "cleanup_status": "",
             "cleanup_exc_type": "",
@@ -105,7 +127,7 @@ def execute_pipeline_script(
         if cleanup_kwargs is None:
             cleanup_kwargs = {}
         try:
-            cleanup_function(out_list, err_list, **cleanup_kwargs)
+            cleanup_func(out_list, err_list, **cleanup_kwargs)
             cleanup_dict["cleanup_status"] = "completed"
         except Exception as cleanup_exception:
             cleanup_dict["cleanup_status"] = "failure"
@@ -119,33 +141,6 @@ def execute_pipeline_script(
         parsed_output |= cleanup_dict
     end_time = dt.datetime.utcnow()
     return {
-        "task_id": task_id,
-        "start_time": start_time.isoformat()[:-7],
-        "end_time": end_time.isoformat()[:-7],
-        "total_duration": (end_time - start_time).total_seconds(),
-    } | parsed_output
-
-
-def execute_pipeline_function(task_id, pipeline_kwargs, pipeline_function):
-    start_time = dt.datetime.utcnow()
-    console_and_log(stamp() + f"attempting {task_id}")
-    parsed_output = {}
-    if pipeline_kwargs is None:
-        pipeline_kwargs = {}
-    try:
-        parsed_output |= pipeline_function(**pipeline_kwargs)
-        status = "completed"
-    except Exception as error:
-        console_and_log(f"{type(error)}: {error}", "error")
-        status = "execution failure"
-        parsed_output |= {
-            "pipeline_exc_type": str(type(error)),
-            "pipeline_exc_msg": str(error),
-        }
-    parsed_output["status"] = status
-    end_time = dt.datetime.utcnow()
-    return {
-        "task_id": task_id,
         "start_time": start_time.isoformat()[:-7],
         "end_time": end_time.isoformat()[:-7],
         "total_duration": (end_time - start_time).total_seconds(),
@@ -154,9 +149,9 @@ def execute_pipeline_function(task_id, pipeline_kwargs, pipeline_function):
 
 def task_solicitation_server(
     base_url,
-    execution_target=execute_pipeline_script,
+    execution_handler=execute_pipeline_script,
     log_file=Path(GENERAL_DEFAULTS["log_path"], "pipeline.log"),
-    **execution_kwargs,
+    **execution_kwargs
 ):
     logging.basicConfig(
         filename=log_file, encoding="utf-8", level=logging.INFO
@@ -166,18 +161,16 @@ def task_solicitation_server(
     while orders["command"] != "stop":
         console_and_log(f"{stamp()} requesting new orders")
         orders = get_orders(base_url + "/command")
-        if orders["command"] == "wait":
-            time.sleep(**orders["parameters"])
-            continue
         if orders["command"] == "execute":
             bailout = False
             console_and_log(f"{stamp()} executing {orders['task_id']}")
             try:
-                pipeline_results = execution_target(
-                    orders["task_id"],
-                    orders.get("parameters"),
+                pipeline_results = execution_handler(
+                    payload=orders.get("payload", {}),
+                    compression=orders.get("compression"),
+                    serialization=orders.get("serialization"),
                     **execution_kwargs,
-                ) | {"host": gethostname()}
+                ) | {"host": gethostname(), "task_id": orders['task_id']}
                 console_and_log(
                     f"{stamp()} pipeline execution complete for "
                     f"{orders['task_id']}"

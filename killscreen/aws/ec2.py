@@ -33,6 +33,7 @@ from killscreen.aws.pricing import (
     get_cpu_credit_price,
     get_ec2_basic_price_list,
 )
+from killscreen.caller import generic_python_endpoint
 from killscreen.config import EC2_DEFAULTS, GENERAL_DEFAULTS
 import killscreen.shortcuts as ks
 from killscreen.aws.utilities import (
@@ -388,6 +389,41 @@ class Instance:
             self.ip, self.uname, self.key, local_port, remote_port, kill
         )
 
+    def call_python(
+        self,
+        module,
+        func=None,
+        payload=None,
+        interpreter_path=None,
+        env=None,
+        compression=None,
+        serialization=None,
+        argument_unpacking="",
+        payload_encoded=False,
+        print_result=False,
+        **command_kwargs,
+    ):
+        if (interpreter_path is None) == (env is None):
+            raise ValueError(
+                "Please pass either the name of a conda environment or the "
+                "path to a Python interpreter (one or the other, not both)."
+            )
+        if interpreter_path is None:
+            interpreter_path = f"{self.conda_env(env)}/bin/python"
+        python_command_string = generic_python_endpoint(
+            module,
+            func,
+            payload,
+            interpreter_path,
+            compression,
+            serialization,
+            argument_unpacking,
+            payload_encoded,
+            print_result,
+            for_bash=True,
+        )
+        return self.command(python_command_string, **command_kwargs)
+
     def __repr__(self):
         string = f"{self.instance_type} in {self.zone} at {self.ip}"
         if self.name is None:
@@ -419,6 +455,16 @@ class Cluster:
         return tuple(
             (
                 instance.commands(commands, _viewer=_viewer, **kwargs)
+                for instance in self.instances
+            )
+        )
+
+    def call_python(
+        self, module, _viewer=True, **kwargs
+    ) -> tuple[Processlike, ...]:
+        return tuple(
+            (
+                instance.call_python(module, _viewer=_viewer, **kwargs)
                 for instance in self.instances
             )
         )
