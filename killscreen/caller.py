@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
 
@@ -102,9 +103,21 @@ def _check_reconstructable(typeobj, serialization, compression):
 
 
 def _check_mode(serialization, compression):
-     if (compression is None) and serialization in (None, "json"):
+    if (compression is None) and serialization in (None, "json"):
         return "text"
-     return "binary"
+    return "binary"
+
+
+def format_kwarg_filter(filter_kwargs, argument_unpacking):
+    if (filter_kwargs is not True) or (argument_unpacking != "**"):
+        return ""
+    return """from inspect import getfullargspec
+    spec = getfullargspec(target)
+    payload = {
+        k: v for k, v in payload.items() 
+        if k in spec.args + spec.kwonlyargs
+    }
+    """
 
 
 def generic_python_endpoint(
@@ -113,9 +126,12 @@ def generic_python_endpoint(
     func=None,
     compression=None,
     serialization=None,
-    argument_unpacking="",
+    argument_unpacking=None,
     payload_encoded=False,
-    print_result=False
+    print_result=False,
+    filter_kwargs=False,
+    interpreter=None,
+    for_bash=True
 ):
     if (payload is not None) and (func is None):
         raise ValueError("Must pass a function name to pass a payload.")
@@ -125,35 +141,21 @@ def generic_python_endpoint(
         return import_
     if payload_encoded is False:
         payload = encode_payload(payload, serialization, compression)
+    elif payload is not None:
+        payload.__repr__()
     else:
-        payload = payload.__repr__()
+        payload = ""
     decompress = format_decompressor(payload, serialization, compression)
     deserialize = format_deserializer(serialization)
+    if argument_unpacking is None:
+        argument_unpacking = ""
+    kwarg_filter = format_kwarg_filter(filter_kwargs, argument_unpacking)
     call = f"target({argument_unpacking}payload)"
     if print_result is True:
         call = f"print({call})"
-    return import_ + decompress + deserialize + call
-
-
-def construct_python_call(
-    module,
-    payload=None,
-    func=None,
-    interpreter_path="python",
-    compression=None,
-    serialization=None,
-    argument_unpacking="",
-    payload_encoded=False,
-    print_result=False
-):
-    in_memory_endpoint = generic_python_endpoint(
-        module,
-        payload,
-        func,
-        compression,
-        serialization,
-        argument_unpacking,
-        payload_encoded,
-        print_result
-    )
-    return f"{interpreter_path} <<{to_heredoc(in_memory_endpoint)}"
+    endpoint = import_ + decompress + deserialize + kwarg_filter + call
+    if for_bash is True:
+        if interpreter is None:
+            interpreter = sys.executable
+        return f"{interpreter} <<{to_heredoc(endpoint)}"
+    return endpoint

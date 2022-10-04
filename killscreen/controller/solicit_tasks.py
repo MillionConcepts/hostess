@@ -1,23 +1,19 @@
-import base64
 import datetime as dt
-import gzip
 import json
 import logging
-import pickle
 import sys
+import time
 from pathlib import Path
 from socket import gethostname
-import time
 
 import requests
 import rich.console
-import sh
 
-from killscreen.caller import construct_python_call
+from killscreen.caller import generic_python_endpoint
 from killscreen.config import GENERAL_DEFAULTS
 from killscreen.controller.parsing import default_output_parser
-from killscreen.utilities import console_and_log, stamp
 from killscreen.subutils import console_stream_handlers, run
+from killscreen.utilities import console_and_log, stamp
 
 t_console = rich.console.Console()
 
@@ -65,25 +61,6 @@ def get_orders(command_url):
             console_and_log(f"{type(e)}, {e}", level="error", style="bold red")
             raise
     return orders
-#     payload = orders.get('payload')
-#     if payload is None:
-#         return orders
-#     compression = orders.get('compression')
-#     serialization = orders.get('serialization')
-#     if (compression is None) and (serialization in (None, 'json')):
-#         return orders
-#     payload = base64.b64decode(payload)
-#     if compression == 'gzip':
-#         payload = gzip.decompress(payload)
-#     elif compression is not None:
-#         raise ValueError('only gzip compression is currently supported')
-#     if serialization == 'pickle':
-#         orders['payload'] = pickle.loads(payload)
-#     elif compression not in (None, 'json'):
-#         raise ValueError("pickle or json serialization supported (default json)")
-#     else:
-#         orders['payload'] = json.loads(payload.decode('ascii'))
-#     return orders
 
 
 def pipeline_stream_handler(out_list, err_list, verbose=False):
@@ -112,7 +89,7 @@ def execute_pipeline_script(
     cleanup_func=None,
     cleanup_kwargs=None,
     output_parser_func=None,
-    verbose_handling=False
+    verbose_handling=False,
 ):
     if interpreter is None:
         interpreter = sys.executable
@@ -122,15 +99,17 @@ def execute_pipeline_script(
         output_parser_func = default_output_parser
     process = None
     try:
-        hook = construct_python_call(
-            module, 
-            payload, 
-            pipeline_func, 
-            interpreter, 
-            compression, 
-            serialization, 
-            argument_unpacking,
-            payload_encoded=True
+        hook = generic_python_endpoint(
+            module=module,
+            payload=payload,
+            func=pipeline_func,
+            interpreter=interpreter,
+            compression=compression,
+            serialization=serialization,
+            argument_unpacking=argument_unpacking,
+            payload_encoded=True,
+            filter_kwargs=True,
+            for_bash=True
         )
         handlers = pipeline_stream_handler(out_list, err_list, verbose_handling)
         process = run(hook, _bg=True, _bg_exc=False, **handlers)
@@ -170,7 +149,6 @@ def execute_pipeline_script(
         "end_time": end_time.isoformat()[:-7],
         "total_duration": (end_time - start_time).total_seconds(),
     } | parsed_output
-
 
 
 def task_solicitation_server(

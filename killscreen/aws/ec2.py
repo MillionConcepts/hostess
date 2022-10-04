@@ -33,7 +33,7 @@ from killscreen.aws.pricing import (
     get_cpu_credit_price,
     get_ec2_basic_price_list,
 )
-from killscreen.caller import construct_python_call
+from killscreen.caller import generic_python_endpoint
 from killscreen.config import EC2_DEFAULTS, GENERAL_DEFAULTS
 import killscreen.shortcuts as ks
 from killscreen.aws.utilities import (
@@ -411,7 +411,7 @@ class Instance:
             )
         if interpreter_path is None:
             interpreter_path = f"{self.conda_env(env)}/bin/python"
-        python_command_string = construct_python_call(
+        python_command_string = generic_python_endpoint(
             module,
             payload,
             func,
@@ -420,7 +420,8 @@ class Instance:
             serialization,
             argument_unpacking,
             payload_encoded,
-            print_result
+            print_result,
+            for_bash=True
         )
         return self.command(python_command_string, **command_kwargs)
 
