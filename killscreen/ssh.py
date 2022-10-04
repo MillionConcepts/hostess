@@ -232,13 +232,13 @@ def interpret_command(
 
         if isinstance(command_args[0], sh.Command):
             command = command_args[0].bake(*command_args[1:], **unspecial)
-            command_string = f"nohup {command}"
+            command_string = f"(nohup {command}"
         else:
-            command_string = f"nohup {' '.join(command_args)} "
+            command_string = f"(nohup {' '.join(command_args)} "
             command_string += " ".join(
                 [f"--{k}={v}" for k, v in unspecial.items()]
             )
-        command_string += f" >> {_output_file}"
+        command_string += f") >> {_output_file}"
         command_args = [command_string]
         kwargs = special
     if _viewer is True:

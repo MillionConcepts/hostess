@@ -401,6 +401,7 @@ class Instance:
         argument_unpacking="",
         payload_encoded=False,
         print_result=False,
+        filter_kwargs=True,
         **command_kwargs,
     ):
         if (interpreter_path is None) == (env is None):
@@ -414,13 +415,14 @@ class Instance:
             module,
             func,
             payload,
-            interpreter_path,
             compression,
             serialization,
             argument_unpacking,
             payload_encoded,
             print_result,
-            for_bash=True,
+            filter_kwargs,
+            interpreter_path,
+            for_bash=True
         )
         return self.command(python_command_string, **command_kwargs)
 
