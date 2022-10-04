@@ -99,18 +99,14 @@ def execute_pipeline_script(
         output_parser_func = default_output_parser
     process = None
     try:
-        hook = generic_python_endpoint(
-            module=module,
-            payload=payload,
-            func=pipeline_func,
-            interpreter=interpreter,
-            compression=compression,
-            serialization=serialization,
-            argument_unpacking=argument_unpacking,
-            payload_encoded=True,
-            filter_kwargs=True,
-            for_bash=True
-        )
+        hook = generic_python_endpoint(module=module, func=pipeline_func,
+                                       payload=payload,
+                                       compression=compression,
+                                       serialization=serialization,
+                                       argument_unpacking=argument_unpacking,
+                                       payload_encoded=True,
+                                       filter_kwargs=True,
+                                       interpreter=interpreter, for_bash=True)
         handlers = pipeline_stream_handler(out_list, err_list, verbose_handling)
         process = run(hook, _bg=True, _bg_exc=False, **handlers)
         process.wait()

@@ -392,8 +392,8 @@ class Instance:
     def call_python(
         self,
         module,
-        payload=None,
         func=None,
+        payload=None,
         interpreter_path=None,
         env=None,
         compression=None,
@@ -401,27 +401,26 @@ class Instance:
         argument_unpacking="",
         payload_encoded=False,
         print_result=False,
-        **command_kwargs
+        **command_kwargs,
     ):
         if (interpreter_path is None) == (env is None):
             raise ValueError(
                 "Please pass either the name of a conda environment or the "
-                "path to "
-                "a Python interpreter (one or the other, not both)."
+                "path to a Python interpreter (one or the other, not both)."
             )
         if interpreter_path is None:
             interpreter_path = f"{self.conda_env(env)}/bin/python"
         python_command_string = generic_python_endpoint(
             module,
-            payload,
             func,
+            payload,
             interpreter_path,
             compression,
             serialization,
             argument_unpacking,
             payload_encoded,
             print_result,
-            for_bash=True
+            for_bash=True,
         )
         return self.command(python_command_string, **command_kwargs)
 
@@ -456,6 +455,16 @@ class Cluster:
         return tuple(
             (
                 instance.commands(commands, _viewer=_viewer, **kwargs)
+                for instance in self.instances
+            )
+        )
+
+    def call_python(
+        self, module, _viewer=True, **kwargs
+    ) -> tuple[Processlike, ...]:
+        return tuple(
+            (
+                instance.call_python(module, _viewer=_viewer, **kwargs)
                 for instance in self.instances
             )
         )
