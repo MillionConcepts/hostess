@@ -315,6 +315,7 @@ def jupyter_connect(
     if env is not None:
         jupyter = f"{find_conda_env(command, env)}" f"/bin/jupyter notebook"
     else:
+        # TODO: this doesn't assemble correctly
         jupyter = "jupyter notebook"
     if kill_on_exit is True:
 
