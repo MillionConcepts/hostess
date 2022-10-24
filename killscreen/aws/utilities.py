@@ -129,3 +129,13 @@ def autopage(client, operation, agg=None, *args, **kwargs):
     lengths = [(k, len(v)) for k, v in page.items() if isinstance(v, list)]
     aggkey = [k for k, v in lengths if v == max([v for _, v in lengths])][0]
     return tuple(get(aggkey)(page) + list(mapcat(get(aggkey))(pager)))
+
+
+def whoami(client=None, session=None):
+    sts = init_client("sts", client, session)
+    response = sts.get_caller_identity()
+    return {
+        'user_id': response['UserId'],
+        'account': response['Account'],
+        'arn': response['Arn']
+    }
