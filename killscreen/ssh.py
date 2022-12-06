@@ -20,7 +20,7 @@ from magic import Magic
 
 import killscreen.shortcuts as ks
 from killscreen.config import GENERAL_DEFAULTS
-from killscreen.subutils import Viewer, split_sh_stream
+from killscreen.subutils import Viewer, split_sh_stream, is_sh_command
 from killscreen.utilities import filestamp
 
 
@@ -229,8 +229,10 @@ def interpret_command(
     if _disown is True:
         if _output_file is None:
             _output_file = f"{filestamp()}.out"
-
-        if isinstance(command_args[0], sh.Command):
+        # TODO: determine if this shares too much responsibility with Viewer
+        # baked sh.Command objects instantiate copies of the sh.Command class
+        # that cannot be equated to the sh.Command class as imported from sh
+        if is_sh_command(command_args[0]):
             command = command_args[0].bake(*command_args[1:], **unspecial)
             command_string = f"(nohup {command}"
         else:

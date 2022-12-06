@@ -7,7 +7,7 @@ import warnings
 from functools import partial
 from multiprocessing import Pipe
 from pathlib import Path
-from typing import Sequence, Union
+from typing import Sequence, Union, Any
 
 import sh
 from cytoolz import juxt, valfilter
@@ -31,6 +31,7 @@ def target_to_method(stream_target):
 def make_stream_handler(targets):
     if targets is None:
         return None
+    # noinspection PyArgumentList
     return juxt(tuple(map(target_to_method, targets)))
 
 
@@ -74,10 +75,10 @@ class Viewer:
     """
     def __init__(self, command=None, _host=None):
         self.process = command
-        if isinstance(command, sh.RunningCommand):
+        if is_sh_runningcommand(command):
             self._populate_from_running_command()
         elif isinstance(command, partial):
-            if isinstance(command.func, sh.RunningCommand):
+            if is_sh_runningcommand(command.func):
                 self._populate_from_running_command()
         self.host = _host
 
@@ -124,7 +125,7 @@ class Viewer:
     def run(self):
         if self.process is None:
             raise TypeError("Nothing to run.")
-        if isinstance(self.process, sh.RunningCommand):
+        if is_sh_runningcommand(self.process):
             raise TypeError("Already running.")
         self.process = self.process()
         self._populate_from_running_command()
@@ -231,7 +232,7 @@ class Viewer:
                     (handle_out,), (err,)
                 )
                 command_args = list(command_args)
-                connector = re.match(r".*(;|&|\|)+ *$", command_args[-1])
+                connector = re.match(r".*([;&|])+ *$", command_args[-1])
                 if connector is not None:
                     command_args[-1] = command_args[-1][:connector.span(1)[0]]
                 command_args[-1] += (
@@ -241,7 +242,9 @@ class Viewer:
                 )
             else:
                 command_kwargs |= console_stream_handlers((out,), (err,))
-        if isinstance(command_args[0], sh.Command):
+        # baked sh.Command objects instantiate copies of the sh.Command class
+        # that cannot be equated to the sh.Command class as imported from sh
+        if is_sh_command(command_args[0]):
             command = command_args[0]
         else:
             command = sh.Command(command_args[0])
@@ -321,5 +324,30 @@ def ps_to_records(ps_command):
     ]
 
 
+def is_sh_command(obj: Any) -> bool:
+    """
+    baked sh.Command objects instantiate copies of the sh.Command class
+    that cannot be equated to the sh.Command class as imported from sh.
+    this is a specialized 'isinstance-like' for this category of class.
+    """
+    if (
+        obj.__class__.__module__ == 'sh'
+        and (obj.__class__.__name__ == 'Command')
+    ):
+        return True
+    return False
+
+
+def is_sh_runningcommand(obj: Any) -> bool:
+    """same rationale as is_sh_command, but for RunningCommands."""
+    if (
+        obj.__class__.__module__ == 'sh'
+        and (obj.__class__.__name__ == 'RunningCommand')
+    ):
+        return True
+    return False
+
+
 Processlike = Union[sh.RunningCommand, Viewer]
 Commandlike = Union[sh.Command, str]
+
