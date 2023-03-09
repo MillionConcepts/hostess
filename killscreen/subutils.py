@@ -100,7 +100,7 @@ class Viewer:
     def _populate_from_running_command(self):
         self._initialized = True
         self.pid = self.process.pid
-        self.cmd = " ".join([token.decode() for token in self.process.cmd])
+        self.cmd = " ".join([token for token in self.process.cmd])
         self.kill = self.process.kill
         self.terminate = self.process.terminate
         self.wait = self.process.wait
@@ -350,4 +350,3 @@ def is_sh_runningcommand(obj: Any) -> bool:
 
 Processlike = Union[sh.RunningCommand, Viewer]
 Commandlike = Union[sh.Command, str]
-
