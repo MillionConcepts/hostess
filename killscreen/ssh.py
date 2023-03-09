@@ -51,7 +51,7 @@ def scp_to(source, target, ip, uname=GENERAL_DEFAULTS["uname"], key=None):
     arguments = [source, uname + "@" + ip + ":" + target]
     if key is not None:
         arguments = ["-i" + key] + arguments
-    return sh.scp(*arguments).stdout.decode()
+    return sh.scp(*arguments)
 
 
 def scp_from(source, target, ip, uname=GENERAL_DEFAULTS["uname"], key=None):
@@ -62,7 +62,7 @@ def scp_from(source, target, ip, uname=GENERAL_DEFAULTS["uname"], key=None):
     arguments = [uname + "@" + ip + ":" + source, target]
     if key is not None:
         arguments = ["-i" + key] + arguments
-    return sh.scp(*arguments).stdout.decode()
+    return sh.scp(*arguments)
 
 
 def scp_read(fname, ip, uname=GENERAL_DEFAULTS["uname"], key=None):
@@ -283,7 +283,7 @@ def get_jupyter_token(command, jupyter_executable, remote_port):
     for attempt in range(5):
         try:
             jlist = command(jupyter_executable, "list", "")
-            for line in [out.decode() for out in jlist.stdout.splitlines()]:
+            for line in jlist.splitlines():
                 if remote_port in line:
                     return re.search(TOKEN_PATTERN, line).group()
             raise ValueError
