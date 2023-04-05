@@ -18,7 +18,7 @@ from dateutil import parser as dtp
 from dustgoggles.func import zero
 import psutil
 
-from killscreen.utilities import mb, console_and_log, stamp
+from hostess.utilities import mb, console_and_log, stamp
 
 
 class FakeBouncer:

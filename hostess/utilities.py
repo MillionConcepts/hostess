@@ -1,4 +1,4 @@
-"""generic utility objects for killscreen"""
+"""generic utility objects for hostess"""
 import _io
 import datetime as dt
 import logging
@@ -19,11 +19,11 @@ def filestamp() -> str:
     return re.sub(r"[-: ]", "_", stamp()[:-2])
 
 
-KILLSCREEN_CONSOLE = rich.console.Console()
+hostess_CONSOLE = rich.console.Console()
 
 
 def console_and_log(message, level="info", style=None):
-    KILLSCREEN_CONSOLE.print(message, style=style)
+    hostess_CONSOLE.print(message, style=style)
     getattr(logging, level)(message)
 
 

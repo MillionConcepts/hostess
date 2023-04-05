@@ -1,19 +1,18 @@
-name: killscreen
+name: hostess
 channels:
   - conda-forge
 dependencies:
-  - python=3.9
+  - python>=3.9
   - boto3
   - cytoolz
   - dustgoggles
   - fire
   - flask
   - pandas
-  - pip
   - python-magic
   - requests
   - rich
-  - sh
+  - sh>=2.0.0
 
 
 

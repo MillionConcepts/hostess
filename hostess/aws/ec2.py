@@ -28,15 +28,15 @@ from dustgoggles.func import zero
 from dustgoggles.structures import listify
 import sh
 
-from killscreen.aws.pricing import (
+from hostess.aws.pricing import (
     get_on_demand_price,
     get_cpu_credit_price,
     get_ec2_basic_price_list,
 )
-from killscreen.caller import generic_python_endpoint
-from killscreen.config import EC2_DEFAULTS, GENERAL_DEFAULTS
-import killscreen.shortcuts as ks
-from killscreen.aws.utilities import (
+from hostess.caller import generic_python_endpoint
+from hostess.config import EC2_DEFAULTS, GENERAL_DEFAULTS
+import hostess.shortcuts as ks
+from hostess.aws.utilities import (
     init_client,
     init_resource,
     tag_dict,
@@ -44,7 +44,7 @@ from killscreen.aws.utilities import (
     autopage,
     clarify_region,
 )
-from killscreen.ssh import (
+from hostess.ssh import (
     jupyter_connect,
     wrap_ssh,
     ssh_key_add,
@@ -53,8 +53,8 @@ from killscreen.ssh import (
     find_ssh_key,
     tunnel,
 )
-from killscreen.subutils import Viewer, Processlike, Commandlike
-from killscreen.utilities import (
+from hostess.subutils import Viewer, Processlike, Commandlike
+from hostess.utilities import (
     gmap,
     my_external_ip,
     filestamp,
@@ -903,9 +903,9 @@ def create_security_group(
         )
     resource = init_resource("ec2", resource, session)
     if name is None:
-        name = killscreen_placeholder()
+        name = hostess_placeholder()
     if description is None:
-        description = "killscreen-generated security group"
+        description = "hostess-generated security group"
     sg = resource.create_security_group(
         Description=description,
         GroupName=name,
@@ -913,7 +913,7 @@ def create_security_group(
         TagSpecifications=[
             {
                 "ResourceType": "security-group",
-                "Tags": [{"Key": "killscreen-generated", "Value": "True"}],
+                "Tags": [{"Key": "hostess-generated", "Value": "True"}],
             },
         ],
     )
@@ -938,7 +938,7 @@ def create_security_group(
                 "IpRanges": [
                     {
                         "CidrIp": f"{my_ip}/32",
-                        "Description": "default killscreen port access from "
+                        "Description": "default hostess port access from "
                         "creating IP",
                     }
                 ],
@@ -949,13 +949,13 @@ def create_security_group(
     return sg
 
 
-def killscreen_placeholder():
-    return f"killscreen-{''.join(choices(ascii_lowercase, k=10))}"
+def hostess_placeholder():
+    return f"hostess-{''.join(choices(ascii_lowercase, k=10))}"
 
 
 def create_ec2_key(key_name=None, save_key=True, resource=None, session=None):
     if key_name is None:
-        key_name = killscreen_placeholder()
+        key_name = hostess_placeholder()
     resource = init_resource("ec2", resource, session)
     key = resource.create_key_pair(KeyName=key_name)
     keydir = Path(os.path.expanduser("~/.ssh"))
@@ -984,7 +984,7 @@ def create_launch_template(
     client=None,
     session=None,
 ):
-    default_name = killscreen_placeholder()
+    default_name = hostess_placeholder()
     if volume_list is None:
         volume_type = (
             EC2_DEFAULTS["volume_type"] if volume_type is None else volume_type
@@ -1018,7 +1018,7 @@ def create_launch_template(
         tags = []
     elif isinstance(tags, Mapping):
         tags = [{"Key": k, "Value": v} for k, v in tags.items()]
-    tags.append({"Key": "killscreen-generated", "Value": "True"})
+    tags.append({"Key": "hostess-generated", "Value": "True"})
     resource_tags = tags.copy()
     if instance_name is not None:
         resource_tags.append({"Key": "Name", "Value": instance_name})

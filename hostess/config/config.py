@@ -1,5 +1,5 @@
 """
-desired settings should be placed in killscreen/user_config/user_conifg.py.
+desired settings should be placed in hostess/user_config/user_conifg.py.
 this example_config module is never referenced by anything.
 """
 import getpass
@@ -10,13 +10,13 @@ home = os.path.expanduser("~")
 
 GENERAL_DEFAULTS = {
     "secrets_folders": (
-        Path(home, ".killscreen", "secrets"),
+        Path(home, ".hostess", "secrets"),
         Path(home),
         Path(home, "Downloads"),
         Path(home, ".ssh")
     ),
-    "cache_path": f"{home}/.killscreen/cache",
-    "log_path": f"{home}/.killscreen/logs",
+    "cache_path": f"{home}/.hostess/cache",
+    "log_path": f"{home}/.hostess/logs",
     "uname": getpass.getuser(),
 }
 EC2_DEFAULTS = {

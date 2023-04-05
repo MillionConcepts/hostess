@@ -9,9 +9,9 @@ from flask import Flask
 from flask import request
 import rich.console
 
-from killscreen.config import GENERAL_DEFAULTS
-from killscreen.monitors import Bouncer, FakeBouncer
-from killscreen.utilities import filestamp
+from hostess.config import GENERAL_DEFAULTS
+from hostess.monitors import Bouncer, FakeBouncer
+from hostess.utilities import filestamp
 
 console = rich.console.Console()
 

@@ -4,9 +4,9 @@ from pathlib import Path
 
 from dustgoggles.structures import dig_for_value
 
-from killscreen.aws.utilities import init_client, clarify_region, autopage
-from killscreen.config import GENERAL_DEFAULTS
-from killscreen.utilities import check_cached_results, clear_cached_results, \
+from hostess.aws.utilities import init_client, clarify_region, autopage
+from hostess.config import GENERAL_DEFAULTS
+from hostess.utilities import check_cached_results, clear_cached_results, \
     filestamp
 
 

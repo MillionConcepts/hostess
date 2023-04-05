@@ -38,14 +38,14 @@ import requests
 from cytoolz import keyfilter, keymap
 from dustgoggles.func import naturals
 
-from killscreen.aws.utilities import init_client, init_resource
+from hostess.aws.utilities import init_client, init_resource
 
 # general note: we're largely, although not completely, avoiding use of the
 # boto3 s3.Bucket object, as it performs similar types of abstraction which
 # collide with ours -- for instance, it often prevents us from getting the
 # API's responses, which we in some cases want.
-from killscreen.subutils import piped, clean_process_records
-from killscreen.utilities import stamp, console_and_log, infer_stream_length
+from hostess.subutils import piped, clean_process_records
+from hostess.utilities import stamp, console_and_log, infer_stream_length
 
 
 class Bucket:

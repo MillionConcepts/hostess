@@ -18,10 +18,10 @@ from dustgoggles.structures import listify, separate_by
 import sh
 from magic import Magic
 
-import killscreen.shortcuts as ks
-from killscreen.config import GENERAL_DEFAULTS
-from killscreen.subutils import Viewer, split_sh_stream, is_sh_command
-from killscreen.utilities import filestamp
+import hostess.shortcuts as ks
+from hostess.config import GENERAL_DEFAULTS
+from hostess.subutils import Viewer, split_sh_stream, is_sh_command
+from hostess.utilities import filestamp
 
 
 def ssh_key_add(ip_list):

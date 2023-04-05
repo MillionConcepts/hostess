@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="killscreen",
+    name="hostess",
     version="0.1.0a",
     description="an intuitive network admin library",
     author="Million Concepts",
