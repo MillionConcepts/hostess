@@ -377,33 +377,6 @@ class Load(AbstractMonitor):
     default_click = "absolute"
 
 
-class TimeSwitcher:
-    """
-    little object that tracks changing times
-    """
-
-    def __init__(self, start_time: str = None):
-        if start_time is not None:
-            self.times = [start_time]
-        else:
-            self.times = []
-
-    def check_time(self, string):
-        try:
-            self.times.append(dtp.parse(string).isoformat())
-            return True
-        except dtp.ParserError:
-            return False
-
-    def __repr__(self):
-        if len(self.times) > 0:
-            return self.times[-1]
-        return None
-
-    def __str__(self):
-        return self.__repr__()
-
-
 def make_monitors(*, digits: Optional[int] = 3):
     """make a set of monitors"""
     return {
@@ -490,3 +463,31 @@ def log_factory(stamper, stat, log_fields, logfile):
         lprint(f"{stamper()},{center},{stat()}\n")
 
     return log
+
+
+class TimeSwitcher:
+    """
+    little object that tracks changing times
+    """
+
+    def __init__(self, start_time: str = None):
+        if start_time is not None:
+            self.times = [start_time]
+        else:
+            self.times = []
+
+    def check_time(self, string):
+        try:
+            self.times.append(dtp.parse(string).isoformat())
+            return True
+        except dtp.ParserError:
+            return False
+
+    def __repr__(self):
+        if len(self.times) > 0:
+            return self.times[-1]
+        return None
+
+    def __str__(self):
+        return self.__repr__()
+
