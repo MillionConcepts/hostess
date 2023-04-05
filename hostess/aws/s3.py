@@ -35,7 +35,7 @@ import boto3.resources.base
 import boto3.s3.transfer
 import botocore.client
 import requests
-from cytoolz import keyfilter, keymap
+from cytoolz import keyfilter
 from dustgoggles.func import naturals
 
 from hostess.aws.utilities import init_client, init_resource
