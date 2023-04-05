@@ -8,7 +8,9 @@ dependencies:
   - dustgoggles
   - fire
   - flask
+  - more-itertools
   - pandas
+  - pympler
   - python-magic
   - requests
   - rich

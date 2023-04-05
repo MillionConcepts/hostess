@@ -1,24 +1,26 @@
 """tracking, logging, and synchronization objects"""
-import datetime as dt
-import re
 import threading
 import time
+from abc import ABC
+from functools import partial
 from typing import (
     MutableMapping,
     Callable,
     Optional,
-    Sequence,
     Union,
-    Literal,
+    Mapping,
 )
 
-from cytoolz import first
-from cytoolz.curried import get
+from cytoolz import identity
 from dateutil import parser as dtp
-from dustgoggles.func import zero
+from dustgoggles.func import constant
 import psutil
 
 from hostess.utilities import mb, console_and_log, stamp
+
+
+def memory():
+    return psutil.Process().memory_info().rss
 
 
 class FakeBouncer:
@@ -83,245 +85,296 @@ class LogMB:
             self._seen_so_far = extra
 
 
-class FakeStopwatch:
-    """fake simple timer object"""
+class AbstractMonitor(ABC):
+    """base monitor class"""
 
-    def __init__(self, digits=2, silent=False):
+    def __init__(
+        self,
+        *,
+        digits: Optional[int] = None,
+        qualities: Optional[Mapping[str, str]] = None,
+        instrument: Callable[[], Union[float, int, Mapping]] = constant(0),
+        formatter: Callable[[float], float] = identity,
+        name: Optional[str] = None,
+    ):
+        if isinstance(qualities, (list, tuple)):
+            qualities = {i: i for i in qualities}
         self.digits = digits
-        self.last_time = None
-        self.start_time = None
-        self.silent = silent
+        self.interval: Union[int, dict] = 0
+        self.last: Union[int, dict] = 0
+        self.absolute: Union[int, dict] = 0
+        self.total: Union[int, dict] = 0
+        self.first: Union[int, dict] = 0
+        self.lap = 0
+        self.qualities = qualities
+        self.instrument = instrument
+        self.formatter = formatter
+        self.started = False
+        self.paused = False
+        self.unitstring = f" {self.units}" if len(self.units) > 0 else ""
+        self.name = self.__class__.__name__ if name is None else name
 
-    def peek(self):
-        return
+    def _round(self, val):
+        if self.digits is None:
+            return val
+        if isinstance(val, Mapping):
+            return {k: round(v, self.digits) for k, v in val.items()}
+        return round(val, self.digits)
 
-    def start(self):
-        return
+    def _unpack_reading(self, reading):
+        if isinstance(reading, tuple):
+            # noinspection PyProtectedMember
+            reading = reading._asdict()
+        return {k: self.formatter(v) for k, v in reading.items()}
+
+    def _update_plural(self, reading, lap):
+        self.absolute = {k: reading[v] for k, v in self.qualities.items()}
+        if len(self.interval) == 0:
+            self.interval = {t: 0 for t in self.qualities}
+            self.total = {t: 0 for t in self.qualities}
+        else:
+            self.interval = {
+                k: self.absolute[k] - self.last[k] for k in self.qualities
+            }
+            if self.cumulative is True:
+                self.total = {
+                    k: self.interval[k] + self.total[k] for k in self.qualities
+                }
+            else:
+                self.total = {
+                    k: self.absolute[k] - self.first[k] for k in self.qualities
+                }
+        if lap is True:
+            self.last = self.absolute
+
+    def _update_single(self, reading, lap):
+        self.absolute = reading
+        # maybe need to do a 'cumulative' attribute for certain instruments
+        self.interval = self.absolute - self.last
+        if self.cumulative is True:
+            self.total = self.total + self.interval
+        else:
+            self.total = self.absolute - self.first
+        if lap is True:
+            self.last = self.absolute
+            self.lap += 1
+
+    def update(self, lap=False):
+        if self.paused is True:
+            return
+        if self.started is False:
+            self.start()
+        reading = self.instrument()
+        if isinstance(reading, (tuple, Mapping)):
+            reading = self._unpack_reading(reading)
+            return self._update_plural(reading, lap)
+        return self._update_single(self.formatter(reading), lap)
+
+    def _display_simple(self, _which):
+        raise TypeError(
+            f"_display_simple() not supported for {self.__class__.__name__}"
+        )
+
+    def _display_single(self, value, which):
+        return f"{self._round(value)}{self.unitstring}{which}"
+
+    def _display_plural(self, register, which):
+        values = [
+            f"{quality} {self._display_single(register[quality], '')}"
+            for quality in self.qualities
+        ] + [which]
+        return ";".join(filter(None, values))
+
+    def display(self, which=None, say=False, simple=False):
+        which = self.default_display if which is None else which
+        if which == "all":
+            return "\n".join(
+                [self.display(this, say, simple) for this in self.registers]
+            )
+        if simple is True:
+            return self._display_simple(which)
+        register = getattr(self, which, say)
+        whichprint = f" {which}" if say is True else ""
+        if isinstance(register, Mapping):
+            return self._display_plural(register, whichprint)
+        return self._display_single(register, whichprint)
+
+    def rec(self, which=None):
+        which = self.default_display if which is None else which
+        if which == "all":
+            return {this: self.rec(this) for this in self.registers}
+        val = getattr(self, which)
+        return self._round(val)
+
+    def peek(self, which=None, say=False, simple=False):
+        which = self.default_click if which is None else which
+        self.update()
+        return self.display(which, say, simple)
 
     def click(self):
-        return
+        self.update(True)
 
-    def total(self):
-        return
+    def clickpeek(self, which=None, say=False, simple=False):
+        which = self.default_click if which is None else which
+        self.click()
+        return self.display(which, say, simple)
 
-    fake = True
+    def start(self, restart=False):
+        self.paused = False
+        if (restart is False) and (self.started is True):
+            return
+        self.started = True
+        reading = self.instrument()
+        if isinstance(reading, (tuple, Mapping)):
+            reading = self._unpack_reading(reading)
+        else:
+            reading = self.formatter(reading)
+        if isinstance(reading, Mapping):
+            self.first = {k: reading[v] for k, v in self.qualities.items()}
+            self.total, self.interval, self.absolute = {}, {}, {}
+        else:
+            self.first = reading
+        self.last = self.first
+        self.update()
 
+    def pause(self):
+        self.update()
+        self.paused = True
 
-class Stopwatch(FakeStopwatch):
-    """simple timer object"""
-
-    def __init__(self, digits=2, silent=False):
-        super().__init__(digits, silent)
-
-    def peek(self):
-        if self.last_time is None:
-            return 0
-        value = time.time() - self.last_time
-        if self.digits is None:
-            return value
-        return round(value, self.digits)
-
-    def start(self):
-        if self.silent is False:
-            print("starting timer")
-        now = time.time()
-        self.start_time = now
-        self.last_time = now
-
-    def click(self):
-        if self.last_time is None:
-            return self.start()
-        if self.silent is False:
-            print(f"{self.peek()} elapsed seconds, restarting timer")
-        self.last_time = time.time()
-
-    def total(self):
-        if self.last_time is None:
-            return 0
-        value = time.time() - self.start_time
-        if self.digits is None:
-            return value
-        return round(value, self.digits)
-
-    fake = False
-
-
-class FakeCPUMonitor:
-    """fake simple CPU usage monitor."""
-
-    def __init__(self, times="all", round_to=2):
-        self.times = times
-        self.round_to = round_to
-        self.interval = {}
-        self.last = {}
-        self.absolute = {}
-        self.total = {}
-
-    def update(self):
-        return
-
-    def display(self, which="interval", simple=False):
-        return ""
-
-    def __repr__(self):
-        return str(self.absolute)
+    def restart(self):
+        self.start(restart=True)
 
     def __str__(self):
         return self.__repr__()
 
-    fake = True
-
-
-class CPUMonitor(FakeCPUMonitor):
-    """simple CPU usage monitor."""
-
-    def __init__(self, times="all", round_to=2):
-        super().__init__(times, round_to)
-        if self.times == "all":
-            # noinspection PyProtectedMember
-            self.times = psutil.cpu_times()._fields
-        self.update()
-
-    def update(self):
-        cputimes = psutil.cpu_times()
-        self.absolute = {
-            time_type: getattr(cputimes, time_type) for time_type in self.times
-        }
-        if len(self.interval) == 0:
-            self.interval = {t: 0 for t in self.times}
-            self.total = {t: 0 for t in self.times}
-        else:
-            self.interval = {
-                t: self.absolute[t] - self.last[t] for t in self.times
-            }
-            self.total = {
-                t: self.interval[t] + self.total[t] for t in self.times
-            }
-        self.last = self.absolute
-
-    def display(self, which="interval", simple=False):
-        infix = f"{which} " if which != "interval" else ""
-        period = getattr(self, which)
-        if simple is True:
-            if "idle" not in period:
-                raise KeyError("simple=True requires idle time monitoring.")
-            items = (
-                ("idle", period["idle"]),
-                ("busy", sum([v for k, v in period.items() if k != "idle"])),
-            )
-        else:
-            items = period.items()
-        if self.round_to is not None:
-            string = ";".join(
-                [f"{k} {round(v, self.round_to)}" for k, v in items]
-            )
-        else:
-            string = ";".join([f"{k} {v}" for k, v in items])
-        return string + f" {infix}s"
-
-    fake = False
-
-
-PROC_NET_DEV_FIELDS = (
-    "bytes",
-    "packets",
-    "errs",
-    "drop",
-    "fifo",
-    "frame",
-    "compressed",
-    "multicast",
-)
-
-
-def catprocnetdev():
-    with open("/proc/net/dev") as stream:
-        return stream.read()
-
-
-def parseprocnetdev(procnetdev, rejects=("lo",)):
-    interface_lines = filter(
-        lambda l: ":" in l[:12], map(str.strip, procnetdev.split("\n"))
-    )
-    entries = []
-    for interface, values in map(lambda l: l.split(":"), interface_lines):
-        if interface in rejects:
-            continue
-        records = {
-            field: int(number)
-            for field, number in zip(
-                PROC_NET_DEV_FIELDS, filter(None, values.split(" "))
-            )
-        }
-        entries.append({"interface": interface} | records)
-    return entries
-
-
-class FakeNetstat:
-    """fake simple network monitor."""
-
-    def __init__(self, rejects=("lo",), round_to=2):
-        self.rejects = rejects
-        self.round_to = round_to
-        self.full = ()
-        self.absolute, self.last, self.interval, self.total = {}, {}, {}, {}
-
-    def update(self):
-        return
-
-    def display(self, which="interval", interface=None):
-        return ""
-
-    fake = True
-
-
-class Netstat(FakeNetstat):
-    """simple network monitor. works only on *nix at present."""
-
-    # TODO: monitor TX as well as RX, etc.
-    def __init__(self, rejects=("lo",), round_to=2):
-        super().__init__(rejects, round_to)
-        self.update()
-        try:
-            heaviest_traffic = max(map(get("bytes"), self.full))
-            self.default_interface = first(
-                filter(lambda v: v["bytes"] == heaviest_traffic, self.full)
-            )['interface']
-        except (KeyError, StopIteration):
-            self.default_interface = None
-
-    def update(self):
-        self.full = parseprocnetdev(catprocnetdev(), self.rejects)
-        for line in self.full:
-            interface, bytes_ = line["interface"], line["bytes"]
-            self.absolute[interface] = bytes_
-            if interface not in self.interval.keys():
-                self.total[interface] = 0
-                self.interval[interface] = 0
-                self.last[interface] = bytes_
-            else:
-                self.interval[interface] = bytes_ - self.last[interface]
-                self.total[interface] += self.interval[interface]
-                self.last[interface] = bytes_
-
-    def display(self, which="interval", interface=None):
-        if which not in ("absolute", "total", "interval", "last"):
-            raise ValueError(
-                "'which' argument to Netstat.display() must be 'absolute', "
-                "'total', 'interface', or 'last'."
-            )
-        interface = self.default_interface if interface is None else interface
-        infix = f"{which} " if which != "interval" else ""
-        if interface is None:
-            value = first(getattr(self, which).values())
-        else:
-            value = getattr(self, which)[interface]
-        return f"{mb(value, self.round_to)} {infix}MB"
-
     def __repr__(self):
-        return str(self.absolute)
+        return f"{self.display()}"
 
+    units = ""
+    fake = True
+    cumulative = False
+    default_display = "total"
+    default_click = "interval"
+    registers = ("first", "last", "absolute", "interval", "total")
+
+
+class Stopwatch(AbstractMonitor):
+    """simple timekeeping device"""
+
+    def __init__(self, *, digits: Optional[int] = 3):
+        super().__init__(digits=digits)
+        self.instrument = time.perf_counter
+
+    units = "s"
     fake = False
+
+
+class RAM(AbstractMonitor):
+    """simple memory monitoring device"""
+
+    def __init__(self, *, digits: Optional[int] = 3):
+        super().__init__(digits=digits)
+        self.instrument = memory
+        self.formatter = mb
+
+    units = "MB"
+    fake = False
+
+
+class CPU(AbstractMonitor):
+    """simple CPU monitoring device"""
+
+    def __init__(self, *, digits: Optional[int] = 3):
+        super().__init__(digits=digits)
+        self.instrument = psutil.cpu_percent
+        self.formatter = identity
+
+    units = "%"
+    fake = False
+    default_display = "absolute"
+    default_click = "absolute"
+
+
+class CPUTime(AbstractMonitor):
+    """simple CPU time monitoring device"""
+
+    def __init__(self, *, digits: Optional[int] = 3):
+        super().__init__(digits=digits)
+        self.instrument = psutil.cpu_times
+        self.qualities = {
+            "user": "user",
+            "system": "system",
+            "idle": "idle",
+            "iowait": "iowait",
+        }
+
+
+class Usage(AbstractMonitor):
+    """simple Disk usage monitor"""
+
+    def __init__(self, *, digits: Optional[int] = 3, path="."):
+        super().__init__(digits=digits)
+        self.qualities = {"total": "total", "used": "used", "free": "free"}
+        self.instrument = partial(psutil.disk_usage, path)
+        self.formatter = mb
+
+    units = "MB"
+    fake = False
+
+
+class DiskIO(AbstractMonitor):
+    """simple Disk io monitor"""
+
+    def __init__(self, *, digits: Optional[int] = 3):
+        super().__init__(digits=digits)
+        self.instrument = psutil.disk_io_counters
+        self.formatter = mb
+        self.qualities = {
+            "read": "read_bytes",
+            "write": "write_bytes",
+            "read count": "read_count",
+            "write count": "write_count",
+        }
+
+    units = "MB"
+    fake = False
+    cumulative = True
+
+
+class NetworkIO(AbstractMonitor):
+    """simple Network io monitor"""
+
+    def __init__(self, *, digits: Optional[int] = 3):
+        super().__init__(digits=digits)
+        self.instrument = psutil.net_io_counters
+        self.formatter = mb
+        self.qualities = {
+            "sent": "bytes_sent",
+            "recv": "bytes_recv",
+            "sent count": "packets_sent",
+            "recv count": "packets_recv",
+        }
+
+    units = "MB"
+    fake = False
+
+
+class Load(AbstractMonitor):
+    """simple Load monitoring device"""
+
+    def __init__(self, *, digits: Optional[int] = 3):
+        super().__init__(digits=digits)
+        self.instrument = psutil.getloadavg
+        self.qualities = {
+            "1m": 0,
+            "5m": 1,
+            "15m": 2,
+        }
+
+    units = ""
+    fake = False
+    default_display = "absolute"
+    default_click = "absolute"
 
 
 class TimeSwitcher:
@@ -351,52 +404,77 @@ class TimeSwitcher:
         return self.__repr__()
 
 
-def record_and_yell(message: str, cache: MutableMapping, loud: bool = False):
-    """
-    place message into a cache object with a timestamp; optionally print it
-    """
-    if loud is True:
-        print(message)
-    cache[dt.datetime.now().isoformat()] = message
+def make_monitors(*, digits: Optional[int] = 3):
+    """make a set of monitors"""
+    return {
+        "cpu": CPU(digits=digits),
+        "cputime": CPUTime(digits=digits),
+        "memory": RAM(digits=digits),
+        "disk": Usage(digits=digits),
+        "diskio": DiskIO(digits=digits),
+        "networkio": NetworkIO(digits=digits),
+        "time": Stopwatch(digits=digits),
+    }
 
 
-def notary(cache):
-    def note(message="", loud: bool = False, eject: bool = False):
+def make_stat_printer(monitors: Mapping[str, AbstractMonitor]):
+    def printstats(lap=True, eject=False, **display_kwargs):
         if eject is True:
-            return cache
-        return record_and_yell(message, cache, loud)
+            return monitors
+        for v in monitors.values():
+            v.update(lap)
+        return ";".join(
+            [v.display(**display_kwargs) for v in monitors.values()]
+        )
 
-    return note
-
-
-def make_monitors(
-    fake: bool = False,
-    silent: bool = True,
-    round_to: Optional[int] = None,
-    reject_interfaces: Sequence[str] = ("lo",),
-    cpu_time_types: Union[Literal["all"], Sequence[str]] = "all",
-) -> tuple[Callable, Callable]:
-    if fake is True:
-        return zero, zero
-    log = {}
-    watch = Stopwatch(silent=silent, digits=round_to)
-    netstat = Netstat(round_to=round_to, rejects=reject_interfaces)
-    cpumon = CPUMonitor(round_to=round_to, times=cpu_time_types)
-    stat, note = print_stats(watch, netstat, cpumon), notary(log)
-    return stat, note
+    return printstats
 
 
-def logstamp() -> str:
-    return f"{dt.datetime.utcnow().isoformat()[:-7]}"
-
-
-def dcom(string, sep=";", bad=(",", "\n")):
+class Recorder:
     """
-    simple string sanitization function. defaults assume that you want to jam
-    the string into a CSV field. assumes you don't care about distinguishing
-    different forbidden characters from one another in the output.
+    wrapper class for arbitrary callable. makes its interface compatible
+    with make_stat_records()
     """
-    return re.sub(rf"[{re.escape(''.join(bad))}]", sep, string.strip())
+
+    def __init__(self, func):
+        self.func = func
+        self.cache = None
+
+    def __call__(self, *args, **kwargs):
+        return self.func(*args, **kwargs)
+
+    def update(self, *args, **kwargs):
+        self.cache = self.func(*args, **kwargs)
+
+    def start(self):
+        return self.update()
+
+    def pause(self):
+        return self.update()
+
+    def rec(self, *_, **__):
+        return self.cache
+
+
+def make_stat_records(
+    monitors: MutableMapping[str, Union[AbstractMonitor, Callable]]
+):
+    for key in monitors.keys():
+        if not isinstance(monitors[key], AbstractMonitor):
+            monitors[key] = Recorder(monitors[key])
+
+    def recordstats(
+        lap=True, eject=False, **display_kwargs
+    ) -> Union[
+        Mapping[str, Union[AbstractMonitor, Recorder]],
+        dict[str, Union[dict, float]]
+    ]:
+        if eject is True:
+            return monitors
+        for v in monitors.values():
+            v.update(lap)
+        return {k: v.rec(**display_kwargs) for k, v in monitors.items()}
+    return recordstats
 
 
 def log_factory(stamper, stat, log_fields, logfile):
@@ -412,45 +490,3 @@ def log_factory(stamper, stat, log_fields, logfile):
         lprint(f"{stamper()},{center},{stat()}\n")
 
     return log
-
-
-def print_stats(
-    watch: Optional[FakeStopwatch] = None,
-    netstat: Optional[FakeNetstat] = None,
-    cpumon: Optional[FakeCPUMonitor] = None,
-    new: bool = False,
-):
-    if new is True:
-        watch = Stopwatch() if watch is None else watch
-        netstat = Netstat() if netstat is None else netstat
-        cpumon = CPUMonitor() if cpumon is None else cpumon
-    else:
-        watch = FakeStopwatch() if watch is None else watch
-        netstat = FakeNetstat() if netstat is None else netstat
-        cpumon = FakeCPUMonitor() if cpumon is None else cpumon
-    watch.start(), netstat.update(), cpumon.update()
-
-    def printer(total=False, eject=False, simple_cpu=False, no_lap=None):
-        if eject is True:
-            return watch, netstat, cpumon
-        netstat.update(), cpumon.update()
-        if no_lap is None:
-            no_lap = True if total is True else False
-        if total is True:
-            sec = None if watch.fake is True else f"{watch.total()} total s"
-            vol = None if netstat.fake is True else netstat.display("total")
-            cpu = None
-            if cpumon.fake is False:
-                cpu = "cpu " + cpumon.display("total", simple=simple_cpu)
-        else:
-            sec = None if watch.fake is True else f"{watch.peek()} s"
-            vol = None if netstat.fake is True else netstat.display("interval")
-            cpu = None
-            if cpumon.fake is False:
-                cpu = "cpu " + cpumon.display("interval", simple=simple_cpu)
-        if no_lap is False:
-            watch.click()
-        # noinspection PyTypeChecker
-        return ",".join(filter(None, [sec, vol, cpu]))
-
-    return printer

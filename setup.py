@@ -2,8 +2,8 @@ from setuptools import setup, find_packages
 
 setup(
     name="hostess",
-    version="0.1.0a",
-    description="an intuitive network admin library",
+    version="0.1.1a",
+    description="intuitive admin library",
     author="Million Concepts",
     author_email="mstclair@millionconcepts.com",
     packages=find_packages(),
@@ -14,11 +14,12 @@ setup(
         "dustgoggles",
         "fire",
         "flask",
+        "more-itertools",
         "pandas",
-        "pip",
+        "pympler",
         "python-magic",
         "requests",
         "rich",
-        "sh"
+        "sh>=2.0.0"
     ]
 )

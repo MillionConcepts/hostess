@@ -5,7 +5,7 @@ import logging
 import re
 from pathlib import Path
 from socket import gethostname
-from typing import Callable, Iterable, Any
+from typing import Callable, Iterable, Any, MutableMapping
 
 import rich.console
 from cytoolz import first
@@ -130,3 +130,38 @@ def check_cached_results(path, prefix, max_age=7):
 def clear_cached_results(path, prefix):
     for result in filter(lambda p: p.name.startswith(prefix), path.iterdir()):
         result.unlink()
+
+
+def record_and_yell(message: str, cache: MutableMapping, loud: bool = False):
+    """
+    place message into a cache object with a timestamp; optionally print it
+    """
+    if loud is True:
+        print(message)
+    cache[dt.datetime.now().isoformat()] = message
+
+
+def notary(cache):
+    def note(message="", loud: bool = False, eject: bool = False):
+        if eject is True:
+            return cache
+        return record_and_yell(message, cache, loud)
+
+    return note
+
+
+def logstamp() -> str:
+    return f"{dt.datetime.utcnow().isoformat()[:-7]}"
+
+
+def dcom(string, sep=";", bad=(",", "\n")):
+    """
+    simple string sanitization function. defaults assume that you want to jam
+    the string into a CSV field. assumes you don't care about distinguishing
+    different forbidden characters from one another in the output.
+    """
+    return re.sub(rf"[{re.escape(''.join(bad))}]", sep, string.strip())
+
+
+def unix2dt(epoch):
+    return dt.datetime.fromtimestamp(epoch)
