@@ -245,16 +245,12 @@ class Viewer:
         # baked sh.Command objects instantiate copies of the sh.Command class
         # that cannot be equated to the sh.Command class as imported from sh
         if is_sh_command(command_args[0]):
-            command = partial(
-                command_args[0], *command_args[1:], **command_kwargs
-            )
+            command = command_args[0]
         else:
-            command = partial(
-                sh.Command(command_args[0], *command_args[1:]),
-                **command_kwargs
-            )
+            command = sh.Command(command_args[0])
         if _quit is True:
             command_args[-1] += " & exit"
+        command = command.bake(*command_args[1:], **command_kwargs)
         viewer.__init__(command, _host=_host)
         (
             viewer.out, viewer.err, viewer._pid_records, viewer._get_children
