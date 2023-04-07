@@ -127,7 +127,7 @@ class Viewer:
             raise TypeError("Nothing to run.")
         if is_sh_runningcommand(self.process):
             raise TypeError("Already running.")
-        self.process = self.process()
+        self.process = self.process(_return_cmd=True)
         self._populate_from_running_command()
 
     @property
