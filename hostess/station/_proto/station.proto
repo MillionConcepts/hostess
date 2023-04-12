@@ -1,0 +1,115 @@
+syntax = "proto3";
+
+package hostess_station;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+
+/* node is the whole thing. pipe is a component, often simply including a
+singular pipeline execution. in some cases, a handler may independently
+execute multiple pipelines (e.g, unmanaged cleanup tasks) */
+enum ActionLevel {node = 0; pipe = 1;}
+/* 'failure' means a pipeline specifically reported it was unable to fully
+complete, but still may have exited gracefully. 'crash' means a pipeline did
+not exit gracefully (returned an exception message or an unwanted exit code,
+or the handler found evidence on the system that the process terminated
+prematurely).
+i.e., 'failure' is a handled pipeline-scale exception, 'crash' is an unhandled
+exception within the pipeline. */
+enum Status {running = 0; success = 1; failure = 2; crash = 3; timeout = 4;}
+
+/* timestamps and duration for actions */
+message ActionTime {
+  google.protobuf.Timestamp start = 1;
+  google.protobuf.Timestamp end = 2;
+  google.protobuf.Duration duration = 3;
+}
+
+message Action {
+  string name = 1;
+  Status status = 2;
+  ActionLevel level = 3;
+  ActionTime time = 4;
+  string return_value = 5;
+  /* things like Python exception type */
+  string return_type = 6;
+  /* intended specifically for process exit codes */
+  uint32 exit_code = 7;
+}
+
+/* TaskReport contains information on the outcome of an
+external task execution. Handlers or listener nodes send
+TaskReports to control nodes.
+ */
+message TaskReport {
+  uint32 task_id = 1;
+  string nodename = 2;
+  string hostname = 3;
+  repeated Action actions = 4;
+  bool ok = 5;
+}
+
+/* check-in / keepalive messages */
+message Update {
+  string nodename = 1;
+  bool ok = 2;
+  google.protobuf.Timestamp time = 3;
+  google.protobuf.Duration wait_time = 4;
+  string hostname = 5;
+  /* for handlers / actuators */
+  TaskReport running_actions = 6;
+  /* for listeners */
+  /* total hostess-external messages ever received */
+  uint32 total_messages = 7;
+  /* hostess-external messages received since last update */
+  uint32 new_messages = 8;
+  /* monitor types? */
+}
+
+enum InstructionType {
+  report = 0; stop = 1; wake = 2; sleep = 3; do = 4; kill = 5;
+}
+message PythonSerial {bytes body = 1; string serialization = 2;}
+enum Serialization {unserialized = 0; json_serialized=1; pickle_serialized=2;}
+enum Compression {none = 0; gzip = 1;}
+
+message PythonArgument {
+  bytes value = 1;
+  Serialization serialization = 2;
+  /* calling functions with positional-only arguments is not supported */
+  string argname = 3;
+  string type = 4;
+  Compression compression = 5;
+}
+
+enum PythonCallType {script = 0; module = 1;}
+
+message PythonCall {
+  PythonCallType calltype = 1;
+  /* module or fully-qualified path */
+  string path = 2;
+  string func = 3;
+  /* for passing arguments into the call */
+  repeated PythonArgument arguments = 4;
+  oneof interpreter {
+    string interpreter_path = 5;
+    string conda_env = 6;
+  }
+}
+
+message Instruction {
+  InstructionType type = 1;
+  /* only 'do' and 'kill' instructions require ids */
+  uint32 task_id = 2;
+  /* reserved for application-specific meanings. e.g., this could in some
+  cases simply be a fully-qualified path to a target file. */
+  map<string, string> message = 3;
+  oneof payload {
+    bytes blob = 4;
+    string systemcall = 5;
+    PythonCall pythoncall = 6;
+  }
+  google.protobuf.Timestamp time = 7;
+  /* maybe other meta-instructions */
+}
