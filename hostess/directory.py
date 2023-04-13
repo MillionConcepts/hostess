@@ -35,8 +35,8 @@ def lsdashl(directory, include_directories=True):
                 "size": mb(stat.st_size, 3),
                 "excluded": False,
                 "directory": path.is_dir(),
-            }
-            | mtimes(stat)
+                "suffix": path.suffix
+            } | mtimes(stat)
         )
     return listings
 
@@ -110,6 +110,7 @@ def _make_levelframe(group, squish):
     else:
         levelframe = join.rename(columns={join.columns[-2]: 'filename'})
     try:
+        # TODO: probably superfluous
         levelframe["suffix"] = (
             levelframe["filename"].str.split(".", expand=True, n=1)[1]
         )
