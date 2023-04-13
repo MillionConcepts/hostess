@@ -10,6 +10,7 @@ dependencies:
   - flask
   - more-itertools
   - pandas
+  - protobuf
   - pympler
   - python-magic
   - requests

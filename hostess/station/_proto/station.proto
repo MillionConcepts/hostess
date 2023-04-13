@@ -5,11 +5,15 @@ package hostess_station;
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 
+/* compile like: protoc -I hostess --python_out=hostess hostess/station/_proto/station.proto */
+/* TODO: autocompiler */
 
 /* node is the whole thing. pipe is a component, often simply including a
 singular pipeline execution. in some cases, a handler may independently
 execute multiple pipelines (e.g, unmanaged cleanup tasks) */
-enum ActionLevel {node = 0; pipe = 1;}
+/* TODO: get protobuf >= 4.22.0 so this silly placeholder thing doesn't have to
+    happen with not-actually-closed enums */
+enum ActionLevel {unknownlevel = 0; node = 1; pipe = 2;}
 /* 'failure' means a pipeline specifically reported it was unable to fully
 complete, but still may have exited gracefully. 'crash' means a pipeline did
 not exit gracefully (returned an exception message or an unwanted exit code,
@@ -17,7 +21,14 @@ or the handler found evidence on the system that the process terminated
 prematurely).
 i.e., 'failure' is a handled pipeline-scale exception, 'crash' is an unhandled
 exception within the pipeline. */
-enum Status {running = 0; success = 1; failure = 2; crash = 3; timeout = 4;}
+enum Status {
+  unknownstatus = 0;
+  running = 1;
+  success = 2;
+  failure = 3;
+  crash = 4;
+  timeout = 5;
+}
 
 /* timestamps and duration for actions */
 message ActionTime {
@@ -46,8 +57,10 @@ message TaskReport {
   uint32 task_id = 1;
   string nodename = 2;
   string hostname = 3;
-  repeated Action actions = 4;
-  bool ok = 5;
+  /* possibly redundant */
+  google.protobuf.Timestamp sendtime = 4;
+  repeated Action actions = 5;
+  bool ok = 6;
 }
 
 /* check-in / keepalive messages */
@@ -83,7 +96,7 @@ message PythonArgument {
   Compression compression = 5;
 }
 
-enum PythonCallType {script = 0; module = 1;}
+enum PythonCallType {unknowncalltype = 0; script = 1; module = 2;}
 
 message PythonCall {
   PythonCallType calltype = 1;
