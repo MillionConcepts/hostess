@@ -3,8 +3,15 @@ import re
 from multiprocessing import Pool
 
 from hostess.monitors import Stopwatch
-from hostess.station.talkie import HOSTESS_EOM, launch_tcp_server, tcp_send, \
-    make_hostess_header, read_hostess_header
+import hostess.station.proto.station_pb2 as pro
+from hostess.station.proto_utils import make_timestamp
+from hostess.station.talkie import (
+    HOSTESS_EOM,
+    launch_tcp_server,
+    tcp_send,
+    make_comm,
+    read_comm,
+)
 
 
 def send_randbytes(
@@ -68,11 +75,28 @@ def test_tcp_server():
         )
         assert message == messages[message_id]
     # close the socket and terminate the listeners so the test will terminate
-    server['kill']()
+    server["kill"]()
 
 
-def test_hostess_header():
-    attributes = "Report", True, 16634
-    encoded = make_hostess_header(*attributes)
-    decoded = read_hostess_header(encoded)
-    assert attributes == tuple(decoded.values())
+def test_protobuf():
+    """attempt to construct a basic station protobuf message"""
+    actions = [
+        pro.Action(name='imagestats', status='success', level='pipe'),
+        pro.Action(name='handler', status='success', level='node'),
+    ]
+    rdict = {'sendtime': make_timestamp(), 'task_id': 3, 'actions': actions}
+    report = pro.Report(**rdict)
+    assert report.task_id == 3
+    assert report.actions[1].name == 'handler'
+    return report
+
+
+def test_hostess_message():
+    """check basic message roundtrip"""
+    report = test_protobuf()
+    encoded = make_comm(report)
+    decoded = read_comm(encoded)
+    assert decoded['header']['mtype'] == 'Report'
+    assert decoded['body'].actions[0].name == 'imagestats'
+    assert decoded['header']['length'] == len(report.SerializeToString())
+

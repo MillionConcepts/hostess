@@ -12,45 +12,56 @@ from typing import (
     MutableMapping,
     MutableSequence,
     Mapping,
-    Any,
+    Any, Union,
 )
 
+from google.protobuf.message import Message
 from google.protobuf.json_format import MessageToDict
 
-import hostess.station._proto.station_pb2 as hostess_proto
+import hostess.station.proto.station_pb2 as hostess_proto
 from hostess.utilities import curry, logstamp
 
 HOSTESS_ACK = b"\06hostess"
 HOSTESS_EOM = b"\03hostess"
 HOSTESS_SOH = b"\01hostess"
-CODE_TO_MTYPE = MPt({0: "Update", 1: "Instruction", 2: "Report"})
+# none means it's a blob/stream, not a serialized protobuf Message
+CODE_TO_MTYPE = MPt({0: "none", 1: "Update", 2: "Instruction", 3: "Report"})
 MTYPE_TO_CODE = MPt({v: k for k, v in CODE_TO_MTYPE.items()})
-HEADER_STRUCT = struct.Struct("<8sB?L")
+HEADER_STRUCT = struct.Struct("<8sBL")
 
 
-def timeout_factory() -> tuple[Callable[[], int], Callable[[], None]]:
+def timeout_factory(
+    raise_timeout: bool = True, timeout: float = 5
+) -> tuple[Callable[[], int], Callable[[], None]]:
     """
     returns a tuple of functions. calling the first starts a wait timer if not
     started, and also returns current wait time. calling the second resets the
     wait timer.
+
+    Args:
+        raise_timeout: if True, raises timeout if waiting > timeout.
+        timeout: timeout in seconds, used only if raise_timeout is True
     """
     starts = []
 
     def waiting():
-        """call me to start and check timeout."""
+        """call me to start and check/raise timeout."""
         if len(starts) == 0:
             starts.append(time.time())
             return 0
-        return time.time() - starts[-1]
+        interval = time.time() - starts[-1]
+        if (raise_timeout is True) and (interval > timeout):
+            raise TimeoutError
+        return interval
 
-    def nowait():
+    def unwait():
         """call me to reset timeout."""
         try:
             starts.pop()
         except IndexError:
             pass
 
-    return waiting, nowait
+    return waiting, unwait
 
 
 def signal_factory(thread_dict: MutableMapping) -> Callable[[str, int], None]:
@@ -107,7 +118,7 @@ def accept(
 def _tryread(
     conn: socket.socket, chunksize: int, eomstr: bytes
 ) -> tuple[Optional[bytes], str, bool]:
-    """inner read-chunk-from-socket handler"""
+    """inner read-individual-chunk-from-socket handler for `read`"""
     status, reading = "streaming", True
     try:
         data = conn.recv(chunksize)
@@ -116,13 +127,26 @@ def _tryread(
             raise
         if eomstr is None:
             raise
-        return None, "error", True
+        return None, "unavailable", True
     if data == b"":
         status, reading = "stopped", False
     if eomstr is not None:
         if data.endswith(eomstr):
             status, reading = "eom", False
     return data, status, reading
+
+
+def _trydecode(decoder, stream):
+    """inner stream-decode handler function for `read`"""
+    nbytes = len(stream)
+    try:
+        stream = decoder(stream)
+        status = f"decoded {nbytes}"
+    except KeyboardInterrupt:
+        raise
+    except Exception as ex:
+        status = f"decode error;{nbytes};{type(ex)};{ex}"
+    return status, stream
 
 
 def read(
@@ -133,29 +157,30 @@ def read(
     eomstr: bytes = HOSTESS_EOM,
     timeout: float = 5,
     delay: float = 0.01,
+    decoder: Optional[Callable] = None
 ) -> tuple[bytes, str, str]:
     """
-    read-from-socket callback for read threads. attached to keys by the
-    selector.
+    read-from-socket callback for read threads. attached to keys by `sel`.
     """
     stream, status = b"", "unk"
     try:
         sel.unregister(conn)
         reading = True
-        waiting, nowait = timeout_factory()
+        waiting, unwait = timeout_factory(timeout=timeout)
         while reading:
             data, status, reading = _tryread(conn, chunksize, eomstr)
-            if status == "error":
-                if waiting() > timeout:
-                    raise TimeoutError
+            if status == "unavailable":
+                waiting()
                 time.sleep(delay)
                 continue
-            nowait()
+            unwait()
             stream += data
         if status in ("stopped", "eom"):
             # tell the selector the socket is ready for an `ack` callback
             # TODO: something else for not-eom?
             sel.register(conn, selectors.EVENT_WRITE, curry(ack)(sel))
+            if decoder is not None:
+                status, stream = _trydecode(decoder, status)
     except BrokenPipeError:
         status = "broken pipe"
     except TimeoutError:
@@ -233,6 +258,7 @@ def launch_read_thread(
     queue: MutableSequence,
     signals: MutableMapping,
     interval: float = 0.01,
+    decoder: Optional[Callable] = None
 ) -> dict:
     """
     launch a read thread. probably should only be called by launch_tcp_server.
@@ -246,6 +272,7 @@ def launch_read_thread(
         signals: if the value corresponding to this thread's name in this
             dict is not None, thread shuts itself down.
         interval: polling rate in s
+        decoder: optional callable used to decode received messages
 
     Returns:
         An 'exit code' dict with its name and received signal.
@@ -290,7 +317,7 @@ def launch_read_thread(
 def launch_selector_thread(
     sock: socket.socket,
     queues: MutableMapping[Any, MutableSequence],
-    signals: MutableMapping,
+    signals: MutableMapping[Union[int, str], Optional[str]],
     interval: float = 0.01,
     poll: float = 1,
 ) -> dict:
@@ -327,7 +354,13 @@ def launch_selector_thread(
     return {"thread": "select", "signal": signals.get("select")}
 
 
-def launch_tcp_server(host, port, read_threads=4, interval=0.01):
+def launch_tcp_server(
+    host, 
+    port, 
+    read_threads=4, 
+    interval=0.01, 
+    decoder: Optional[Callable] = None
+):
     """
     launch a lightweight tcp server
     Args:
@@ -335,6 +368,7 @@ def launch_tcp_server(host, port, read_threads=4, interval=0.01):
         port: port for socket
         read_threads: # of read threads
         interval: poll/spool interval for threads
+        decoder: optional callable used to decode received messages
 
     Returns:
         dict whose keys are:
@@ -357,9 +391,8 @@ def launch_tcp_server(host, port, read_threads=4, interval=0.01):
         threads, events, data, peers = {}, [], [], {}
         queues = {i: [] for i in range(read_threads)}
         signals = {i: None for i in range(read_threads)} | {"select": None}
-        shared = (signals, interval)
         threads["select"] = executor.submit(
-            launch_selector_thread, sock, queues, *shared
+            launch_selector_thread, sock, queues, signals, interval, 1
         )
         for ix in range(read_threads):
             threads[ix] = executor.submit(
@@ -369,7 +402,9 @@ def launch_tcp_server(host, port, read_threads=4, interval=0.01):
                 peers,
                 ix,
                 queues[ix],
-                *shared,
+                signals,
+                interval,
+                decoder
             )
         return {
             "threads": threads,
@@ -407,36 +442,69 @@ def tcp_send(data, host, port, timeout=10, send_delay=0, chunksize=None):
             sock.close()
 
 
-def make_hostess_header(mtype="Update", is_proto=True, length=0):
-    return HEADER_STRUCT.pack(
-        HOSTESS_SOH, MTYPE_TO_CODE[mtype], is_proto, length
-    )
+# TODO: consider benchmarking pos-only / unnested versions
+def make_header(mtype="Blob", length=0) -> bytes:
+    """create a hostess header."""
+    return HEADER_STRUCT.pack(HOSTESS_SOH, MTYPE_TO_CODE[mtype], length)
 
 
-def read_hostess_header(buffer):
+def make_comm(body: Union[bytes, Message]) -> bytes:
+    """
+    create a hostess comm from a buffer or a protobuf Message.
+    automatically attach header and footer.
+    """
+    if "SerializeToString" in dir(body):
+        # i.e., it's a protobuf Message
+        buf = body.SerializeToString()
+        header_kwargs = {'mtype': body.__class__.__name__, 'length': len(buf)}
+    else:
+        header_kwargs, buf = {'mtype': "none", 'length': len(body)}, body
+    return make_header(**header_kwargs) + buf + HOSTESS_EOM
+
+
+def read_header(buffer: bytes) -> dict[str, Union[str, bool, int]]:
+    """attempt to read a hostess header from the first 13 bytes of `buffer`."""
     try:
-        unpacked = HEADER_STRUCT.unpack(buffer[:15])
+        unpacked = HEADER_STRUCT.unpack(buffer[:14])
         assert buffer[:8] == HOSTESS_SOH
         try:
             mtype = CODE_TO_MTYPE[unpacked[1]]
         except KeyError:
             mtype = "invalid message type"
-        return {"mtype": mtype, "is_proto": unpacked[2], "length": unpacked[3]}
+        return {"mtype": mtype, "length": unpacked[2]}
     except (struct.error, AssertionError):
         raise IOError("invalid hostess header")
 
 
-def decode_hostess_message(buffer, unpack_proto=False):
+def read_comm(
+    buffer: bytes, unpack_proto: bool = False
+) -> dict[str, Union[dict, bytes, Message, str]]:
+    """
+    read a hostess comm. if the header says the body is a protobuf, attempt to
+    decode it as a hostess.station Message. if unpack_proto is True, convert
+    it to a dict. return a dict containing the decoded header, the
+    (possibly decoded) body, and any errors.
+    """
     try:
-        header = read_hostess_header(buffer[:15])
+        header = read_header(buffer[:HEADER_STRUCT.size])
     except IOError:
-        return {'header': None, 'body': buffer, 'error': 'bad header'}
-    if header['is_proto'] is False:
-        return {'header': header, 'body': buffer[15:], 'error': 'none'}
+        return {'header': None, 'body': buffer, 'err': 'header'}
+    err, body = [], buffer[HEADER_STRUCT.size:]
+    if body.endswith(HOSTESS_EOM):
+        body = body[:-len(HOSTESS_EOM)]
+    if len(body) != header['length']:
+        err.append('length')
+    if header['mtype'] == 'none':
+        return {'header': header, 'body': body, 'err': ';'.join(err)}
     try:
-        message = getattr(hostess_proto, header['mtype'])(buffer[15:])
+        # the value of the 'mtype' key should correspond to a hostess.station
+        # protocol buffer class
+        message_class = getattr(hostess_proto, header['mtype'])
+        message: Message = message_class.FromString(body)
     except AttributeError:
-        return {'header': header, 'body': buffer[15:], 'error': 'bad mtype'}
+        err.append('mtype')
+        return {'header': header, 'body': body, 'err': ';'.join(err)}
+    # TODO: handling for bad decode
     if unpack_proto is True:
         message = MessageToDict(message)
-    return {'header': header, 'body': message, 'error': 'none'}
+    return {'header': header, 'body': message, 'err': ';'.join(err)}
