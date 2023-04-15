@@ -1,9 +1,11 @@
 import atexit
+import struct
 from concurrent.futures import ThreadPoolExecutor
 from itertools import cycle
 import selectors
 import socket
 import time
+from types import MappingProxyType as MPt
 from typing import (
     Optional,
     Callable,
@@ -17,6 +19,10 @@ from hostess.utilities import curry, logstamp
 
 HOSTESS_ACK = b"\06hostess"
 HOSTESS_EOM = b"\03hostess"
+HOSTESS_SOH = b"\01hostess"
+CODE_TO_MTYPE = MPt({0: "Update", 1: "Instruction", 2: "Report"})
+MTYPE_TO_CODE = MPt({v: k for k, v in CODE_TO_MTYPE.items()})
+HEADER_STRUCT = struct.Struct("<8sB?L")
 
 
 def timeout_factory() -> tuple[Callable[[], int], Callable[[], None]]:
@@ -396,3 +402,22 @@ def tcp_send(data, host, port, timeout=10, send_delay=0, chunksize=None):
             return "timeout", sock.getsockname()
         finally:
             sock.close()
+
+
+def make_hostess_header(mtype="Update", is_proto=True, length=0):
+    return HEADER_STRUCT.pack(
+        HOSTESS_SOH, MTYPE_TO_CODE[mtype], is_proto, length
+    )
+
+
+def read_hostess_header(buffer):
+    try:
+        unpacked = HEADER_STRUCT.unpack(buffer[:15])
+        assert buffer[:8] == HOSTESS_SOH
+        try:
+            mtype = CODE_TO_MTYPE[unpacked[1]]
+        except KeyError:
+            mtype = "invalid message type"
+        return {"mtype": mtype, "is_proto": unpacked[2], "length": unpacked[3]}
+    except (struct.error, AssertionError):
+        raise IOError("invalid hostess header")

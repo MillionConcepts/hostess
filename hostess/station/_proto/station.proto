@@ -11,9 +11,9 @@ import "google/protobuf/timestamp.proto";
 /* node is the whole thing. pipe is a component, often simply including a
 singular pipeline execution. in some cases, a handler may independently
 execute multiple pipelines (e.g, unmanaged cleanup tasks) */
-/* TODO: get protobuf >= 4.22.0 so this silly placeholder thing doesn't have to
-    happen with not-actually-closed enums */
-enum ActionLevel {unknownlevel = 0; node = 1; pipe = 2;}
+/* TODO: once available / compatible, get protobuf >= 4.22.0 so this silly
+    placeholder thing doesn't have to happen with not-actually-closed enums */
+enum ActionLevel {unknownactionlevel = 0; node = 1; pipe = 2;}
 /* 'failure' means a pipeline specifically reported it was unable to fully
 complete, but still may have exited gracefully. 'crash' means a pipeline did
 not exit gracefully (returned an exception message or an unwanted exit code,
@@ -49,11 +49,11 @@ message Action {
   uint32 exit_code = 7;
 }
 
-/* TaskReport contains information on the outcome of an
+/* Report contains information on the outcome of an
 external task execution. Handlers or listener nodes send
-TaskReports to control nodes.
+Reports to control nodes.
  */
-message TaskReport {
+message Report {
   uint32 task_id = 1;
   string nodename = 2;
   string hostname = 3;
@@ -71,7 +71,7 @@ message Update {
   google.protobuf.Duration wait_time = 4;
   string hostname = 5;
   /* for handlers / actuators */
-  TaskReport running_actions = 6;
+  Report running_actions = 6;
   /* for listeners */
   /* total hostess-external messages ever received */
   uint32 total_messages = 7;
@@ -81,11 +81,11 @@ message Update {
 }
 
 enum InstructionType {
-  report = 0; stop = 1; wake = 2; sleep = 3; do = 4; kill = 5;
+  unknowninst = 0; report = 1; stop = 2; wake = 3; sleep = 4; do = 5; kill = 6;
 }
 message PythonSerial {bytes body = 1; string serialization = 2;}
-enum Serialization {unserialized = 0; json_serialized=1; pickle_serialized=2;}
-enum Compression {none = 0; gzip = 1;}
+enum Serialization {unknownserialization=0; unserialized=1; json=2; pickle=3;}
+enum Compression {unknowncompression=0; none = 1; gzip = 2;}
 
 message PythonArgument {
   bytes value = 1;

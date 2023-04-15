@@ -3,7 +3,8 @@ import re
 from multiprocessing import Pool
 
 from hostess.monitors import Stopwatch
-from hostess.station.talkie import HOSTESS_EOM, launch_tcp_server, tcp_send
+from hostess.station.talkie import HOSTESS_EOM, launch_tcp_server, tcp_send, \
+    make_hostess_header, read_hostess_header
 
 
 def send_randbytes(
@@ -68,3 +69,10 @@ def test_tcp_server():
         assert message == messages[message_id]
     # close the socket and terminate the listeners so the test will terminate
     server['kill']()
+
+
+def test_hostess_header():
+    attributes = "Report", True, 16634
+    encoded = make_hostess_header(*attributes)
+    decoded = read_hostess_header(encoded)
+    assert attributes == tuple(decoded.values())
