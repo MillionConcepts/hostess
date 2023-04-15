@@ -1,7 +1,8 @@
 import datetime as dt
+from math import floor
 import time
 from types import MappingProxyType
-from typing import Union
+from typing import Union, Optional
 
 from google.protobuf.descriptor import FieldDescriptor
 # noinspection PyUnresolvedReferences
@@ -37,22 +38,10 @@ def proto_formatdict(proto) -> dict[str, Union[dict, str]]:
     return unpacked
 
 
-def timestamp2dt(proto):
-    return dt.datetime.fromtimestamp(proto.seconds + proto.nanos)
-
-
-def make_timestamp(moment=None):
-    if moment is None:
-        epoch = time.time()
-    elif isinstance(moment, dt.datetime):
-        epoch = moment.timestamp()
-    elif isinstance(moment, str):
-        epoch = dt.datetime.fromisoformat(moment).timestamp()
-    elif isinstance(moment, float):
-        epoch = moment
+def make_timestamp(datetime: Optional[dt.datetime] = None):
+    timestamp = Timestamp()
+    if datetime is None:
+        timestamp.GetCurrentTime()
     else:
-        raise TypeError
-    seconds = round(epoch)
-    nanos = round((epoch - seconds) * 1e9)
-    return Timestamp(seconds=seconds, nanos=nanos)
-
+        timestamp.FromDatetime(datetime)
+    return timestamp

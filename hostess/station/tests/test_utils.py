@@ -5,13 +5,7 @@ from multiprocessing import Pool
 from hostess.monitors import Stopwatch
 import hostess.station.proto.station_pb2 as pro
 from hostess.station.proto_utils import make_timestamp
-from hostess.station.talkie import (
-    HOSTESS_EOM,
-    launch_tcp_server,
-    tcp_send,
-    make_comm,
-    read_comm,
-)
+import hostess.station.talkie as tk
 
 
 def send_randbytes(
@@ -22,13 +16,14 @@ def send_randbytes(
     send_delay=0,
     chunksize=None,
     header=b"",
-    eom=HOSTESS_EOM,
+    eom=tk.HOSTESS_EOM,
 ):
+    """send annoying random bytes."""
     exception = None
     randbytes = header + random.randbytes(n_bytes) + eom
     result = None
     try:
-        result = tcp_send(
+        result = tk.tcp_send(
             randbytes, host, port, timeout, send_delay, chunksize
         )
     except Exception as ex:
@@ -39,11 +34,12 @@ def send_randbytes(
 def test_tcp_server():
     """
     test the hostess.talkie server by briefly hammering it from 7 processes
-    and checking recorded input for validity
+    and checking recorded input for validity. don't use protobuf decoder --
+    this is supposed to be a test of base server functionality.
     """
     # launch the server with 7 threads and a 1-ms poll rate
-    host, port, n_threads, interval = "localhost", 11129, 4, 0.001
-    server = launch_tcp_server(host, port, n_threads, interval)
+    host, port, n_threads, rate = "localhost", 11129, 4, 0.001
+    server, _events, data = tk.launch_tcp_server(host, port, n_threads, rate)
     # record time
     watch = Stopwatch()
     watch.start()
@@ -66,7 +62,7 @@ def test_tcp_server():
         messages[i], exceptions[i], res[i] = r.get()
     pool.terminate()
     # check received against sent messages
-    for rec in server["data"]:
+    for rec in data:
         message = rec["content"]
         if len(message) == 0:
             continue
@@ -79,24 +75,38 @@ def test_tcp_server():
 
 
 def test_protobuf():
-    """attempt to construct a basic station protobuf message"""
+    """attempt to construct a basic station protobuf Message"""
     actions = [
-        pro.Action(name='imagestats', status='success', level='pipe'),
-        pro.Action(name='handler', status='success', level='node'),
+        pro.Action(name="imagestats", status="success", level="pipe"),
+        pro.Action(name="handler", status="success", level="node"),
     ]
-    rdict = {'sendtime': make_timestamp(), 'task_id': 3, 'actions': actions}
+    rdict = {"sendtime": make_timestamp(), "task_id": 3, "actions": actions}
     report = pro.Report(**rdict)
     assert report.task_id == 3
-    assert report.actions[1].name == 'handler'
+    assert report.actions[1].name == "handler"
     return report
 
 
-def test_hostess_message():
-    """check basic message roundtrip"""
+def test_comm():
+    """check offline comm roundtrip"""
     report = test_protobuf()
-    encoded = make_comm(report)
-    decoded = read_comm(encoded)
-    assert decoded['header']['mtype'] == 'Report'
-    assert decoded['body'].actions[0].name == 'imagestats'
-    assert decoded['header']['length'] == len(report.SerializeToString())
+    encoded = tk.make_comm(report)
+    decoded = tk.read_comm(encoded)
+    assert decoded["header"]["mtype"] == "Report"
+    assert decoded["body"].actions[0].name == "imagestats"
+    assert decoded["header"]["length"] == len(report.SerializeToString())
 
+
+def test_comm_online():
+    """check online comm roundtrip"""
+    host, port, report = "localhost", 11222, test_protobuf()
+    server, events, data = tk.stlisten(host, port)
+    for _ in range(5):
+        ack, _ = tk.stsend(report, host, port)
+        # Timestamp is variable-length depending on nanoseconds
+        assert data[-1]["event"] in ("decoded 69", "decoded 70")
+        assert data[-1]["content"]["header"]["length"] in (48, 49)
+        assert data[-1]["content"]["body"].actions[1].name == "handler"
+        assert data[-1]["content"]["err"] == ""
+        assert ack == tk.HOSTESS_ACK
+    server["kill"]()
