@@ -29,6 +29,10 @@ def send_randbytes(
 
 
 def test_tcp_server():
+    """
+    test the hostess.talkie server by briefly hammering it from 7 processes
+    and checking recorded input for validity
+    """
     host, port, n_threads, interval = "localhost", 11129, 4, 0.001
     server = launch_tcp_server(host, port, n_threads, interval)
     watch = Stopwatch()
@@ -53,3 +57,4 @@ def test_tcp_server():
             re.search(r"\d+", message[:4].decode("ascii")).group()
         )
         assert message == messages[message_id]
+    server['kill']()
