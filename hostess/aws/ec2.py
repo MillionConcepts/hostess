@@ -24,7 +24,7 @@ from typing import (
 from botocore.exceptions import ClientError
 from cytoolz.curried import get
 import dateutil.parser as dtp
-from dustgoggles.func import zero
+from dustgoggles.func import gmap, zero
 from dustgoggles.structures import listify
 import sh
 
@@ -55,11 +55,7 @@ from hostess.ssh import (
 )
 from hostess.subutils import Viewer, Processlike, Commandlike
 from hostess.utilities import (
-    gmap,
-    my_external_ip,
-    filestamp,
-    check_cached_results,
-    clear_cached_results,
+    my_external_ip, filestamp, check_cached_results, clear_cached_results,
 )
 
 

@@ -6,7 +6,7 @@ import selectors
 import socket
 import time
 
-from cytoolz import curry
+from hostess.utilities import curry
 
 HOSTESS_ACK = b"\06hostess"
 HOSTESS_EOM = b"\03hostess"
@@ -86,12 +86,13 @@ def ack(sel, conn, _mask, ackstr=HOSTESS_ACK):
     try:
         sel.unregister(conn)
         conn.send(ackstr)
-    except (KeyError, ValueError):
+        return None, "sent ack", "ok"
+    except (KeyError, ValueError) as kve:
         # TODO: maybe log it
-        pass
+        return None, "ack attempt", f"{kve}"
 
 
-def accept(sel, sock, mask):
+def accept(sel, sock, _mask):
     try:
         conn, addr = sock.accept()
     except BlockingIOError:
@@ -141,28 +142,31 @@ def launch_read_thread(
         except IndexError:
             continue
         peer, peerage = check_peerage(key, peers)
+        callback, peersock = key.data, key.fileobj  # explanatory variables
         if (peerage is True) and (key.data.__name__ != "ack"):
             continue
         try:
-            if key.data.__name__ == "read":
+            if callback.__name__ == "read":
                 # noinspection PyProtectedMember
-                if key.fileobj._closed or (peer is None):
+                if peersock._closed or (peer is None):
                     continue
                 peers[peer] = True
                 try:
-                    stream, event, status = key.data(key.fileobj, mask)
+                    stream, event, status = callback(peersock, mask)
                 except KeyError:
                     # attempting to unregister an already-unregistered conn
                     continue
-            elif key.data.__name__ == "ack":
-                key.data(key.fileobj, mask)
+            elif callback.__name__ == "ack":
+                callback(peersock, mask)
                 try:
                     del peers[peer]
                 except KeyError:
                     pass
                 continue
+            elif key.data.__name__ == "accept":
+                stream, event, peer, status = callback(peersock, mask)
             else:
-                stream, event, peer, status = key.data(key.fileobj, mask)
+                raise ValueError(f"invalid callback ({callback.__name__})")
         except OSError as err:
             stream, event, peer, status = None, "oserror", "unknown", str(err)
         now = dt.datetime.now().isoformat()
@@ -173,7 +177,7 @@ def launch_read_thread(
             "time": now,
             "thread": name,
             "id": id_,
-            "act": key.data.__name__,
+            "callback": callback,
         }
         events.append(event)
         if (stream is None) or (len(stream) == 0):

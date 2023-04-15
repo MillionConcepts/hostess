@@ -5,18 +5,25 @@ import logging
 import re
 from pathlib import Path
 from socket import gethostname
-from typing import Callable, Iterable, Any, MutableMapping
+from typing import Callable, MutableMapping, Optional, Union
 
 import rich.console
 from cytoolz import first
 
 
 def stamp() -> str:
+    """sorthand for standardized text event stamp"""
     return f"{gethostname()} {dt.datetime.utcnow().isoformat()[:-7]}: "
 
 
 def filestamp() -> str:
+    """shorthand for standardized event stamp that is also a legal filename"""
     return re.sub(r"[-: ]", "_", stamp()[:-2])
+
+
+def logstamp() -> str:
+    """shorthand for standardized text timestamp only (no hostname)"""
+    return f"{dt.datetime.utcnow().isoformat()[:-7]}"
 
 
 hostess_CONSOLE = rich.console.Console()
@@ -45,8 +52,20 @@ def keygrab(mapping_list, key, value):
     return next(filter(lambda x: x[key] == value, mapping_list))
 
 
-def infer_stream_length(stream):
-    def filesize():
+# noinspection PyUnresolvedReferences,PyProtectedMember
+def infer_stream_length(
+    stream: Union[_io.BufferedReader, _io._IOBase, Path]
+) -> Optional[int]:
+    """
+    attempts to infer the size of a potential read from an object.
+    Args:
+        stream: may be a buffered reader (like the result of calling open()),
+            a buffer like io.BytesIO, or a Path
+    Returns:
+        an estimate of its size based on best available method, or None if
+        impossible.
+    """
+    def filesize() -> Optional[int]:
         try:
             if isinstance(stream, _io.BufferedReader):
                 path = Path(stream.name)
@@ -58,14 +77,14 @@ def infer_stream_length(stream):
         except FileNotFoundError:
             pass
 
-    def buffersize():
+    def buffersize() -> Optional[int]:
         if "getbuffer" in dir(stream):
             try:
                 return len(stream.getbuffer())
             except (TypeError, ValueError, AttributeError):
                 pass
 
-    def responsesize():
+    def responsesize() -> Optional[int]:
         if "headers" in dir(stream):
             try:
                 return stream["headers"].get("content-length")
@@ -85,23 +104,6 @@ def roundstring(string, digits=2):
     return re.sub(
         r"\d+\.\d+", lambda m: str(round(float(m.group()), digits)), string
     )
-
-
-# TODO: temporarily vendored here until the next dustgoggles release
-def gmap(
-    func: Callable,
-    *iterables: Iterable,
-    mapper: Callable[[Callable, tuple[Iterable]], Iterable] = map,
-    evaluator: Callable[[Iterable], Any] = tuple,
-):
-    """
-    'greedy map' function. map func across iterables using mapper and
-    evaluate with evaluator.
-
-    for cases in which you need a terse or configurable way to map and
-    immediately evaluate functions.
-    """
-    return evaluator(mapper(func, *iterables))
 
 
 def my_external_ip():
@@ -138,20 +140,40 @@ def record_and_yell(message: str, cache: MutableMapping, loud: bool = False):
     """
     if loud is True:
         print(message)
-    cache[dt.datetime.now().isoformat()] = message
+    cache[logstamp()] = message
 
 
-def notary(cache):
-    def note(message="", loud: bool = False, eject: bool = False):
+def notary(cache: Optional[MutableMapping] = None) -> Callable[
+    [str, bool, bool], Optional[MutableMapping]
+]:
+    """
+    create a function that records, timestamps, and optionally prints messages.
+    if you pass eject=True to that function, it will return its note cache.
+    Args:
+        cache: cache for notes (if None, creates a dict)
+    Returns:
+        note: callable for notetaking
+    """
+    if cache is None:
+        cache = {}
+
+    def note(
+        message: str = "", loud: bool = False, eject: bool = False
+    ) -> Optional[MutableMapping]:
+        """
+        Args:
+            message: message to record in cache and optionally print.
+            loud: print message as well?
+            eject: return cache. if eject is True, ignores all other arguments
+                (does not log this call)
+        Returns:
+            cache: only if eject is True
+        """
         if eject is True:
             return cache
         return record_and_yell(message, cache, loud)
 
     return note
-
-
-def logstamp() -> str:
-    return f"{dt.datetime.utcnow().isoformat()[:-7]}"
 
 
 def dcom(string, sep=";", bad=(",", "\n")):
@@ -163,5 +185,14 @@ def dcom(string, sep=";", bad=(",", "\n")):
     return re.sub(rf"[{re.escape(''.join(bad))}]", sep, string.strip())
 
 
-def unix2dt(epoch):
+def unix2dt(epoch: float) -> dt.datetime:
+    """shorthand for dt.datetime.fromtimestamp."""
     return dt.datetime.fromtimestamp(epoch)
+
+
+# noinspection PyArgumentList
+def curry(func: Callable, *args, **kwargs) -> Callable:
+    """this is a hack to improve PyCharm's static analysis."""
+    from cytoolz import curry as _curry
+
+    return _curry(func, *args, **kwargs)
