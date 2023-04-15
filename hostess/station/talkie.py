@@ -15,6 +15,9 @@ from typing import (
     Any,
 )
 
+from google.protobuf.json_format import MessageToDict
+
+import hostess.station._proto.station_pb2 as hostess_proto
 from hostess.utilities import curry, logstamp
 
 HOSTESS_ACK = b"\06hostess"
@@ -421,3 +424,19 @@ def read_hostess_header(buffer):
         return {"mtype": mtype, "is_proto": unpacked[2], "length": unpacked[3]}
     except (struct.error, AssertionError):
         raise IOError("invalid hostess header")
+
+
+def decode_hostess_message(buffer, unpack_proto=False):
+    try:
+        header = read_hostess_header(buffer[:15])
+    except IOError:
+        return {'header': None, 'body': buffer, 'error': 'bad header'}
+    if header['is_proto'] is False:
+        return {'header': header, 'body': buffer[15:], 'error': 'none'}
+    try:
+        message = getattr(hostess_proto, header['mtype'])(buffer[15:])
+    except AttributeError:
+        return {'header': header, 'body': buffer[15:], 'error': 'bad mtype'}
+    if unpack_proto is True:
+        message = MessageToDict(message)
+    return {'header': header, 'body': message, 'error': 'none'}
