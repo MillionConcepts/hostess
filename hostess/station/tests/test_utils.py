@@ -3,7 +3,7 @@ import re
 from multiprocessing import Pool
 
 from hostess.monitors import Stopwatch
-from hostess.station.talkie import HOSTESS_EOM, tcp_send, launch_tcp_server
+from hostess.station.talkie import HOSTESS_EOM, launch_tcp_server, tcp_send
 
 
 def send_randbytes(
