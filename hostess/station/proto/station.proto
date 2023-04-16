@@ -9,16 +9,20 @@ import "google/protobuf/timestamp.proto";
 /* TODO: autocompiler */
 
 message PythonSerial {bytes body = 1; string serialization = 2;}
-enum Serialization {unknownserialization=0; unserialized=1; json=2; pickle=3;}
-enum Compression {unknowncompression=0; none = 1; gzip = 2; lz4 = 3;}
-
+enum Serialization {unknownserialization=0; unserialized=1; json=2; dill=3;}
+enum Compression {uncompressed=0; gzip = 1; lz4 = 2;}
+enum CharType {unknownstringtype=0; str=1; bytes=2; nonetype=3;}
 /* for passing arguments directly into a call or constructing structured information */
 message PythonObject {
   bytes value = 1;
   /* calling functions with positional-only arguments is not supported */
   string name = 2;
-  oneof format {string scanf = 3; Serialization serialization = 4;}
-  Compression compression = 5;
+  oneof format {
+    string scanf = 3;
+    Serialization serialization = 4;
+  }
+  CharType chartype = 5;
+  Compression compression = 6;
 }
 
 /* pipe is the entirety of a multi-action task. note that a task may simply consist

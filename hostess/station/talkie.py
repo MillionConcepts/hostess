@@ -1,11 +1,11 @@
 import atexit
+import selectors
+import socket
 import struct
+import time
 from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
 from itertools import cycle
-import selectors
-import socket
-import time
 from types import MappingProxyType as MPt
 from typing import (
     Optional,
@@ -18,9 +18,9 @@ from typing import (
 )
 
 from google.protobuf.message import Message
-from google.protobuf.json_format import MessageToDict
 
 import hostess.station.proto.station_pb2 as hostess_proto
+from hostess.station.proto_utils import m2d
 from hostess.utilities import curry, logstamp
 
 # acknowledgement, end-of-message, start-of-header codes
@@ -504,7 +504,7 @@ def read_comm(
         return {"header": header, "body": body, "err": ";".join(err)}
     # TODO: handling for bad decode
     if unpack_proto is True:
-        message = MessageToDict(message)
+        message = m2d(message)
     return {"header": header, "body": message, "err": ";".join(err)}
 
 

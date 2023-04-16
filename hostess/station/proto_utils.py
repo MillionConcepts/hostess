@@ -4,6 +4,7 @@ import time
 from types import MappingProxyType
 from typing import Union, Optional
 
+import google.protobuf.json_format
 from google.protobuf.descriptor import FieldDescriptor
 # noinspection PyUnresolvedReferences
 from google.protobuf.duration_pb2 import Duration
@@ -16,6 +17,8 @@ PROTO_TYPES = MappingProxyType(
         for k in dir(FieldDescriptor) if k.startswith("TYPE")
     }
 )
+# just an alias
+m2d = google.protobuf.json_format.MessageToDict
 
 
 def proto_formatdict(proto) -> dict[str, Union[dict, str]]:
@@ -45,3 +48,15 @@ def make_timestamp(datetime: Optional[dt.datetime] = None):
     else:
         timestamp.FromDatetime(datetime)
     return timestamp
+
+
+def enum(message, field):
+    """get the string value of an enum field in a message."""
+    for desc, val in message.ListFields():
+        if desc.enum_type is None:
+            continue
+        if desc.name != field:
+            continue
+        return desc.enum_type.values_by_number[val].name
+
+
