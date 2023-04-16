@@ -5,22 +5,34 @@ package hostess_station;
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 
-/* compile like: protoc -I hostess --python_out=hostess hostess/station/_proto/station.proto */
+/* compile with: protoc -I hostess --python_out=hostess hostess/station/proto/station.proto */
 /* TODO: autocompiler */
 
-/* node is the whole thing. pipe is a component, often simply including a
-singular pipeline execution. in some cases, a handler may independently
-execute multiple pipelines (e.g, unmanaged cleanup tasks) */
+message PythonSerial {bytes body = 1; string serialization = 2;}
+enum Serialization {unknownserialization=0; unserialized=1; json=2; pickle=3;}
+enum Compression {unknowncompression=0; none = 1; gzip = 2; lz4 = 3;}
+
+/* for passing arguments directly into a call or constructing structured information */
+message PythonObject {
+  bytes value = 1;
+  /* calling functions with positional-only arguments is not supported */
+  string name = 2;
+  oneof format {string scanf = 3; Serialization serialization = 4;}
+  Compression compression = 5;
+}
+
+/* pipe is the entirety of a multi-action task. note that a task may simply consist
+    of a single action, in which case the node should not report anything pipe-level. */
 /* TODO: once available / compatible, get protobuf >= 4.22.0 so this silly
     placeholder thing doesn't have to happen with not-actually-closed enums */
-enum ActionLevel {unknownactionlevel = 0; node = 1; pipe = 2;}
-/* 'failure' means a pipeline specifically reported it was unable to fully
-complete, but still may have exited gracefully. 'crash' means a pipeline did
-not exit gracefully (returned an exception message or an unwanted exit code,
-or the handler found evidence on the system that the process terminated
-prematurely).
-i.e., 'failure' is a handled pipeline-scale exception, 'crash' is an unhandled
-exception within the pipeline. */
+enum ActionLevel {unknownactionlevel = 0; pipe = 1; action = 2;}
+/* 'failure' means that a program specifically reported it was unable to fully
+    complete, but still may have exited gracefully. 'crash' means a program did
+    not exit gracefully (returned an exception message or an unwanted exit code,
+    or the handler found evidence on the system that the process terminated
+    prematurely, etc.). i.e., 'failure' is a handled but fatal exception,
+    'crash' is an unhandled exception. Note that this does _not_ refer to the
+    node's status; a node may execute many failed tasks but still be fine. */
 enum Status {
   unknownstatus = 0;
   running = 1;
@@ -28,7 +40,7 @@ enum Status {
   failure = 3;
   crash = 4;
   timeout = 5;
-}
+  }
 
 /* timestamps and duration for actions */
 message ActionTime {
@@ -37,92 +49,157 @@ message ActionTime {
   google.protobuf.Duration duration = 3;
 }
 
-message Action {
+message ActionReport {
   string name = 1;
-  Status status = 2;
-  ActionLevel level = 3;
-  ActionTime time = 4;
-  string return_value = 5;
+  uint32 pid = 2;
+  Status status = 3;
+  ActionLevel level = 4;
+  ActionTime time = 5;
+  string return_value = 6;
   /* things like Python exception type */
-  string return_type = 6;
+  string return_type = 7;
   /* intended specifically for process exit codes */
-  uint32 exit_code = 7;
+  uint32 exit_code = 8;
 }
 
-/* Report contains information on the outcome of an
-external task execution. Handlers or listener nodes send
-Reports to control nodes.
- */
-message Report {
+/* TaskReport contains information on the outcome of an
+    external task execution. Handler Nodes send TaskReports to their Station on
+    pipeline executions; listener Nodes may also TaskReport logging in some cases. */
+message TaskReport {
   uint32 task_id = 1;
-  string nodename = 2;
-  string hostname = 3;
+  NodeId nodeid = 2;
+  NodeStatus status = 3;
   /* possibly redundant */
   google.protobuf.Timestamp sendtime = 4;
-  repeated Action actions = 5;
-  bool ok = 6;
+  /* redundant? */
+  repeated ActionReport steps = 5;
+  ActionReport action = 6;
+  bool ok = 7;
 }
 
-/* check-in / keepalive messages */
-message Update {
+enum NodeStatus {
+  unknown_status = 0;
+  idle = 1;
+  executing = 2;
+  listening = 3;
+  degraded = 4;
+  /* shutting down as commanded */
+  shutdown = 5;
+  /* crashing but managed to tell the Station about it */
+  crashed = 6;
+  }
+enum NodeType {unknown_nodetype = 0; listener = 1; handler = 2;}
+enum NodeLoC {unknown_loc = 0; primary = 1; secondary = 2; sleeping = 3;}
+message NodeState {NodeStatus status = 1; NodeLoC loc = 2; bool can_receive = 3;}
+message NodeId {
   string nodename = 1;
-  bool ok = 2;
-  google.protobuf.Timestamp time = 3;
-  google.protobuf.Duration wait_time = 4;
-  string hostname = 5;
-  /* for handlers / actuators */
-  Report running_actions = 6;
-  /* for listeners */
+  NodeType nodetype = 2;
+  uint32 pid = 3;
+  string host = 4;
+  string port = 5;
+}
+
+message MessageCount {
   /* total hostess-external messages ever received */
-  uint32 total_messages = 7;
+  uint32 total_messages = 1;
   /* hostess-external messages received since last update */
-  uint32 new_messages = 8;
+  uint32 new_messages = 2;
+}
+
+enum UpdateReason {no_reason = 0; scheduled = 1; info = 2; requested = 3;}
+
+/* listener reports, or any node's check-in message */
+message Update {
+  NodeId nodeid = 1;
+  NodeState state = 2;
+  google.protobuf.Timestamp time = 3;
+  UpdateReason reason = 4;
+  TaskReport running = 5;
+  /* for listeners */
+  MessageCount messagecount = 6;
+  /* structured / serialized data from a listener node it believes the
+  Station needs to know about. */
+  repeated PythonObject info = 7;
   /* monitor types? */
 }
 
 enum InstructionType {
   unknowninst = 0; report = 1; stop = 2; wake = 3; sleep = 4; do = 5; kill = 6;
-}
-message PythonSerial {bytes body = 1; string serialization = 2;}
-enum Serialization {unknownserialization=0; unserialized=1; json=2; pickle=3;}
-enum Compression {unknowncompression=0; none = 1; gzip = 2;}
-
-message PythonArgument {
-  bytes value = 1;
-  Serialization serialization = 2;
-  /* calling functions with positional-only arguments is not supported */
-  string argname = 3;
-  string type = 4;
-  Compression compression = 5;
-}
-
-enum PythonCallType {unknowncalltype = 0; script = 1; module = 2;}
-
-message PythonCall {
-  PythonCallType calltype = 1;
-  /* module or fully-qualified path */
-  string path = 2;
-  string func = 3;
-  /* for passing arguments into the call */
-  repeated PythonArgument arguments = 4;
-  oneof interpreter {
-    string interpreter_path = 5;
-    string conda_env = 6;
   }
+
+/* for passing a dict of kwargs as a serialized blob into an endpoint */
+message PythonEncodedPayload {
+  bytes body = 1; Serialization serialization = 2; Compression compression = 3;
 }
+
+enum ExecContext {unknowncontext=0; thread=1; process=2; detached=3;}
+
+message FunctionCall {
+  /* module name or path */
+  string module = 1;
+  string func = 2;
+  repeated PythonObject arguments = 3;
+  ExecContext context = 4;
+}
+
+message ScriptCall {
+  /* module name or path */
+  string module = 1;
+  string func = 2;
+  PythonEncodedPayload payload = 3;
+  oneof interpreter {
+    string interpreter_path = 4;
+    string conda_env = 5;
+  }
+  ExecContext context = 6;
+}
+
+message SystemCall {
+  string command = 1;
+  bytes payload = 2;
+  Compression compression = 3;
+  string interpreter = 4;
+  ExecContext context = 5;
+}
+
+/* for directly executing code/source */
+message CodeBlob {
+  bytes code = 1;
+  bool is_source = 2;
+  Compression compression = 3;
+  oneof interpreter {
+    string interpreter_path = 4;
+    string conda_env = 5;
+  }
+  ExecContext context = 6;
+}
+
+message Action{
+  uint32 id = 1;
+  string name = 2;
+  /* reserved for application-specific contexts, including full
+  action definitions in cases when
+  more complex runtime pipeline configuration is not required --
+  in some cases, a handler might only require a path to a target
+  file, or even just an integer representing an orbit number,
+  or a listener might require only a url or parameter. */
+  map<string, string> description = 3;
+  oneof command {
+    SystemCall systemcall = 4;
+    FunctionCall functioncall = 5;
+    ScriptCall scriptcall = 6;
+    CodeBlob scriptblob = 7;
+  }
+  /* this action blocks new actions from execution */
+  bool wait = 8;
+}
+
+message Pipeline {uint32 id = 1; string name = 2; repeated Action steps = 3;}
 
 message Instruction {
   InstructionType type = 1;
-  /* only 'do' and 'kill' instructions require ids */
-  uint32 task_id = 2;
-  /* reserved for application-specific meanings. e.g., this could in some
-  cases simply be a fully-qualified path to a target file. */
-  map<string, string> message = 3;
-  oneof payload {
-    bytes blob = 4;
-    string systemcall = 5;
-    PythonCall pythoncall = 6;
-  }
-  google.protobuf.Timestamp time = 7;
+  uint32 id = 2;
+  google.protobuf.Timestamp time = 3;
+  oneof task {Action action = 4; Pipeline pipe = 5;}
   /* maybe other meta-instructions */
 }

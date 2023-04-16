@@ -1,17 +1,22 @@
 """
 helper functions for interacting with subprocesses, including the sh library
 """
+import os
 import re
 import time
 import warnings
-from functools import partial
-from multiprocessing import Pipe
+from contextlib import redirect_stdout, redirect_stderr
+from functools import partial, wraps
+from multiprocessing import Pipe, Process
 from pathlib import Path
-from typing import Sequence, Union, Any
+from typing import Sequence, Union, Any, MutableMapping, MutableSequence, \
+    Callable
 
 import sh
 from cytoolz import juxt, valfilter
-from dustgoggles.func import zero
+from dustgoggles.func import zero, intersection
+
+from hostess.utilities import Aliased, curry
 
 
 def append_write(path, text):
@@ -52,7 +57,7 @@ def console_stream_handlers(out_targets=None, err_targets=None):
     return {"_out": handle_out, "_err": handle_err}
 
 
-def piped(func):
+def make_piped_callback(func):
     here, there = Pipe()
 
     def sendback(*args, **kwargs):
@@ -63,6 +68,111 @@ def piped(func):
         return there.send(result)
 
     return here, sendback
+
+
+def piped(func, block=True):
+
+    @wraps(func)
+    def through_pipe(*args, **kwargs):
+        here, sendback = make_piped_callback(func)
+        proc = Process(target=sendback, args=args, kwargs=kwargs)
+        proc.start()
+        if block is True:
+            proc.join()
+            result = here.recv()
+            proc.close()
+            return result
+        return proc
+
+    return through_pipe
+
+
+def defer(func, *args, **kwargs):
+    """wrapper to defer function execution."""
+
+    def deferred():
+        return func(*args, **kwargs)
+
+    return deferred
+
+
+def deferinto(func, *args, _target, **kwargs):
+    """wrapper to defer function execution and place its result into _target"""
+
+    def deferred_into():
+        _target.append(func(*args, **kwargs))
+
+    return deferred_into
+
+def make_call_redirect(func, fork=False):
+    r_here, r_there = Pipe()
+    o_here, o_there = Pipe()
+    e_here, e_there = Pipe()
+    p_here, p_there = Pipe()
+
+    # noinspection PyTypeChecker
+    @wraps(func)
+    def run_redirected(*args, **kwargs):
+        if fork is True:
+            if os.fork() != 0:
+                return
+            p_there.send(os.getpid())
+        with (
+            redirect_stdout(Aliased(o_there, ("write",), "send")),
+            redirect_stderr(Aliased(e_there, ("write",), "send"))
+        ):
+            try:
+                result = func(*args, **kwargs)
+            except Exception as ex:
+                result = ex
+            return r_there.send(result)
+    proximal = {'result': r_here, 'out': o_here, 'err': e_here}
+    if fork is True:
+        proximal['pids'] = p_here
+    return run_redirected, proximal
+
+
+def make_watch_caches():
+    return {'result': [], 'out': [], 'err': []}
+
+
+@curry
+def watched_process(
+    func: Callable,
+    *,
+    caches: MutableMapping[str, MutableSequence],
+    fork: bool = False
+) -> Callable:
+    """
+    decorator to run a function in a subprocess, redirecting its stdout,
+    stderr, and any return value to `caches`. if fork is True, double-fork the
+    execution so it will not terminate when the original calling process
+    terminates. adds the kwargs _blocking and _poll to the decorated function,
+    setting auto-join/poll and polling interval respectively.
+    if _blocking is False, simply return the Process object and a dict of
+    pipes: in this case, the calling process is responsible for polling the
+    pipes if it wishes to receive output.
+    """
+    assert len(intersection(caches.keys(), {'result', 'out', 'err'})) == 3
+    target, proximal = make_call_redirect(func, fork)
+
+    @wraps(func)
+    def run_and_watch(*args, _blocking=True, _poll=0.05, **kwargs):
+        process = Process(target=target, args=args, kwargs=kwargs)
+        process.start()
+        caches['pids'] = [process.pid]
+        if _blocking is False:
+            return process, caches
+        while True:
+            for k, v in proximal.items():
+                if v.poll():
+                    caches[k].append(v.recv())
+            if not process.is_alive():
+                break
+            time.sleep(_poll)
+        return process, proximal
+
+    return run_and_watch
 
 
 class Viewer:

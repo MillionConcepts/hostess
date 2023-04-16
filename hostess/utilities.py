@@ -5,7 +5,7 @@ import logging
 import re
 from pathlib import Path
 from socket import gethostname
-from typing import Callable, MutableMapping, Optional, Union
+from typing import Callable, MutableMapping, Optional, Union, Sequence, Any
 
 import rich.console
 from cytoolz import first
@@ -192,7 +192,46 @@ def unix2dt(epoch: float) -> dt.datetime:
 
 # noinspection PyArgumentList
 def curry(func: Callable, *args, **kwargs) -> Callable:
-    """this is a hack to improve PyCharm's static analysis."""
+    """
+    alias for cytoolz.curry with type hinting. this is a hack to
+    improve PyCharm's static analysis.
+    """
     from cytoolz import curry as _curry
 
     return _curry(func, *args, **kwargs)
+
+
+class Aliased:
+    """
+    generic wrapper for aliasing a class method. for instance, if you'd like a
+    library function to `append` to a list, but it's only willing to `write`:
+
+    >>> import json
+    >>> my_list = []
+    >>> writeable_list = Aliased(my_list, ("write",), "append")
+    >>> json.dump([1, 2, 3], writeable_list)
+    >>> print(writeable_list)
+    Aliased: ('write',) -> append:
+    ['[1', ', 2', ', 3', ']']
+    """
+
+    def __init__(self, wrapped: Any, aliases: Sequence[str], referent: str):
+        self.obj = wrapped
+        self.method = referent
+        self.aliases = aliases
+        for alias in aliases:
+            setattr(self, alias, self._aliased)
+
+    def _aliased(self, *args, **kwargs):
+        return getattr(self.obj, self.method)(*args, **kwargs)
+
+    def __getattr__(self, attr):
+        return getattr(self.obj, attr)
+
+    def __str__(self):
+        return f"Aliased: {self.aliases} -> {self.method}:\n" + str(self.obj)
+
+    def __repr__(self):
+        return f"Aliased: {self.aliases} -> {self.method}:\n" + repr(self.obj)
+
+
