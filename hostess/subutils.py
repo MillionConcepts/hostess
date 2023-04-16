@@ -57,6 +57,15 @@ def console_stream_handlers(out_targets=None, err_targets=None):
     return {"_out": handle_out, "_err": handle_err}
 
 
+def defer(func, *args, **kwargs):
+    """wrapper to defer function execution."""
+
+    def deferred():
+        return func(*args, **kwargs)
+
+    return deferred
+
+
 def deferinto(func, *args, _target, **kwargs):
     """wrapper to defer function execution and place its result into _target"""
 
@@ -77,15 +86,6 @@ def make_piped_callback(func):
         return there.send(result)
 
     return here, sendback
-
-
-def defer(func, *args, **kwargs):
-    """wrapper to defer function execution."""
-
-    def deferred():
-        return func(*args, **kwargs)
-
-    return deferred
 
 
 def piped(func, block=True):
