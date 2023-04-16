@@ -104,6 +104,7 @@ def deferinto(func, *args, _target, **kwargs):
 
     return deferred_into
 
+
 def make_call_redirect(func, fork=False):
     r_here, r_there = Pipe()
     o_here, o_there = Pipe()
