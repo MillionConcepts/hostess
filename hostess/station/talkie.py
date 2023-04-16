@@ -53,10 +53,10 @@ def timeout_factory(
         if len(starts) == 0:
             starts.append(time.time())
             return 0
-        rate = time.time() - starts[-1]
-        if (raise_timeout is True) and (rate > timeout):
+        delay = time.time() - starts[-1]
+        if (raise_timeout is True) and (delay > timeout):
             raise TimeoutError
-        return rate
+        return delay
 
     def unwait():
         """call me to reset timeout."""
@@ -260,7 +260,7 @@ def launch_read_thread(
     name,
     queue: MutableSequence,
     signals: MutableMapping,
-    rate: float = 0.01,
+    delay: float = 0.01,
     decoder: Optional[Callable] = None,
 ) -> dict:
     """
@@ -274,14 +274,14 @@ def launch_read_thread(
         queue: job queue, populated by selector thread
         signals: if the value corresponding to this thread's name in this
             dict is not None, thread shuts itself down.
-        rate: polling rate in s
+        delay: polling delay in s
         decoder: optional callable used to decode received messages
 
     Returns:
         An 'exit code' dict with its name and received signal.
     """
     while signals.get(name) is None:
-        time.sleep(rate)
+        time.sleep(delay)
         try:
             key, id_ = queue.pop()
         except IndexError:
@@ -321,7 +321,7 @@ def launch_selector_thread(
     sock: socket.socket,
     queues: MutableMapping[Any, MutableSequence],
     signals: MutableMapping[Union[int, str], Optional[str]],
-    rate: float = 0.01,
+    delay: float = 0.01,
     poll: float = 1,
 ) -> dict:
     """
@@ -334,8 +334,8 @@ def launch_selector_thread(
             jobs to those lists from the selector.
         signals: if value of the "select" key in this dict is not None,
             the thread shuts itself down.
-        rate: event spool rate in seconds.
-        poll: selector polling threshold in seconds.
+        delay: event spool delay in seconds.
+        poll: selector polling delay in seconds.
             (doesn't do much; this is mostly handled by the selector itself.)
 
     Returns:
@@ -353,20 +353,20 @@ def launch_selector_thread(
                 target = next(cycler)
                 queues[target].append((key, id_))
                 id_ += 1
-            time.sleep(rate)
+            time.sleep(delay)
     return {"thread": "select", "signal": signals.get("select")}
 
 
 def launch_tcp_server(
-    host, port, read_threads=4, rate=0.01, decoder: Optional[Callable] = None
+    host, port, n_threads=4, delay=0.01, decoder: Optional[Callable] = None
 ) -> tuple[dict[str], list[dict], list[dict]]:
     """
     launch a lightweight tcp server
     Args:
         host: host for socket
         port: port for socket
-        read_threads: # of read threads
-        rate: poll/spool rate for threads
+        n_threads: # of read threads
+        delay: poll/spool delay for threads
         decoder: optional callable used to decode received messages
 
     Returns:
@@ -386,14 +386,14 @@ def launch_tcp_server(
         sock.bind((host, port))
         sock.listen()
         sock.setblocking(False)
-        executor = ThreadPoolExecutor(read_threads + 1)
+        executor = ThreadPoolExecutor(n_threads + 1)
         threads, events, data, peers = {}, [], [], {}
-        queues = {i: [] for i in range(read_threads)}
-        signals = {i: None for i in range(read_threads)} | {"select": None}
+        queues = {i: [] for i in range(n_threads)}
+        signals = {i: None for i in range(n_threads)} | {"select": None}
         threads["select"] = executor.submit(
-            launch_selector_thread, sock, queues, signals, rate, 1
+            launch_selector_thread, sock, queues, signals, delay, 1
         )
-        for ix in range(read_threads):
+        for ix in range(n_threads):
             threads[ix] = executor.submit(
                 launch_read_thread,
                 data,
@@ -402,7 +402,7 @@ def launch_tcp_server(
                 ix,
                 queues[ix],
                 signals,
-                rate,
+                delay,
                 decoder,
             )
         serverdict = {
@@ -515,6 +515,6 @@ def stsend(data, host, port, timeout=10, delay=0, chunksize=None):
 
 
 @wraps(launch_tcp_server)
-def stlisten(host, port, read_threads: int = 4, rate: float = 0.01):
+def stlisten(host, port, n_threads: int = 4, delay: float = 0.01):
     """wrapper for launch_tcp_server that autodecodes data as hostess comms."""
-    return launch_tcp_server(host, port, read_threads, rate, decoder=read_comm)
+    return launch_tcp_server(host, port, n_threads, delay, decoder=read_comm)
