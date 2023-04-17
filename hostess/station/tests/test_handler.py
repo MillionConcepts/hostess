@@ -22,3 +22,5 @@ def test_function_call():
     rules.FunctionCall().execute(node, instruction)
     result = node.running_actions[0]['result'][0]
     assert result == np.array([1])
+
+test_function_call()
