@@ -108,8 +108,8 @@ def piped(func, block=True):
 def make_call_redirect(func, fork=False):
     r_here, r_there = Pipe()
     o_here, o_there = Pipe()
-    e_here, e_there = Pipe()
     p_here, p_there = Pipe()
+    e_here, e_there = Pipe()
 
     # noinspection PyTypeChecker
     @wraps(func)
