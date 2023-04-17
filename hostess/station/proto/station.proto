@@ -44,7 +44,7 @@ enum Status {
   failure = 3;
   crash = 4;
   timeout = 5;
-  }
+}
 
 /* timestamps and duration for actions */
 message ActionTime {
@@ -87,11 +87,11 @@ enum NodeStatus {
   executing = 2;
   listening = 3;
   degraded = 4;
-  /* shutting down as commanded */
+  /* shutting down gracefully */
   shutdown = 5;
   /* crashing but managed to tell the Station about it */
   crashed = 6;
-  }
+}
 enum NodeType {unknown_nodetype = 0; listener = 1; handler = 2;}
 enum NodeLoC {unknown_loc = 0; primary = 1; secondary = 2; sleeping = 3;}
 message NodeState {NodeStatus status = 1; NodeLoC loc = 2; bool can_receive = 3;}
@@ -111,7 +111,13 @@ message MessageCount {
 }
 
 enum UpdateReason {
-  no_reason = 0; scheduled = 1; info = 2; requested = 3; wilco = 4; bad_request = 5;
+  no_reason = 0;
+  scheduled = 1;
+  info = 2;
+  requested = 3;
+  wilco = 4;
+  bad_request = 5;
+  exiting = 6;
 }
 
 /* listener reports, or any node's check-in message */
@@ -120,7 +126,7 @@ message Update {
   NodeState state = 2;
   google.protobuf.Timestamp time = 3;
   UpdateReason reason = 4;
-  TaskReport running = 5;
+  TaskReport actions = 5;
   /* for listeners */
   MessageCount messagecount = 6;
   /* structured / serialized data from a listener node it believes the
@@ -132,7 +138,14 @@ message Update {
 }
 
 enum InstructionType {
-  unknowninst = 0; report = 1; stop = 2; wake = 3; sleep = 4; do = 5; kill = 6;
+  unknowninst = 0;
+  report = 1;
+  stop = 2;
+  wake = 3;
+  sleep = 4;
+  do = 5;
+  kill = 6;
+  configure = 7;
 }
 
 /* for passing a dict of kwargs as a serialized blob into an endpoint */
@@ -211,4 +224,5 @@ message Instruction {
   oneof task {Action action = 4; Pipeline pipe = 5;}
   /* identifying metadata, will be included in logs */
   map<string, string> metadata = 6;
+  map<string, PythonObject> config = 7;
 }

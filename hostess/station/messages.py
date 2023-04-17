@@ -54,20 +54,25 @@ def make_action(description=None, **fields):
 def default_arg_packing(arguments):
     interp = []
     for k, v in arguments.items():
-        if isinstance(v, (str, bytes, int, float)):
-            scanf, chartype = obj2scanf(v)
-            obj = pro.PythonObject(
-                name=k,
-                scanf=scanf,
-                chartype=chartype,
-                value=struct.pack(scanf, v),
-            )
-        else:
-            obj = pro.PythonObject(
-                name=k, serialization="dill", value=dill.dumps(v)
-            )
+        obj = pack_arg(k, v)
         interp.append(obj)
     return interp
+
+
+def pack_arg(name, obj):
+    if isinstance(obj, (str, bytes, int, float)):
+        scanf, chartype = obj2scanf(obj)
+        obj = pro.PythonObject(
+            name=name,
+            scanf=scanf,
+            chartype=chartype,
+            value=struct.pack(scanf, obj),
+        )
+    else:
+        obj = pro.PythonObject(
+            name=name, serialization="dill", value=dill.dumps(obj)
+        )
+    return obj
 
 
 def make_function_call_action(
