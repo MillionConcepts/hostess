@@ -29,7 +29,9 @@ HOSTESS_EOM = b"\03hostess"
 HOSTESS_SOH = b"\01hostess"
 # one-byte-wide codes for Message type of comm body.
 # "none" means the comm body is not a serialized protobuf Message.
-CODE_TO_MTYPE = MPt({0: "none", 1: "Update", 2: "Instruction", 3: "Report"})
+CODE_TO_MTYPE = MPt(
+    {0: "none", 1: "Update", 2: "Instruction", 3: "TaskReport"}
+)
 MTYPE_TO_CODE = MPt({v: k for k, v in CODE_TO_MTYPE.items()})
 HEADER_STRUCT = struct.Struct("<8sBL")
 
@@ -153,10 +155,29 @@ def _trydecode(decoder, stream):
     return stream, event, status
 
 
+def default_ack(
+    sel: selectors.DefaultSelector,
+    conn: socket.socket,
+    ackstr: bytes = HOSTESS_ACK,
+) -> tuple[None, str, str]:
+    """
+    receipt-of-message acknowledgement callback for read threads. attached to
+    keys by the selector.
+    """
+    try:
+        sel.unregister(conn)
+        conn.send(ackstr)
+        return None, "sent ack", "ok"
+    except (KeyError, ValueError) as kve:
+        # someone else got here first
+        return None, "ack attempt", f"{kve}"
+
+
 def read(
     sel: selectors.DefaultSelector,
     conn: socket.socket,
     decoder: Optional[Callable],
+    ack: Callable = default_ack,
     chunksize: int = 4096,
     eomstr: bytes = HOSTESS_EOM,
     timeout: float = 5,
@@ -194,24 +215,6 @@ def read(
     return stream, event, status
 
 
-def ack(
-    sel: selectors.DefaultSelector,
-    conn: socket.socket,
-    ackstr: bytes = HOSTESS_ACK,
-) -> tuple[None, str, str]:
-    """
-    receipt-of-message acknowledgement callback for read threads. attached to
-    keys by the selector.
-    """
-    try:
-        sel.unregister(conn)
-        conn.send(ackstr)
-        return None, "sent ack", "ok"
-    except (KeyError, ValueError) as kve:
-        # someone else got here first
-        return None, "ack attempt", f"{kve}"
-
-
 def _check_peerage(key: selectors.SelectorKey, peers: MutableMapping):
     """check already-peered lock."""
     try:
@@ -222,7 +225,7 @@ def _check_peerage(key: selectors.SelectorKey, peers: MutableMapping):
         return None, False
 
 
-def _handle_callback(callback, peer, peers, peersock, decoder):
+def _handle_callback(callback, peer, peers, peersock, decoder, ack):
     """inner callback-handler tree for read thread"""
     if callback.__name__ == "read":
         # noinspection PyProtectedMember
@@ -231,12 +234,12 @@ def _handle_callback(callback, peer, peers, peersock, decoder):
         peers[peer] = True
         try:
             # this is `read`, above
-            stream, event, status = callback(peersock, decoder)
+            stream, event, status = callback(peersock, decoder, ack)
         except KeyError:
             # attempting to unregister an already-unregistered conn
             return None, "guard", peer, "already unregistered"
-    elif callback.__name__ == "ack":
-        # this is `ack`, above
+    elif callback.__name__ == ack.__name__:
+        # this is `ack`
         stream, event, status = callback(peersock)
         try:
             # remove peer from peering-lock dict, unless someone else
@@ -260,8 +263,9 @@ def launch_read_thread(
     name,
     queue: MutableSequence,
     signals: MutableMapping,
-    delay: float = 0.01,
+    poll: float = 0.01,
     decoder: Optional[Callable] = None,
+    ack: Callable = default_ack
 ) -> dict:
     """
     launch a read thread. probably should only be called by launch_tcp_server.
@@ -274,26 +278,27 @@ def launch_read_thread(
         queue: job queue, populated by selector thread
         signals: if the value corresponding to this thread's name in this
             dict is not None, thread shuts itself down.
-        delay: polling delay in s
+        poll: polling delay in s
         decoder: optional callable used to decode received messages
+        ack: acknowledgment callback
 
     Returns:
         An 'exit code' dict with its name and received signal.
     """
     while signals.get(name) is None:
-        time.sleep(delay)
+        time.sleep(poll)
         try:
             key, id_ = queue.pop()
         except IndexError:
             continue
         peer, peerage = _check_peerage(key, peers)
         callback, peersock = key.data, key.fileobj  # explanatory variables
-        if (peerage is True) and (callback.__name__ != "ack"):
+        if (peerage is True) and (callback.__name__ != ack.__name__):
             # connection / read already handled
             continue
         try:
             stream, event, peer, status = _handle_callback(
-                callback, peer, peers, peersock, decoder
+                callback, peer, peers, peersock, decoder, ack
             )
             # hit exception that suggests task was already handled
             # (or unhandleable)
@@ -321,8 +326,8 @@ def launch_selector_thread(
     sock: socket.socket,
     queues: MutableMapping[Any, MutableSequence],
     signals: MutableMapping[Union[int, str], Optional[str]],
-    delay: float = 0.01,
-    poll: float = 1,
+    poll: float = 0.01,
+    selector_poll: float = 1,
 ) -> dict:
     """
     launch the server's selector thread. probably should only be called by
@@ -334,8 +339,8 @@ def launch_selector_thread(
             jobs to those lists from the selector.
         signals: if value of the "select" key in this dict is not None,
             the thread shuts itself down.
-        delay: event spool delay in seconds.
-        poll: selector polling delay in seconds.
+        poll: event spool delay in seconds.
+        selector_poll: selector polling delay in seconds.
             (doesn't do much; this is mostly handled by the selector itself.)
 
     Returns:
@@ -346,19 +351,24 @@ def launch_selector_thread(
         sel.register(sock, selectors.EVENT_READ, curry(accept)(sel))
         while signals.get("select") is None:
             try:
-                events = sel.select(poll)
+                events = sel.select(selector_poll)
             except TimeoutError:
                 continue
             for key, _mask in events:
                 target = next(cycler)
                 queues[target].append((key, id_))
                 id_ += 1
-            time.sleep(delay)
+            time.sleep(poll)
     return {"thread": "select", "signal": signals.get("select")}
 
 
 def launch_tcp_server(
-    host, port, n_threads=4, delay=0.01, decoder: Optional[Callable] = None
+    host,
+    port,
+    n_threads=4,
+    poll=0.01,
+    decoder: Optional[Callable] = None,
+    ack: Callable = default_ack
 ) -> tuple[dict[str], list[dict], list[dict]]:
     """
     launch a lightweight tcp server
@@ -366,8 +376,10 @@ def launch_tcp_server(
         host: host for socket
         port: port for socket
         n_threads: # of read threads
-        delay: poll/spool delay for threads
+        poll: poll/spool delay for threads
         decoder: optional callable used to decode received messages
+        ack: callable for responding to messages -- this can be used
+            to attach a Station's responder rules to the server
 
     Returns:
         dict whose keys are:
@@ -391,7 +403,7 @@ def launch_tcp_server(
         queues = {i: [] for i in range(n_threads)}
         signals = {i: None for i in range(n_threads)} | {"select": None}
         threads["select"] = executor.submit(
-            launch_selector_thread, sock, queues, signals, delay, 1
+            launch_selector_thread, sock, queues, signals, poll, 1
         )
         for ix in range(n_threads):
             threads[ix] = executor.submit(
@@ -402,8 +414,9 @@ def launch_tcp_server(
                 ix,
                 queues[ix],
                 signals,
-                delay,
+                poll,
                 decoder,
+                ack
             )
         serverdict = {
             "threads": threads,
@@ -515,6 +528,6 @@ def stsend(data, host, port, timeout=10, delay=0, chunksize=None):
 
 
 @wraps(launch_tcp_server)
-def stlisten(host, port, n_threads: int = 4, delay: float = 0.01):
+def stlisten(host, port, n_threads: int = 4, poll: float = 0.01):
     """wrapper for launch_tcp_server that autodecodes data as hostess comms."""
-    return launch_tcp_server(host, port, n_threads, delay, decoder=read_comm)
+    return launch_tcp_server(host, port, n_threads, poll, decoder=read_comm)

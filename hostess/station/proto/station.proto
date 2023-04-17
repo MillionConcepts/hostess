@@ -96,8 +96,8 @@ enum NodeType {unknown_nodetype = 0; listener = 1; handler = 2;}
 enum NodeLoC {unknown_loc = 0; primary = 1; secondary = 2; sleeping = 3;}
 message NodeState {NodeStatus status = 1; NodeLoC loc = 2; bool can_receive = 3;}
 message NodeId {
-  string nodename = 1;
-  NodeType nodetype = 2;
+  string name = 1;
+  NodeType type = 2;
   uint32 pid = 3;
   string host = 4;
   string port = 5;
@@ -110,7 +110,9 @@ message MessageCount {
   uint32 new_messages = 2;
 }
 
-enum UpdateReason {no_reason = 0; scheduled = 1; info = 2; requested = 3;}
+enum UpdateReason {
+  no_reason = 0; scheduled = 1; info = 2; requested = 3; wilco = 4; bad_request = 5;
+}
 
 /* listener reports, or any node's check-in message */
 message Update {
@@ -124,12 +126,14 @@ message Update {
   /* structured / serialized data from a listener node it believes the
   Station needs to know about. */
   repeated PythonObject info = 7;
+  /* if this update is in response / reference to an instruction */
+  uint32 instruction_id = 8;
   /* monitor types? */
 }
 
 enum InstructionType {
   unknowninst = 0; report = 1; stop = 2; wake = 3; sleep = 4; do = 5; kill = 6;
-  }
+}
 
 /* for passing a dict of kwargs as a serialized blob into an endpoint */
 message PythonEncodedPayload {
@@ -205,5 +209,6 @@ message Instruction {
   uint32 id = 2;
   google.protobuf.Timestamp time = 3;
   oneof task {Action action = 4; Pipeline pipe = 5;}
-  /* maybe other meta-instructions */
+  /* identifying metadata, will be included in logs */
+  map<string, string> metadata = 6;
 }

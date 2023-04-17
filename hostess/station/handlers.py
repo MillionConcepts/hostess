@@ -76,17 +76,12 @@ def make_function_call(action: pro.Action):
         raise ValueError(f"unknown context {ctx}")
 
 
-#
-# def dispatch_task(task: Message):
-#     func = {'action': dispatch_action, 'pipe': tbd}[task.WhichOneof("task")]
-#     return func(task)
-
-
 def actiondict(action: Message):
     """standardized dict for recording running action"""
     return {
         "name": action.name,
         "id": action.id,
         "start": dt.datetime.utcnow(),
-        "stop": None
+        "stop": None,
+        "status": "running"
     }

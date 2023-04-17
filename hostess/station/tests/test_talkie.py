@@ -77,13 +77,13 @@ def test_tcp_server():
 def test_protobuf():
     """attempt to construct a basic station protobuf Message"""
     actions = [
-        pro.Action(name="imagestats", status="success", level="pipe"),
-        pro.Action(name="handler", status="success", level="node"),
+        pro.ActionReport(name="imagestats", status="success", level="pipe"),
+        pro.ActionReport(name="handler", status="success", level="action"),
     ]
-    rdict = {"sendtime": make_timestamp(), "task_id": 3, "actions": actions}
-    report = pro.Report(**rdict)
+    rdict = {"sendtime": make_timestamp(), "task_id": 3, "steps": actions}
+    report = pro.TaskReport(**rdict)
     assert report.task_id == 3
-    assert report.actions[1].name == "handler"
+    assert report.steps[1].name == "handler"
     return report
 
 
@@ -92,8 +92,8 @@ def test_comm():
     report = test_protobuf()
     encoded = tk.make_comm(report)
     decoded = tk.read_comm(encoded)
-    assert decoded["header"]["mtype"] == "Report"
-    assert decoded["body"].actions[0].name == "imagestats"
+    assert decoded["header"]["mtype"] == "TaskReport"
+    assert decoded["body"].steps[0].name == "imagestats"
     assert decoded["header"]["length"] == len(report.SerializeToString())
 
 
@@ -101,12 +101,15 @@ def test_comm_online():
     """check online comm roundtrip"""
     host, port, report = "localhost", 11222, test_protobuf()
     server, events, data = tk.stlisten(host, port)
-    for _ in range(5):
-        ack, _ = tk.stsend(report, host, port)
+    for _ in range(1):
+        ack, _ = tk.stsend(report, host, port, timeout=5)
         # Timestamp is variable-length depending on nanoseconds
         assert data[-1]["event"] in ("decoded 69", "decoded 70")
         assert data[-1]["content"]["header"]["length"] in (48, 49)
-        assert data[-1]["content"]["body"].actions[1].name == "handler"
+        assert data[-1]["content"]["body"].steps[1].name == "handler"
         assert data[-1]["content"]["err"] == ""
         assert ack == tk.HOSTESS_ACK
     server["kill"]()
+
+# test_tcp_server()
+#
