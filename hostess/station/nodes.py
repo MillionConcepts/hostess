@@ -1,19 +1,17 @@
 from __future__ import annotations
 
-import random
-import sys
-import threading
-from concurrent.futures import ThreadPoolExecutor
 import os
+import random
 import socket
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Literal
 
+import hostess.station.proto.station_pb2 as pro
 from dustgoggles.func import filtern
 from google.protobuf.message import Message
-
 from hostess.station import rules
-import hostess.station.proto.station_pb2 as pro
 from hostess.station.proto_utils import make_timestamp
 from hostess.station.talkie import stsend, read_comm, timeout_factory
 
