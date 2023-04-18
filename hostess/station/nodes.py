@@ -2,16 +2,18 @@ from __future__ import annotations
 
 import os
 import random
+import re
 import socket
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Literal
+from types import MappingProxyType as MPt
+from typing import Literal, Union, Mapping
+
+from google.protobuf.message import Message
 
 import hostess.station.proto.station_pb2 as pro
-from dustgoggles.func import filtern
-from google.protobuf.message import Message
-from hostess.station import rules
+from hostess.station import actors
 from hostess.station.messages import pack_arg
 from hostess.station.proto_utils import make_timestamp, dict2msg
 from hostess.station.talkie import stsend, read_comm, timeout_factory
@@ -21,12 +23,13 @@ NodeType: Literal["handler", "listener"]
 
 
 # noinspection PyTypeChecker
-class Node:
+class Node(actors.Matcher):
     def __init__(
         self,
         station: tuple[str, int],
         nodetype: NodeType,
         name: str,
+        elements: tuple[Union[type[actors.Sensor], type[actors.Actor]]] = (),
         n_threads=6,
         poll=0.08,
         timeout=10,
@@ -45,37 +48,53 @@ class Node:
         self.update_interval = update_interval
         self.poll, self.timeout, self.signals = poll, timeout, {}
         self.actionable_events = []
-        self.definition = self.definition_class()
+        self.actors, self.sensors, self.config = {}, {}, {}
+        self.interface, self.params = [], {}
         self.name, self.nodetype, self.station = name, nodetype, station
-        self.actions, self.threads, self._lock = {}, [], threading.Lock()
+        self.actions, self.threads, self._lock = {}, {}, threading.Lock()
+        self.n_threads = n_threads
         # TODO: do this better
         os.makedirs("logs", exist_ok=True)
         self.logfile = f"logs/{self.name}_{filestamp()}.csv"
-        if len(self.definition.sources) > n_threads - 1:
-            raise EnvironmentError(
-                "Not enough threads to run this node. Set n_threads higher or "
-                "reduce watch rules."
-            )
+        for element in elements:
+            self.add_element(element)
         self.exec, self.instruction_queue = ThreadPoolExecutor(n_threads), []
         self.update_timer, self.reset_update_timer = timeout_factory(False)
         if start is True:
-            self.start()
+            self.exec.submit(self.start)
 
-    def launch_watch_loop(self, source: rules.Source):
+    def add_element(self, cls: Union[type[actors.Actor], type[actors.Sensor]]):
+        name = actors.inc_name(cls, self.config)
+        element = cls()
+        if issubclass(cls, actors.Actor):
+            self.actors[name] = element
+        elif issubclass(cls, actors.Sensor):
+            if len(self.sensors) > self.n_threads - 2:
+                raise EnvironmentError("Not enough threads to add sensor.")
+            self.sensors[name] = element
+        else:
+            raise TypeError(f"{cls} is not a valid element for Node.")
+        self.config[name], self.params[name] = element.config, element.params
+        for prop in element.interface:
+            self.interface.append(f"{name}_{prop}")
+            setattr(self, f"{name}_{prop}", getattr(element, prop))
+
+    def sensor_loop(self, sensor: actors.Sensor):
         exception = None
         try:
-            while self.signals.get(source.name) is None:
+            while self.signals.get(sensor.name) is None:
                 if not self.locked:
-                    source.check(self)
+                    sensor.check(self)
                 time.sleep(self.poll)
         except Exception as ex:
-            exception = ex
-        finally:
-            return {
-                'name': source.name,
-                'signal': self.signals.get(source.name),
-                'exception': exception
-            }
+            raise
+        #     exception = ex
+        # finally:
+        #     return {
+        #         'name': sensor.name,
+        #         'signal': self.signals.get(sensor.name),
+        #         'exception': exception
+        #     }
 
     def check_running(self):
         for instruction_id, action in self.actions.values():
@@ -93,8 +112,15 @@ class Node:
         self.send_to_station(update)
 
     def start(self):
-        for source in self.definition.sources:
-            self.threads[source.name] = self.launch_watch_loop(source)
+        if self.__started is True:
+            raise EnvironmentError("Node already started.")
+        self.threads['main'] = self.exec.submit(self._start)
+        self.__started = True
+
+    def _start(self):
+        for name, sensor in self.sensors.items():
+            print('hi')
+            self.threads[name] = self.exec.submit(self.sensor_loop, sensor)
         exception = None
         try:
             while True:
@@ -139,7 +165,7 @@ class Node:
         action_reports = []
         for id_, action in self.actions.items():
             action_reports.append(dict2msg(action, pro.ActionReport))
-        update.actions = action_reports
+        update.action_rules = action_reports
         self.send_to_station(update)
         self.reset_update_timer()
 
@@ -165,21 +191,18 @@ class Node:
 
     def log(self, event, **extra_fields):
         try:
-            loggers = self.match_event(event, "log")
-        except rules.NoRuleForEvent:
+            loggers = self.match(event, "log")
+        except actors.NoActorForEvent:
             # if we don't have a logger for something, that's fine
             return
         for logger in loggers:
             logger.execute(self, event, **extra_fields)
 
-    def match_event(self, event, category):
-        return self.definition.match(event, category)
-
-    def match_instruction(self, event) -> rules.Rule:
+    def match_instruction(self, event) -> actors.Actor:
         try:
-            return self.match_event(event, "action")
+            return self.match(event, "action")
         except StopIteration:
-            raise rules.NoRuleForEvent
+            raise actors.NoActorForEvent
 
     def do_actions(self, actions, instruction, key, noid):
         for action in actions:
@@ -188,10 +211,10 @@ class Node:
     def interpret_instruction(self, instruction: Message):
         actions = None
         try:
-            rules.validate_instruction(instruction)
+            actors.validate_instruction(instruction)
             actions = self.match_instruction(instruction)
             status = "wilco"
-        except rules.DoNotUnderstand:
+        except actors.DoNotUnderstand:
             # TODO: maybe add some more failure info
             rule, status = None, "bad_request"
         self.reply_to_instruction(instruction, status)
@@ -226,9 +249,6 @@ class Node:
         message.reason, message.instruction_id = status, instruction.id
         self.send_to_station(message)
 
-    def configure(self, rule, key, value):
-        self.definition.config[rule][key] = value
-
     def _is_locked(self):
         return self._lock.locked()
 
@@ -240,5 +260,9 @@ class Node:
         else:
             raise TypeError
 
+
+
     locked = property(_is_locked, _set_locked)
-    definition_class: rules.Definition = rules.DefaultRules
+    __started = False
+
+
