@@ -73,7 +73,7 @@ class Actor(ABC):
     def __init__(self):
         self.config = {'match': {}, 'exec': {}}
         self.params = {'match': self.match_params, 'exec': self.exec_params}
-        self.match = configured(self.execute, self.config['match'])
+        self.match = configured(self.match, self.config['match'])
         self.execute = configured(self.execute, self.config['exec'])
 
     def match(self, event: Any, **_) -> bool:
@@ -120,7 +120,7 @@ class FunctionCall(Actor):
         return True
 
     def execute(
-            self, node: "nodes.Node", instruction: Message, key=None, noid=False, **_
+        self, node: nodes.Node, instruction: Message, key=None, noid=False, **_
     ) -> Any:
         if instruction.HasField("action"):
             action = instruction.action
@@ -238,16 +238,23 @@ class Matcher(ABC):
 
     def matching_actors(self, actortype):
         if actortype is None:
-            return self.actors
+            return list(self.actors.values())
         return [r for r in self.actors.values() if r.actortype == actortype]
 
     actors: dict[str, Actor]
 
 
-def tail_file(position, *, path: Path, **_):
+def tail_file(position, *, path: Path = None, **_):
     if path is None:
         return position, []
-    if os.stat(path).st_size == position:
+    if not path.exists():
+        return None, []
+    if position is None:
+        position = os.stat(path).st_size - 1
+    if os.stat(path).st_size - 1 == position:
+        return position, []
+    if os.stat(path).st_size - 1 < position:
+        position = os.stat(path).st_size - 1
         return position, []
     with path.open() as stream:
         stream.seek(position)
@@ -266,7 +273,7 @@ class LineLogger(Actor):
 
     def execute(self, node: "nodes.Node", line: str, *, path=None, **_):
         if path is None:
-            raise IOError("can't log this line without a path to log to.")
+            return
         with path.open("a") as stream:
             stream.write(f"{line}\n")
 
@@ -306,19 +313,20 @@ class Sensor(Matcher, ABC):
             config, params, actors, props = associate_actor(
                 cls, config, params, actors, props
             )
-        self.config, self.params, self.actors= config, params, actors
+        self.config, self.params, self.actors = config, params, actors
         for prop in props:
             setattr(self, *prop)
         self.check = configured(self.check, self.config['check'])
         self.memory = None
 
-    def check(self, node, **kwargs):
-        self.memory, events = self.checker(self.memory, **kwargs)
+    def check(self, node, **check_kwargs):
+        self.memory, events = self.checker(self.memory, **check_kwargs)
         for event in events:
             try:
                 actors = self.match(event)
                 for actor in actors:
-                    actor.execute(self, node, **kwargs)
+                    # kwargs propagate to individual actors via `self.config`
+                    actor.execute(node, event)
             except NoActorForEvent:
                 continue
 
@@ -331,12 +339,16 @@ class Sensor(Matcher, ABC):
     interface = ()
 
 
-class WatchFile(Sensor):
+class FileWatch(Sensor):
+
+    def __init__(self):
+        self.checker = tail_file
+        super().__init__()
 
     def _set_target(self, path):
-        self._watched = path
-        self.config['check']['path'] = path
-        self.config['matchreport']['exec'] = path
+        self._watched = Path(path)
+        self.config['check']['path'] = Path(path)
+        self.config['grepreport']['exec'] = Path(path)
 
     def _get_target(self):
         return self._watched
@@ -346,7 +358,7 @@ class WatchFile(Sensor):
 
     def _set_logfile(self, path):
         self._logfile = path
-        self.config['linelog']['exec']['path'] = path
+        self.config['linelog']['exec']['path'] = Path(path)
 
     def _get_patterns(self):
         return self._patterns
@@ -357,7 +369,6 @@ class WatchFile(Sensor):
 
     actions = (ReportStringMatch,)
     loggers = (LineLogger,)
-    checker = tail_file
     name = "filewatch"
     check_params = ("path",)
     target = property(_get_target, _set_target)

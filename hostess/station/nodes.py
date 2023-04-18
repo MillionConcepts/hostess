@@ -1,29 +1,62 @@
 from __future__ import annotations
 
+import json
 import os
 import random
-import re
 import socket
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from types import MappingProxyType as MPt
-from typing import Literal, Union, Mapping
+from inspect import getmembers_static
+from typing import Literal, Union
 
+from dustgoggles.func import filtern
+from google.protobuf.json_format import MessageToDict, Parse
 from google.protobuf.message import Message
 
 import hostess.station.proto.station_pb2 as pro
 from hostess.station import actors
 from hostess.station.messages import pack_arg
-from hostess.station.proto_utils import make_timestamp, dict2msg
+from hostess.station.proto_utils import make_timestamp, dict2msg, enum
 from hostess.station.talkie import stsend, read_comm, timeout_factory
 from hostess.utilities import filestamp
 
 NodeType: Literal["handler", "listener"]
 
 
+class PropConsumer:
+
+    def __init__(self):
+        self.proprefs = {}
+
+    def consume_property(self, obj, attr, newname=None):
+        prop = filtern(
+            lambda kv: kv[0] == attr, getmembers_static(type(obj))
+        )[1]
+        if not isinstance(prop, property):
+            raise TypeError(f'{attr} of {type(obj).__name__} not a property')
+        newname = attr if newname is None else newname
+        self.proprefs[newname] = (obj, attr)
+
+    def __getattr__(self, attr):
+        ref = self.proprefs.get(attr)
+        if ref is None:
+            raise AttributeError
+        return getattr(ref[0], ref[1])
+
+    def __setattr__(self, attr, value):
+        if attr == "proprefs":
+            return super().__setattr__(attr, value)
+        if (ref := self.proprefs.get(attr)) is not None:
+            return setattr(ref[0], ref[1], value)
+        return super().__setattr__(attr, value)
+
+    def __dir__(self):
+        return super().__dir__() + list(self.proprefs.keys())
+
+
 # noinspection PyTypeChecker
-class Node(actors.Matcher):
+class Node(actors.Matcher, PropConsumer):
     def __init__(
         self,
         station: tuple[str, int],
@@ -45,6 +78,7 @@ class Node(actors.Matcher):
         timeout: timeout, in s, for inter-node communications
         update: interval, in s, for check-in Updates to supervising Station
         """
+        super().__init__()
         self.update_interval = update_interval
         self.poll, self.timeout, self.signals = poll, timeout, {}
         self.actionable_events = []
@@ -76,8 +110,7 @@ class Node(actors.Matcher):
             raise TypeError(f"{cls} is not a valid element for Node.")
         self.config[name], self.params[name] = element.config, element.params
         for prop in element.interface:
-            self.interface.append(f"{name}_{prop}")
-            setattr(self, f"{name}_{prop}", getattr(element, prop))
+            self.consume_property(element, prop, f"{name}_{prop}")
 
     def sensor_loop(self, sensor: actors.Sensor):
         exception = None
@@ -87,14 +120,13 @@ class Node(actors.Matcher):
                     sensor.check(self)
                 time.sleep(self.poll)
         except Exception as ex:
-            raise
-        #     exception = ex
-        # finally:
-        #     return {
-        #         'name': sensor.name,
-        #         'signal': self.signals.get(sensor.name),
-        #         'exception': exception
-        #     }
+            exception = ex
+        finally:
+            return {
+                'name': sensor.name,
+                'signal': self.signals.get(sensor.name),
+                'exception': exception
+            }
 
     def check_running(self):
         for instruction_id, action in self.actions.values():
@@ -105,11 +137,14 @@ class Node(actors.Matcher):
                 self.report_on(action)
 
     def update_from_event(self, event):
-        update = self._base_message()
+        mdict = self._base_message()
+
+        mdict['reason'] = "info"
+        message = Parse(json.dumps(mdict), pro.Update())
         # TODO: this wants to be more sophisticated
-        update.info = [pack_arg('info', event)]
-        update.reason = "info"
-        self.send_to_station(update)
+        info = pro.Update(info=[pack_arg("event", event)])
+        message.MergeFrom(info)
+        self.send_to_station(message)
 
     def start(self):
         if self.__started is True:
@@ -146,10 +181,14 @@ class Node(actors.Matcher):
             self.send_exit_report(exception)
 
     def send_exit_report(self, exception=None):
-        update = self._base_message()
-        update.status = "crashed" if exception is not None else "shutdown"
-        update.reason = "exiting"
-        self.send_to_station(update)
+        mdict = self._base_message()
+        status = "crashed" if exception is not None else "shutdown"
+        mdict['state'] = {'status': status}
+        message = Parse(json.dumps(mdict), pro.Update())
+        if exception is not None:
+            info = pro.Update(info=[pack_arg("exception", exception)])
+            message.MergeFrom(info)
+        self.send_to_station(message)
 
     def report_on(self, action):
         report = self._base_message()
@@ -170,12 +209,12 @@ class Node(actors.Matcher):
         self.reset_update_timer()
 
     def describe(self):
-        return pro.NodeId(
-            name=self.name,
-            type=self.nodetype,
-            pid=os.getpid(),
-            host=socket.gethostname()
-        )
+        return {
+            'name': self.name,
+            'type': self.nodetype,
+            'pid': os.getpid(),
+            'host': socket.gethostname()
+        }
 
     # TODO: figure out how to not make this infinity json objects
     def log_event(self, obj):
@@ -242,12 +281,14 @@ class Node(actors.Matcher):
             self.instruction_queue.append(decoded)
 
     def _base_message(self):
-        return pro.Update(nodeid=self.describe(), time=make_timestamp())
+        return {
+            'nodeid': self.describe(), 'time': MessageToDict(make_timestamp())
+        }
 
     def reply_to_instruction(self, instruction, status: str):
-        message = self._base_message()
-        message.reason, message.instruction_id = status, instruction.id
-        self.send_to_station(message)
+        mdict = self._base_message()
+        mdict['reason'], mdict['instruction_id'] = status, instruction.id
+        self.send_to_station(Parse(json.dumps(mdict), pro.Update()))
 
     def _is_locked(self):
         return self._lock.locked()
@@ -260,9 +301,16 @@ class Node(actors.Matcher):
         else:
             raise TypeError
 
-
-
     locked = property(_is_locked, _set_locked)
     __started = False
 
 
+class HeadlessNode(Node):
+
+    def __init__(self, *args, **kwargs):
+        station = ("", -1)
+        super().__init__(station, *args, **kwargs)
+        self.message_log = []
+
+    def send_to_station(self, message):
+        self.message_log.append(message)

@@ -93,5 +93,3 @@ def enum(message, field):
         if desc.name != field:
             continue
         return desc.enum_type.values_by_number[val].name
-
-
