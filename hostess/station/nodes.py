@@ -6,6 +6,7 @@ import random
 import socket
 import threading
 import time
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from inspect import getmembers_static
 from typing import Literal, Union
@@ -18,7 +19,8 @@ import hostess.station.proto.station_pb2 as pro
 from hostess.station import actors
 from hostess.station.messages import pack_arg
 from hostess.station.proto_utils import make_timestamp, dict2msg, enum
-from hostess.station.talkie import stsend, read_comm, timeout_factory
+from hostess.station.talkie import stsend, read_comm, timeout_factory, \
+    stlisten, HOSTESS_ACK
 from hostess.utilities import filestamp
 
 NodeType: Literal["handler", "listener"]
@@ -314,3 +316,29 @@ class HeadlessNode(Node):
 
     def send_to_station(self, message):
         self.message_log.append(message)
+
+
+class Station:
+    def __init__(self, host, port):
+
+        self.exec = ThreadPoolExecutor(8)
+        self.server = stlisten(host, port, ack=self.ack, executor=self.exec)
+        self.nodes, self.instruction_queue = [], defaultdict(list)
+
+    def ack(self, sel, conn):
+        # this doesn't have to be complicated -- just walk back up the server's
+        # data list looking for the last message from the matching connection
+        self.log(message)
+        response = None
+        if not enum(message.state, "status") in ("shutdown", "crashed"):
+            queue = self.instruction_queue[message.nodeid]
+            if len(queue) > 0:
+                response = queue.pop()
+        if response is None:
+            return HOSTESS_ACK
+
+
+
+
+    def log(self, *args, **kwargs):
+        pass

@@ -94,7 +94,9 @@ enum NodeStatus {
 }
 enum NodeType {unknown_nodetype = 0; listener = 1; handler = 2;}
 enum NodeLoC {unknown_loc = 0; primary = 1; secondary = 2; sleeping = 3;}
-message NodeState {NodeStatus status = 1; NodeLoC loc = 2; bool can_receive = 3;}
+message NodeState {
+  NodeStatus status = 1; NodeLoC loc = 2; bool can_receive = 3; bool busy = 4;
+}
 message NodeId {
   string name = 1;
   NodeType type = 2;

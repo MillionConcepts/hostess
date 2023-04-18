@@ -368,7 +368,8 @@ def launch_tcp_server(
     n_threads=4,
     poll=0.01,
     decoder: Optional[Callable] = None,
-    ack: Callable = default_ack
+    ack: Callable = default_ack,
+    executor: Optional[ThreadPoolExecutor] = None
 ) -> tuple[dict[str], list[dict], list[dict]]:
     """
     launch a lightweight tcp server
@@ -380,6 +381,8 @@ def launch_tcp_server(
         decoder: optional callable used to decode received messages
         ack: callable for responding to messages -- this can be used
             to attach a Station's responder rules to the server
+        executor: optional ThreadPoolExecutor, if the server should run in an
+            existing thread pool
 
     Returns:
         dict whose keys are:
@@ -398,7 +401,8 @@ def launch_tcp_server(
         sock.bind((host, port))
         sock.listen()
         sock.setblocking(False)
-        executor = ThreadPoolExecutor(n_threads + 1)
+        if executor is None:
+            executor = ThreadPoolExecutor(n_threads + 1)
         threads, events, data, peers = {}, [], [], {}
         queues = {i: [] for i in range(n_threads)}
         signals = {i: None for i in range(n_threads)} | {"select": None}
@@ -528,6 +532,15 @@ def stsend(data, host, port, timeout=10, delay=0, chunksize=None):
 
 
 @wraps(launch_tcp_server)
-def stlisten(host, port, n_threads: int = 4, poll: float = 0.01):
+def stlisten(
+    host: str,
+    port: int,
+    n_threads: int = 4,
+    poll: float = 0.01,
+    ack=default_ack,
+    executor=None
+):
     """wrapper for launch_tcp_server that autodecodes data as hostess comms."""
-    return launch_tcp_server(host, port, n_threads, poll, decoder=read_comm)
+    return launch_tcp_server(
+        host, port, n_threads, poll, decoder=read_comm, ack=ack, executor=executor
+    )
