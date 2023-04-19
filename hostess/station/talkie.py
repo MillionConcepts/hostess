@@ -202,6 +202,8 @@ def read(
         if status in ("stopped", "eom"):
             # tell the selector the socket is ready for an `ack` callback
             # TODO: something else for not-eom?
+            # TODO: add a hook here to attach the received data to a kwarg
+            #  of the ack function
             sel.register(conn, selectors.EVENT_WRITE, curry(ack)(sel))
             if decoder is not None:
                 stream, event, status = _trydecode(decoder, stream)
@@ -265,7 +267,7 @@ def launch_read_thread(
     signals: MutableMapping,
     poll: float = 0.01,
     decoder: Optional[Callable] = None,
-    ack: Callable = default_ack
+    ack: Callable = default_ack,
 ) -> dict:
     """
     launch a read thread. probably should only be called by launch_tcp_server.
@@ -369,7 +371,7 @@ def launch_tcp_server(
     poll=0.01,
     decoder: Optional[Callable] = None,
     ack: Callable = default_ack,
-    executor: Optional[ThreadPoolExecutor] = None
+    executor: Optional[ThreadPoolExecutor] = None,
 ) -> tuple[dict[str], list[dict], list[dict]]:
     """
     launch a lightweight tcp server
@@ -420,7 +422,7 @@ def launch_tcp_server(
                 signals,
                 poll,
                 decoder,
-                ack
+                ack,
             )
         serverdict = {
             "threads": threads,
@@ -538,9 +540,9 @@ def stlisten(
     n_threads: int = 4,
     poll: float = 0.01,
     ack=default_ack,
-    executor=None
+    executor=None,
 ):
     """wrapper for launch_tcp_server that autodecodes data as hostess comms."""
     return launch_tcp_server(
-        host, port, n_threads, poll, decoder=read_comm, ack=ack, executor=executor
+        host, port, n_threads, poll, read_comm, ack, executor
     )

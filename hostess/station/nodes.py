@@ -1,24 +1,24 @@
 from __future__ import annotations
 
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
+from inspect import getmembers_static
 import json
 import os
 import random
 import socket
 import threading
 import time
-from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
-from inspect import getmembers_static
 from typing import Literal, Union
 
 from dustgoggles.func import filtern
 from google.protobuf.json_format import MessageToDict, Parse
 from google.protobuf.message import Message
 
-import hostess.station.proto.station_pb2 as pro
-from hostess.station import actors
+from hostess.station import bases
 from hostess.station.messages import pack_arg
 from hostess.station.proto_utils import make_timestamp, dict2msg, enum
+import hostess.station.proto.station_pb2 as pro
 from hostess.station.talkie import stsend, read_comm, timeout_factory, \
     stlisten, HOSTESS_ACK
 from hostess.utilities import filestamp
@@ -58,13 +58,14 @@ class PropConsumer:
 
 
 # noinspection PyTypeChecker
-class Node(actors.Matcher, PropConsumer):
+class Node(bases.Matcher, PropConsumer):
     def __init__(
         self,
         station: tuple[str, int],
         nodetype: NodeType,
         name: str,
-        elements: tuple[Union[type[actors.Sensor], type[actors.Actor]]] = (),
+        elements: tuple[Union[type[
+            bases.Sensor], type[bases.Actor]]] = (),
         n_threads=6,
         poll=0.08,
         timeout=10,
@@ -99,12 +100,13 @@ class Node(actors.Matcher, PropConsumer):
         if start is True:
             self.exec.submit(self.start)
 
-    def add_element(self, cls: Union[type[actors.Actor], type[actors.Sensor]]):
-        name = actors.inc_name(cls, self.config)
+    def add_element(self, cls: Union[type[bases.Actor], type[
+        bases.Sensor]]):
+        name = bases.inc_name(cls, self.config)
         element = cls()
-        if issubclass(cls, actors.Actor):
+        if issubclass(cls, bases.Actor):
             self.actors[name] = element
-        elif issubclass(cls, actors.Sensor):
+        elif issubclass(cls, bases.Sensor):
             if len(self.sensors) > self.n_threads - 2:
                 raise EnvironmentError("Not enough threads to add sensor.")
             self.sensors[name] = element
@@ -114,7 +116,7 @@ class Node(actors.Matcher, PropConsumer):
         for prop in element.interface:
             self.consume_property(element, prop, f"{name}_{prop}")
 
-    def sensor_loop(self, sensor: actors.Sensor):
+    def sensor_loop(self, sensor: bases.Sensor):
         exception = None
         try:
             while self.signals.get(sensor.name) is None:
@@ -233,17 +235,17 @@ class Node(actors.Matcher, PropConsumer):
     def log(self, event, **extra_fields):
         try:
             loggers = self.match(event, "log")
-        except actors.NoActorForEvent:
+        except bases.NoActorForEvent:
             # if we don't have a logger for something, that's fine
             return
         for logger in loggers:
             logger.execute(self, event, **extra_fields)
 
-    def match_instruction(self, event) -> actors.Actor:
+    def match_instruction(self, event) -> bases.Actor:
         try:
             return self.match(event, "action")
         except StopIteration:
-            raise actors.NoActorForEvent
+            raise bases.NoActorForEvent
 
     def do_actions(self, actions, instruction, key, noid):
         for action in actions:
@@ -252,10 +254,10 @@ class Node(actors.Matcher, PropConsumer):
     def interpret_instruction(self, instruction: Message):
         actions = None
         try:
-            actors.validate_instruction(instruction)
+            bases.validate_instruction(instruction)
             actions = self.match_instruction(instruction)
             status = "wilco"
-        except actors.DoNotUnderstand:
+        except bases.DoNotUnderstand:
             # TODO: maybe add some more failure info
             rule, status = None, "bad_request"
         self.reply_to_instruction(instruction, status)
@@ -322,12 +324,22 @@ class Station:
     def __init__(self, host, port):
 
         self.exec = ThreadPoolExecutor(8)
-        self.server = stlisten(host, port, ack=self.ack, executor=self.exec)
+        self.server, self.server_events, self.received = stlisten(
+            host, port, ack=self.ack, executor=self.exec
+        )
         self.nodes, self.instruction_queue = [], defaultdict(list)
 
     def ack(self, sel, conn):
-        # this doesn't have to be complicated -- just walk back up the server's
-        # data list looking for the last message from the matching connection
+        # just walk back up the server's received message list looking for the
+        # last message from the matching connection. more robust and quicker
+        # than looking for the node's id info.
+        # TODO: should probably set a time cutoff.
+        # other TODO: could attach the message to the socket.
+        match = None
+        for comm in reversed(self.received):
+            if conn.peername is comm['peer']:
+                break
+
         self.log(message)
         response = None
         if not enum(message.state, "status") in ("shutdown", "crashed"):
