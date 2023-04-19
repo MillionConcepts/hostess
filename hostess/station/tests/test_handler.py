@@ -1,12 +1,12 @@
 import numpy as np
 
 import hostess.station.messages as me
-from hostess.station import rules
+from hostess.station.actors import FunctionCall
 
 
-class FakeNode:
+class FakeNode():
     def __init__(self):
-        self.running_actions = []
+        self.actions = {}
 
 
 def test_function_call():
@@ -18,9 +18,9 @@ def test_function_call():
     )
     instruction = me.make_instruction("do", action=action)
     node = FakeNode()
-    rules.FunctionCall().match(instruction)
-    rules.FunctionCall().execute(node, instruction)
-    result = node.running_actions[0]['result'][0]
+    FunctionCall().match(instruction)
+    FunctionCall().execute(node, instruction, key=1)
+    result = node.actions[1]['result'][0]
     assert result == np.array([1])
 
 test_function_call()

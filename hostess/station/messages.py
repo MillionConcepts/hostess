@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+import json
 import random
 import sys
 import struct
@@ -9,7 +12,8 @@ from more_itertools import split_when, all_equal
 import numpy as np
 
 import hostess.station.proto.station_pb2 as pro
-from hostess.station.proto_utils import make_timestamp
+from hostess.station.proto import station_pb2 as pro
+from hostess.station.proto_utils import make_timestamp, enum, dict2msg
 
 
 # TODO: optional base64 encoding for some channels
@@ -54,12 +58,12 @@ def make_action(description=None, **fields):
 def default_arg_packing(arguments):
     interp = []
     for k, v in arguments.items():
-        obj = pack_arg(k, v)
+        obj = obj2msg(v, k)
         interp.append(obj)
     return interp
 
 
-def pack_arg(name, obj):
+def obj2msg(obj, name=""):
     if isinstance(obj, (str, bytes, int, float)):
         scanf, chartype = obj2scanf(obj)
         obj = pro.PythonObject(
@@ -102,3 +106,37 @@ def make_instruction(instructiontype, **kwargs):
     if instruction.type == "do" and instruction.task is None:
         raise ValueError("must assign a task for a 'do' action.")
     return instruction
+
+
+def unpack_obj(obj: pro.PythonObject):
+    if enum(obj, "compression") not in ("nocompression", None):
+        raise NotImplementedError
+    if enum(obj, "serialization") == "json":
+        value = json.loads(obj.value)
+    elif enum(obj, "serialization") == "pickle":
+        value = dill.loads(obj.value)
+    elif obj.scanf is not None:
+        value = struct.unpack(obj.scanf, obj.value)
+        if isinstance(value, bytes):
+            chartype = enum(obj, "chartype")
+            if chartype == "str":
+                value = str(value)
+            elif chartype == "nonetype":
+                value = None
+    else:
+        value = obj.value
+    return value
+
+
+def completed_task_msg(actiondict, steps=None):
+    if steps is not None:
+        raise NotImplementedError
+    fields = {}
+    if len(actiondict['result']) > 1:
+        raise NotImplementedError
+    if len(actiondict['result']) == 1:
+        fields['result'] = obj2msg(actiondict.pop('result')[0])
+    fields['time'] = dict2msg(actiondict, pro.ActionTime)
+    action = dict2msg(actiondict, pro.ActionReport)
+    action.MergeFrom(pro.ActionReport(**fields))
+    return pro.TaskReport(instruction_id=actiondict['id'], action=action)

@@ -3,16 +3,14 @@ from __future__ import annotations
 import datetime as dt
 from importlib import import_module
 from importlib.util import spec_from_file_location, module_from_spec
-import json
 import os
 from pathlib import Path
-import struct
 import sys
 
-import dill
 from google.protobuf.message import Message
 
 import hostess.station.proto.station_pb2 as pro
+from hostess.station.messages import unpack_obj
 from hostess.station.proto_utils import enum
 from hostess.subutils import make_watch_caches, defer, watched_process, \
     deferinto
@@ -43,16 +41,7 @@ def unpack_callargs(arguments):
     for arg in arguments:
         if any((arg.value is None, arg.name is None)):
             raise ValueError("need both value and argument name")
-        if enum(arg, "compression") not in ("nocompression", None):
-            raise NotImplementedError
-        if enum(arg, "serialization") == "json":
-            value = json.loads(arg.value)
-        elif enum(arg, "serialization") == "pickle":
-            value = dill.loads(arg.value)
-        elif arg.scanf is not None:
-            value = struct.unpack(arg.scanf, arg.value)
-        else:
-            value = arg.value
+        value = unpack_obj(arg)
         kwargs[arg.name] = value
     return kwargs
 

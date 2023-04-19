@@ -8,6 +8,7 @@ from types import MappingProxyType as MPt
 from typing import Any, Callable, Mapping
 
 from hostess.station import nodes as nodes
+from hostess.station.proto_utils import enum
 
 
 def configured(func, config):
@@ -164,7 +165,7 @@ def inc_name(cls, config):
 
 def validate_instruction(instruction):
     """first-pass instruction validation"""
-    if not instruction.HasField("type"):
+    if enum(instruction, "type") == "unknowninst":
         raise NoInstructionType
     if (instruction.type == "do") and not instruction.HasField("task"):
         raise NoTaskError

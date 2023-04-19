@@ -55,11 +55,11 @@ message ActionTime {
 
 message ActionReport {
   string name = 1;
-  uint32 pid = 2;
+  repeated uint32 pid = 2;
   Status status = 3;
   ActionLevel level = 4;
   ActionTime time = 5;
-  string return_value = 6;
+  PythonObject result = 6;
   /* things like Python exception type */
   string return_type = 7;
   /* intended specifically for process exit codes */
@@ -70,15 +70,10 @@ message ActionReport {
 execution, generally one in direct response to an instruction, but perhaps
  also sometimes one independently executed. */
 message TaskReport {
-  uint32 task_id = 1;
-  NodeId nodeid = 2;
-  NodeStatus status = 3;
-  /* possibly redundant */
-  google.protobuf.Timestamp time = 4;
+  uint32 instruction_id = 1;
   /* redundant? */
-  repeated ActionReport steps = 5;
-  ActionReport action = 6;
-  bool ok = 7;
+  repeated ActionReport steps = 2;
+  ActionReport action = 3;
 }
 
 enum NodeStatus {

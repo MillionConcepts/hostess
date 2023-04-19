@@ -64,15 +64,15 @@ def dict2msg(
             fields[k] = make_duration(v)
         else:
             fields[k] = v
-    return proto_class(**fdict)
+    return proto_class(**fields)
 
 
 def make_duration(delta: Union[dt.timedelta, float]) -> Duration:
     duration = Duration()
     if isinstance(delta, float):
-        Duration.FromSeconds(delta)
+        duration.FromSeconds(delta)
     else:
-        Duration.FromTimedelta(delta)
+        duration.FromTimedelta(delta)
     return duration
 
 

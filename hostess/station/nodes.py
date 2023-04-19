@@ -17,7 +17,7 @@ from google.protobuf.json_format import MessageToDict, Parse
 from google.protobuf.message import Message
 
 from hostess.station import bases
-from hostess.station.messages import pack_arg
+from hostess.station.messages import obj2msg, completed_task_msg
 from hostess.station.proto_utils import make_timestamp, dict2msg, enum
 import hostess.station.proto.station_pb2 as pro
 from hostess.station.talkie import (
@@ -25,7 +25,7 @@ from hostess.station.talkie import (
     read_comm,
     timeout_factory,
     stlisten,
-    HOSTESS_ACK,
+    HOSTESS_ACK, make_comm,
 )
 from hostess.utilities import filestamp
 
@@ -132,22 +132,27 @@ class Node(bases.Matcher, PropConsumer):
             }
 
     def check_running(self):
-        for instruction_id, action in self.actions.values():
+        to_clean = []
+        for instruction_id, action in self.actions.items():
             # TODO: multistep case
             if action["status"] != "running":
                 self.log(action)
                 # TODO: reset update timer in here
                 self.report_on(action)
+                # TODO: if report was successful...
+                to_clean.append(instruction_id)
+        for target in to_clean:
+            self.actions.pop(target)
 
-    def update_from_event(self, event):
+    def update_from_events(self):
         mdict = self._base_message()
-
         mdict["reason"] = "info"
         message = Parse(json.dumps(mdict), pro.Update())
-        # TODO: this wants to be more sophisticated
-        info = pro.Update(info=[pack_arg("event", event)])
+        # TODO: this might want to be more sophisticated
+        info = pro.Update(info=[obj2msg(e) for e in self.actionable_events])
         message.MergeFrom(info)
         self.send_to_station(message)
+        self.actionable_events = []
 
     def start(self):
         if self.__started is True:
@@ -165,7 +170,7 @@ class Node(bases.Matcher, PropConsumer):
                 # TODO: lockouts might be overly strict. we'll see
                 if len(self.actionable_events) > 0:
                     self.locked = True
-                    self.update_from_event(self.actionable_events.pop())
+                    self.update_from_events()
                     self.locked = False
                 if len(self.instruction_queue) > 0:
                     self.locked = True
@@ -180,6 +185,7 @@ class Node(bases.Matcher, PropConsumer):
         except Exception as ex:
             exception = ex
         finally:
+            self.locked = True
             # TODO: other cleanup tasks
             self.send_exit_report(exception)
 
@@ -189,16 +195,17 @@ class Node(bases.Matcher, PropConsumer):
         mdict["state"]["status"] = status
         message = Parse(json.dumps(mdict), pro.Update())
         if exception is not None:
-            info = pro.Update(info=[pack_arg("exception", exception)])
+            info = pro.Update(info=[obj2msg(exception, "exception")])
             message.MergeFrom(info)
         self.send_to_station(message)
 
     def report_on(self, action):
-        report = self._base_message()
+        mdict = self._base_message()
         # TODO; multi-step case
-        report.action = dict2msg(action, pro.ActionReport)
-        report.ok = action["status"] == "success"
-        self.send_to_station(report)
+        message = Parse(json.dumps(mdict), pro.Update())
+        report = completed_task_msg(action)
+        message.MergeFrom(pro.Update(completed=report))
+        self.send_to_station(message)
 
     def check_in(self):
         mdict = self._base_message()
@@ -277,6 +284,10 @@ class Node(bases.Matcher, PropConsumer):
         message = self.insert_config(message)
         self.log(message, direction="sent")
         response, _ = stsend(message, *self.station)
+        if response == "timeout":
+            # TODO: do something else
+            self.log("timeout", direction="received")
+            return
         decoded = read_comm(response)
         if isinstance(decoded, dict):
             decoded = decoded["body"]
@@ -303,7 +314,7 @@ class Node(bases.Matcher, PropConsumer):
         if not message.HasField("state"):
             return
         message.state.MergeFrom(
-            pro.NodeState(config=pack_arg("config", self.config))
+            pro.NodeState(config=obj2msg(self.config))
         )
         return message
 
@@ -340,16 +351,23 @@ class HeadlessNode(Node):
 class Station:
     def __init__(self, host, port):
         self.exec = ThreadPoolExecutor(8)
-        self.server, self.server_events, self.received = stlisten(
+        self.server, self.server_events, self.inbox = stlisten(
             host, port, ack=self.ack, executor=self.exec
         )
+        self.received = []
         self.threads = self.server["threads"].copy()
         self.nodes, self.instruction_queue = [], defaultdict(list)
+
+    # TODO: loop and relaunch threads
+
+    def check_inbox(self):
+        for comm in self.inbox:
+            # check against rules
+        pass
 
     def ack(
         self, sel: selectors.DefaultSelector, comm: dict, conn: socket.socket
     ):
-        print(conn)
         response = None
         try:
             sel.unregister(conn)
@@ -379,7 +397,7 @@ class Station:
         else:
             record = f"sent instruction {response.id}"
         try:
-            conn.send(response)
+            conn.send(make_comm(response))
             return None, record, None
         except (KeyError, ValueError) as kve:
             # someone else got here first
