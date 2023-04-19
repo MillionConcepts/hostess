@@ -33,7 +33,7 @@ enum ActionLevel {unknownactionlevel = 0; pipe = 1; action = 2;}
 /* 'failure' means that a program specifically reported it was unable to fully
     complete, but still may have exited gracefully. 'crash' means a program did
     not exit gracefully (returned an exception message or an unwanted exit code,
-    or the handler found evidence on the system that the process terminated
+    or the node found evidence on the system that the process terminated
     prematurely, etc.). i.e., 'failure' is a handled but fatal exception,
     'crash' is an unhandled exception. Note that this does _not_ refer to the
     node's status; a node may execute many failed tasks but still be fine. */
@@ -66,15 +66,15 @@ message ActionReport {
   uint32 exit_code = 8;
 }
 
-/* TaskReport contains information on the outcome of an
-    external task execution. Handler Nodes send TaskReports to their Station on
-    pipeline executions; listener Nodes may also TaskReport logging in some cases. */
+/* TaskReport contains information on the outcome of an external task
+execution, generally one in direct response to an instruction, but perhaps
+ also sometimes one independently executed. */
 message TaskReport {
   uint32 task_id = 1;
   NodeId nodeid = 2;
   NodeStatus status = 3;
   /* possibly redundant */
-  google.protobuf.Timestamp sendtime = 4;
+  google.protobuf.Timestamp time = 4;
   /* redundant? */
   repeated ActionReport steps = 5;
   ActionReport action = 6;
@@ -84,27 +84,31 @@ message TaskReport {
 enum NodeStatus {
   unknown_status = 0;
   idle = 1;
-  executing = 2;
-  listening = 3;
-  degraded = 4;
+  nominal = 2;
+  degraded = 3;
   /* shutting down gracefully */
-  shutdown = 5;
+  shutdown = 4;
   /* crashing but managed to tell the Station about it */
-  crashed = 6;
+  crashed = 5;
 }
-enum NodeType {unknown_nodetype = 0; listener = 1; handler = 2;}
 enum NodeLoC {unknown_loc = 0; primary = 1; secondary = 2; sleeping = 3;}
 message NodeState {
-  NodeStatus status = 1; NodeLoC loc = 2; bool can_receive = 3; bool busy = 4;
+  NodeStatus status = 1;
+  NodeLoC loc = 2;
+  bool can_receive = 3;
+  bool busy = 4;
+  map<string, string> threads = 5;
+  PythonObject config = 6;
+  map<string, MessageCount> messagecount = 7;
 }
 message NodeId {
   string name = 1;
-  NodeType type = 2;
   uint32 pid = 3;
   string host = 4;
   string port = 5;
 }
 
+/* TODO: figure out where this goes */
 message MessageCount {
   /* total hostess-external messages ever received */
   uint32 total_messages = 1;
@@ -120,23 +124,20 @@ enum UpdateReason {
   wilco = 4;
   bad_request = 5;
   exiting = 6;
+  task_completion = 7;
 }
 
-/* listener reports, or any node's check-in message */
 message Update {
   NodeId nodeid = 1;
   NodeState state = 2;
   google.protobuf.Timestamp time = 3;
   UpdateReason reason = 4;
-  TaskReport actions = 5;
-  /* for listeners */
-  MessageCount messagecount = 6;
-  /* structured / serialized data from a listener node it believes the
-  Station needs to know about. */
+  repeated ActionReport running = 5;
+  TaskReport completed = 6;
+  /* structured / serialized data the node believes the Station needs */
   repeated PythonObject info = 7;
   /* if this update is in response / reference to an instruction */
   uint32 instruction_id = 8;
-  /* monitor types? */
 }
 
 enum InstructionType {
@@ -203,9 +204,8 @@ message Action{
   /* reserved for application-specific contexts, including full
   action definitions in cases when
   more complex runtime pipeline configuration is not required --
-  in some cases, a handler might only require a path to a target
-  file, or even just an integer representing an orbit number,
-  or a listener might require only a url or parameter. */
+  in some cases, a node might only require a file path,
+  file, an integer representing an orbit number, a url, or a parameter path. */
   map<string, string> description = 3;
   oneof command {
     SystemCall systemcall = 4;

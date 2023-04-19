@@ -157,16 +157,22 @@ def _trydecode(decoder, stream):
 
 def default_ack(
     sel: selectors.DefaultSelector,
+    _data: bytes,
     conn: socket.socket,
-    ackstr: bytes = HOSTESS_ACK,
 ) -> tuple[None, str, str]:
     """
     receipt-of-message acknowledgement callback for read threads. attached to
     keys by the selector.
+
+    Args:
+        sel: selector. attached to ack function by read funciton.
+        _data: data received from peer. unused in default_ack. can be used in
+          other ack functions matching signature.
+        conn: open socket to peer.
     """
     try:
         sel.unregister(conn)
-        conn.send(ackstr)
+        conn.send(HOSTESS_ACK)
         return None, "sent ack", "ok"
     except (KeyError, ValueError) as kve:
         # someone else got here first
@@ -204,9 +210,11 @@ def read(
             # TODO: something else for not-eom?
             # TODO: add a hook here to attach the received data to a kwarg
             #  of the ack function
-            sel.register(conn, selectors.EVENT_WRITE, curry(ack)(sel))
             if decoder is not None:
                 stream, event, status = _trydecode(decoder, stream)
+            sel.register(
+                conn, selectors.EVENT_WRITE, curry(ack)(sel, stream)
+            )
     except BrokenPipeError:
         status = "broken pipe"
     except TimeoutError:
