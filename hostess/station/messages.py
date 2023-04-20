@@ -11,9 +11,9 @@ from dustgoggles.func import gmap
 from more_itertools import split_when, all_equal
 import numpy as np
 
-import hostess.station.proto.station_pb2 as pro
 from hostess.station.proto import station_pb2 as pro
 from hostess.station.proto_utils import make_timestamp, enum, dict2msg
+
 
 
 # TODO: optional base64 encoding for some channels
@@ -140,3 +140,5 @@ def completed_task_msg(actiondict, steps=None):
     action = dict2msg(actiondict, pro.ActionReport)
     action.MergeFrom(pro.ActionReport(**fields))
     return pro.TaskReport(instruction_id=actiondict['id'], action=action)
+
+

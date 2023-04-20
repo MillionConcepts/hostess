@@ -4,6 +4,7 @@ import datetime as dt
 import logging
 import re
 import time
+from functools import wraps
 from pathlib import Path
 from socket import gethostname
 from typing import Callable, MutableMapping, Optional, Union, Sequence, Any
@@ -36,14 +37,14 @@ def console_and_log(message, level="info", style=None):
 
 
 def mb(b, round_to=2):
-    value = int(b) / 10 ** 6
+    value = int(b) / 10**6
     if round_to is not None:
         return round(value, round_to)
     return value
 
 
 def gb(b, round_to=2):
-    value = int(b) / 10 ** 9
+    value = int(b) / 10**9
     if round_to is not None:
         return round(value, round_to)
 
@@ -66,6 +67,7 @@ def infer_stream_length(
         an estimate of its size based on best available method, or None if
         impossible.
     """
+
     def filesize() -> Optional[int]:
         try:
             if isinstance(stream, _io.BufferedReader):
@@ -144,9 +146,9 @@ def record_and_yell(message: str, cache: MutableMapping, loud: bool = False):
     cache[logstamp()] = message
 
 
-def notary(cache: Optional[MutableMapping] = None) -> Callable[
-    [str, bool, bool], Optional[MutableMapping]
-]:
+def notary(
+    cache: Optional[MutableMapping] = None,
+) -> Callable[[str, bool, bool], Optional[MutableMapping]]:
     """
     create a function that records, timestamps, and optionally prints messages.
     if you pass eject=True to that function, it will return its note cache.
@@ -271,13 +273,14 @@ def timeout_factory(
 
 
 def signal_factory(
-    threads: MutableMapping
+    threads: MutableMapping,
 ) -> Callable[[str, Optional[int]], None]:
     """
     creates a 'signaler' function that simply assigns values to a dict
     bound in enclosing scope. this is primarily intended as a simple
     inter-thread communication utility
     """
+
     def signaler(name, signal=0):
         if name == "all":
             for k in threads.keys():
@@ -286,4 +289,25 @@ def signal_factory(
         if name not in threads.keys():
             raise KeyError
         threads[name] = signal
+
     return signaler
+
+
+@curry
+def trywrap(func, name):
+    @wraps(func)
+    def trywrapped(*args, **kwargs):
+        exception, retval = None, None
+        try:
+            retval = func(*args, **kwargs)
+        except Exception as ex:
+            exception = ex
+        finally:
+            return {
+                "name": name,
+                "retval": retval,
+                "exception": exception,
+                "time": dt.datetime.now(),
+            }
+
+    return trywrapped
