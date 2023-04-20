@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import json
 import random
 import selectors
@@ -257,8 +258,10 @@ class HeadlessNode(Node):
 class Station(bases.BaseNode):
     def __init__(self, host, port, name="station", n_threads=8):
         self.received = []
+        self.events = []
         self.nodes, self.instruction_queue = [], defaultdict(list)
         super().__init__(host=host, port=port, name=name, n_threads=n_threads)
+        self.tendtime, self.reset_tend = timeout_factory(False)
 
     def check_inbox(self):
         n_comms = len(self.inbox)
@@ -268,11 +271,16 @@ class Station(bases.BaseNode):
             self.match_comm(comm)
 
     def match_comm(self, comm):
-
+        self.match(comm, "response")
 
     def start(self):
-        # TODO: loop and relaunch threads
-        raise NotImplementedError
+        while self.signals.get('start') is None:
+            if self.tendtime() > self.poll * 30:
+                crashed_threads = self.server.tend()
+                self.reset_tend()
+                if len(crashed_threads) > 0:
+                    self.log({'server_errors': crashed_threads})
+            time.sleep(self.poll)
 
     def ack(
         self, sel: selectors.DefaultSelector, comm: dict, conn: socket.socket

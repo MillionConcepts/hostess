@@ -33,7 +33,7 @@ HOSTESS_SOH = b"\01hostess"
 # one-byte-wide codes for Message type of comm body.
 # "none" means the comm body is not a serialized protobuf Message.
 CODE_TO_MTYPE = MPt(
-    {0: "none", 1: "Update", 2: "Instruction", 3: "TaskReport"}
+    {0: "none", 1: "Update", 2: "Instruction"}
 )
 MTYPE_TO_CODE = MPt({v: k for k, v in CODE_TO_MTYPE.items()})
 HEADER_STRUCT = struct.Struct("<8sBL")
@@ -125,7 +125,6 @@ class TCPTalk:
         eomstr: bytes = HOSTESS_EOM,
     ):
         """
-        launch a lightweight tcp server
         Args:
             host: host for socket
             port: port for socket
@@ -156,13 +155,13 @@ class TCPTalk:
             self.sock.setblocking(False)
             if executor is None:
                 executor = ThreadPoolExecutor(n_threads + 1)
-            self.exec, self.lock = executor, lock
+            self.exec, self._lock = executor, lock
             self.threads, self.events = {}, []
             self.data, self.peers = [], {}
             self.queues = {i: [] for i in range(n_threads)}
-            self.signals = {
-                i: None for i in range(n_threads)
-            } | {'select': None}
+            self.signals = {i: None for i in range(n_threads)} | {
+                "select": None
+            }
             self.sig = signal_factory(self.signals)
             self.threads["select"] = executor.submit(self.launch_selector)
             for ix in range(n_threads):
@@ -186,13 +185,14 @@ class TCPTalk:
         if self.status == "initializing":
             return
         threads = tuple(self.threads.items())
+        crashed_threads = []
         for k, v in threads:
             if v.state == "RUNNING":
                 continue
             self.sig(k, 0)
             time.sleep(self.poll * 2)
             self.sig(k, None)
-            self.threads.pop(k)
+            crashed_threads.append(self.threads.pop(k).result())
             if k == "select":
                 self.threads["select"] = trywrap(
                     self.launch_selector, "select"
@@ -200,11 +200,17 @@ class TCPTalk:
             else:
                 self.threads[k] = trywrap(self.launch_io, k)(k)
         self.status = "running"
+        return crashed_threads
 
-    def locked(self):
-        if self.lock is None:
+    def _get_locked(self):
+        if self._lock is None:
             return False
-        return self.lock.locked()
+        return self._lock.locked()
+
+    def _set_locked(self, _val):
+        raise AttributeError("server is not directly lockable")
+
+    locked = property(_get_locked, _set_locked)
 
     def _handle_callback(self, callback, peer, peersock):
         """inner callback-handler tree for i/o threads"""
@@ -275,6 +281,8 @@ class TCPTalk:
             callback, peersock = key.data, key.fileobj  # explanatory variables
             if (peerage is True) and (callback.__name__ != self._ack.__name__):
                 # connection / read already handled
+                continue
+            if self.locked and callback.__name__ != self._ack.__name__:
                 continue
             try:
                 stream, event, peer, status = self._handle_callback(

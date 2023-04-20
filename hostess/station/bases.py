@@ -16,7 +16,7 @@ from typing import Any, Callable, Mapping, Union, Optional
 from dustgoggles.func import filtern
 
 from hostess.station.proto_utils import enum
-from hostess.station.talkie import stlisten
+from hostess.station.talkie import TCPTalk
 from hostess.utilities import filestamp
 
 
@@ -268,10 +268,14 @@ class BaseNode(Matcher, PropConsumer, ABC):
         elif (self.host is None) or (self.port is None):
             raise TypeError("must provide host and port for receiving node.")
         elif self.can_receive is True:
-            self.server, self.server_events, self.inbox = stlisten(
-                self.host, self.port, ack=self.ack, executor=self.exec
+            self.server = TCPTalk(
+                self.host,
+                self.port,
+                ackcheck=self.ackcheck,
+                executor=self.exec
             )
-            self.threads |= self.server["threads"].copy()
+            self.threads |= self.server.threads
+            self.inbox = self.server.data
             for ix, sig in self.server.signals.items():
                 self.signals[f"server_{ix}"] = sig
         else:

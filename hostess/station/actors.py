@@ -177,6 +177,21 @@ class ReportStringMatch(Actor):
     actortype = "action"
 
 
+class MatchInfo(Actor):
+    def match(self, message, *, fields=(), patterns=(), **_):
+        if not isinstance(message, Message):
+            raise NoMatch("is not a Message")
+        info = message.info
+
+    def execute(self, node: "nodes.Node", line: str, *, path=None, **_):
+        node.actionable_events.append({'path': str(path), 'content': line})
+
+    name = "grepreport"
+    match_params = ('patterns',)
+    exec_params = ('path',)
+    actortype = "action"
+
+
 class FileWatch(Sensor):
 
     def __init__(self):
