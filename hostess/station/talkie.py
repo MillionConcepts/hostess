@@ -2,6 +2,7 @@ import atexit
 import selectors
 import socket
 import struct
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
@@ -380,6 +381,7 @@ def launch_tcp_server(
     decoder: Optional[Callable] = None,
     ack: Callable = default_ack,
     executor: Optional[ThreadPoolExecutor] = None,
+    lock: Optional[threading.Lock] = None,
 ) -> tuple[dict[str], list[dict], list[dict]]:
     """
     launch a lightweight tcp server
@@ -393,6 +395,8 @@ def launch_tcp_server(
             to attach a Station's responder rules to the server
         executor: optional ThreadPoolExecutor, if the server should run in an
             existing thread pool
+        lock: optional lock, if the tcp server should be subject to an
+            external lockout
 
     Returns:
         dict whose keys are:

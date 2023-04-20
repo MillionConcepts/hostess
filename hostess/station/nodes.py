@@ -1,67 +1,31 @@
 from __future__ import annotations
 
-import selectors
-from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
-from inspect import getmembers_static
 import json
-import os
 import random
+import selectors
 import socket
-import threading
 import time
-from typing import Literal, Union
+from collections import defaultdict
+from typing import Union
 
-from dustgoggles.func import filtern
 from google.protobuf.json_format import MessageToDict, Parse
 from google.protobuf.message import Message
 
+import hostess.station.proto.station_pb2 as pro
 from hostess.station import bases
 from hostess.station.messages import obj2msg, completed_task_msg
 from hostess.station.proto_utils import make_timestamp, dict2msg, enum
-import hostess.station.proto.station_pb2 as pro
 from hostess.station.talkie import (
     stsend,
     read_comm,
     timeout_factory,
-    stlisten,
-    HOSTESS_ACK, make_comm,
+    HOSTESS_ACK,
+    make_comm,
 )
-from hostess.utilities import filestamp
-
-
-class PropConsumer:
-    def __init__(self):
-        self.proprefs = {}
-
-    def consume_property(self, obj, attr, newname=None):
-        prop = filtern(lambda kv: kv[0] == attr, getmembers_static(type(obj)))[
-            1
-        ]
-        if not isinstance(prop, property):
-            raise TypeError(f"{attr} of {type(obj).__name__} not a property")
-        newname = attr if newname is None else newname
-        self.proprefs[newname] = (obj, attr)
-
-    def __getattr__(self, attr):
-        ref = self.proprefs.get(attr)
-        if ref is None:
-            raise AttributeError
-        return getattr(ref[0], ref[1])
-
-    def __setattr__(self, attr, value):
-        if attr == "proprefs":
-            return super().__setattr__(attr, value)
-        if (ref := self.proprefs.get(attr)) is not None:
-            return setattr(ref[0], ref[1], value)
-        return super().__setattr__(attr, value)
-
-    def __dir__(self):
-        return super().__dir__() + list(self.proprefs.keys())
 
 
 # noinspection PyTypeChecker
-class Node(bases.Matcher, PropConsumer):
+class Node(bases.BaseNode):
     def __init__(
         self,
         station: tuple[str, int],
@@ -81,39 +45,17 @@ class Node(bases.Matcher, PropConsumer):
         timeout: timeout, in s, for inter-node communications
         update: interval, in s, for check-in Updates to supervising Station
         """
-        super().__init__()
         self.update_interval = update_interval
-        self.poll, self.timeout, self.signals = poll, timeout, {}
         self.actionable_events = []
-        self.actors, self.sensors, self.config = {}, {}, {}
-        self.interface, self.params = [], {}
-        self.name, self.station = name, station
-        self.actions, self.threads, self._lock = {}, {}, threading.Lock()
+        self.actors, self.sensors = {}, {}
+        self.station = station
+        self.actions = {}
         self.n_threads = n_threads
-        # TODO: do this better
-        os.makedirs("logs", exist_ok=True)
-        self.logfile = f"logs/{self.name}_{filestamp()}.csv"
-        for element in elements:
-            self.add_element(element)
-        self.exec, self.instruction_queue = ThreadPoolExecutor(n_threads), []
+        self.instruction_queue = []
         self.update_timer, self.reset_update_timer = timeout_factory(False)
-        if start is True:
-            self.exec.submit(self.start)
-
-    def add_element(self, cls: Union[type[bases.Actor], type[bases.Sensor]]):
-        name = bases.inc_name(cls, self.config)
-        element = cls()
-        if issubclass(cls, bases.Actor):
-            self.actors[name] = element
-        elif issubclass(cls, bases.Sensor):
-            if len(self.sensors) > self.n_threads - 2:
-                raise EnvironmentError("Not enough threads to add sensor.")
-            self.sensors[name] = element
-        else:
-            raise TypeError(f"{cls} is not a valid element for Node.")
-        self.config[name], self.params[name] = element.config, element.params
-        for prop in element.interface:
-            self.consume_property(element, prop, f"{name}_{prop}")
+        super().__init__(
+            name=name, n_threads=n_threads, elements=elements, start=start
+        )
 
     def sensor_loop(self, sensor: bases.Sensor):
         exception = None
@@ -153,12 +95,6 @@ class Node(bases.Matcher, PropConsumer):
         message.MergeFrom(info)
         self.send_to_station(message)
         self.actionable_events = []
-
-    def start(self):
-        if self.__started is True:
-            raise EnvironmentError("Node already started.")
-        self.threads["main"] = self.exec.submit(self._start)
-        self.__started = True
 
     def _start(self):
         for name, sensor in self.sensors.items():
@@ -219,24 +155,10 @@ class Node(bases.Matcher, PropConsumer):
         self.send_to_station(message)
         self.reset_update_timer()
 
-    def nodeid(self):
-        return {
-            "name": self.name,
-            "pid": os.getpid(),
-            "host": socket.gethostname(),
-        }
-
     # TODO: figure out how to not make this infinity json objects
     def log_event(self, obj):
         with open(self.logfile, "a") as stream:
             stream.write(f"\n###\n{obj}\n###\n")
-
-    def busy(self):
-        # or maybe explicitly check threads? do we want a free one?
-        # idk
-        if self.exec._work_queue.qsize() > 0:
-            return True
-        return False
 
     def log(self, event, **extra_fields):
         try:
@@ -313,29 +235,13 @@ class Node(bases.Matcher, PropConsumer):
     def insert_config(self, message: Message):
         if not message.HasField("state"):
             return
-        message.state.MergeFrom(
-            pro.NodeState(config=obj2msg(self.config))
-        )
+        message.state.MergeFrom(pro.NodeState(config=obj2msg(self.config)))
         return message
 
     def reply_to_instruction(self, instruction, status: str):
         mdict = self._base_message()
         mdict["reason"], mdict["instruction_id"] = status, instruction.id
         self.send_to_station(Parse(json.dumps(mdict), pro.Update()))
-
-    def _is_locked(self):
-        return self._lock.locked()
-
-    def _set_locked(self, state: bool):
-        if state is True:
-            self._lock.acquire(blocking=False)
-        elif state is False:
-            self._lock.release()
-        else:
-            raise TypeError
-
-    locked = property(_is_locked, _set_locked)
-    __started = False
 
 
 class HeadlessNode(Node):
@@ -348,22 +254,25 @@ class HeadlessNode(Node):
         self.message_log.append(message)
 
 
-class Station:
-    def __init__(self, host, port):
-        self.exec = ThreadPoolExecutor(8)
-        self.server, self.server_events, self.inbox = stlisten(
-            host, port, ack=self.ack, executor=self.exec
-        )
+class Station(bases.BaseNode):
+    def __init__(self, host, port, name="station", n_threads=8):
         self.received = []
-        self.threads = self.server["threads"].copy()
         self.nodes, self.instruction_queue = [], defaultdict(list)
-
-    # TODO: loop and relaunch threads
+        super().__init__(host=host, port=port, name=name, n_threads=n_threads)
 
     def check_inbox(self):
-        for comm in self.inbox:
-            # check against rules
-        pass
+        n_comms = len(self.inbox)
+        for ix in range(n_comms):
+            comm = self.inbox.pop()
+            self.received.append(comm)
+            self.match_comm(comm)
+
+    def match_comm(self, comm):
+
+
+    def start(self):
+        # TODO: loop and relaunch threads
+        raise NotImplementedError
 
     def ack(
         self, sel: selectors.DefaultSelector, comm: dict, conn: socket.socket
@@ -371,12 +280,14 @@ class Station:
         response = None
         try:
             sel.unregister(conn)
+            self.locked = True
         except KeyError as ke:
             # someone else got here first
             return None, "ack attempt", f"{ke}"
         # in lieu of logging here, we periodically dump the contents of
         # self.received
         if comm["err"]:
+            self.locked = False
             # TODO: send did-not-understand
             conn.send(HOSTESS_ACK)
             return None, "sent decode err", None
@@ -384,6 +295,7 @@ class Station:
         try:
             nodename = message.nodeid.name
         except (AttributeError, ValueError):
+            self.locked = False
             # TODO: send not-enough-info message
             conn.send(HOSTESS_ACK)
             return None, "sent not-enough-info", None
@@ -402,6 +314,8 @@ class Station:
         except (KeyError, ValueError) as kve:
             # someone else got here first
             return None, "ack attempt", f"{kve}"
+        finally:
+            self.locked = False
 
     def log(self, *args, **kwargs):
         pass

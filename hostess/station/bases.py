@@ -1,14 +1,23 @@
+"""base classes and helpers for Nodes, Stations, Sensors, and Actors."""
 from __future__ import annotations
 
-import re
 from abc import ABC
+from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
+from inspect import getmembers_static
 from itertools import chain
+import os
+import re
+import socket
+import threading
 from types import MappingProxyType as MPt
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Union, Optional
 
-from hostess.station import nodes as nodes
+from dustgoggles.func import filtern
+
 from hostess.station.proto_utils import enum
+from hostess.station.talkie import stlisten
+from hostess.utilities import filestamp
 
 
 def configured(func, config):
@@ -24,8 +33,8 @@ def associate_actor(cls, config, params, actors, props):
     actors[name] = cls()
     config[name] = actors[name].config
     params[name] = {
-        'match': actors[name].match_params,
-        'exec': actors[name].exec_params
+        "match": actors[name].match_params,
+        "exec": actors[name].exec_params,
     }
     for prop in actors[name].interface:
         props.append((f"{name}_{prop}", getattr(actors[name], prop)))
@@ -70,13 +79,14 @@ class Matcher(ABC):
 
 class Sensor(Matcher, ABC):
     """bass class for watching an input source."""
+
     # TODO: config here has to be initialized, like in Definition.
     #  and perhaps should be propagated up in a flattened way
     def __init__(self):
         if "sources" in dir(self):
             raise TypeError("bad configuration: can't nest Sources.")
-        config, actors, props = {'check': {}}, {}, []
-        params = {'check': self.check_params}
+        config, actors, props = {"check": {}}, {}, []
+        params = {"check": self.check_params}
         for cls in chain(self.actions, self.loggers):
             config, params, actors, props = associate_actor(
                 cls, config, params, actors, props
@@ -84,7 +94,7 @@ class Sensor(Matcher, ABC):
         self.config, self.params, self.actors = config, params, actors
         for prop in props:
             setattr(self, *prop)
-        self.check = configured(self.check, self.config['check'])
+        self.check = configured(self.check, self.config["check"])
         self.memory = None
 
     def check(self, node, **check_kwargs):
@@ -111,10 +121,10 @@ class Actor(ABC):
     """base class for conditional responses to events."""
 
     def __init__(self):
-        self.config = {'match': {}, 'exec': {}}
-        self.params = {'match': self.match_params, 'exec': self.exec_params}
-        self.match = configured(self.match, self.config['match'])
-        self.execute = configured(self.execute, self.config['exec'])
+        self.config = {"match": {}, "exec": {}}
+        self.params = {"match": self.match_params, "exec": self.exec_params}
+        self.match = configured(self.match, self.config["match"])
+        self.execute = configured(self.execute, self.config["exec"])
 
     def match(self, event: Any, **_) -> bool:
         """
@@ -123,7 +133,7 @@ class Actor(ABC):
         """
         raise NotImplementedError
 
-    def execute(self, node: "nodes.Node", event: Any, **kwargs) -> Any:
+    def execute(self, node: BaseNode, event: Any, **kwargs) -> Any:
         raise NotImplementedError
 
     name: str
@@ -169,3 +179,142 @@ def validate_instruction(instruction):
         raise NoInstructionType
     if (instruction.type == "do") and not instruction.HasField("task"):
         raise NoTaskError
+
+
+class PropConsumer:
+    def __init__(self):
+        self.proprefs = {}
+
+    def consume_property(self, obj, attr, newname=None):
+        prop = filtern(lambda kv: kv[0] == attr, getmembers_static(type(obj)))[
+            1
+        ]
+        if not isinstance(prop, property):
+            raise TypeError(f"{attr} of {type(obj).__name__} not a property")
+        newname = attr if newname is None else newname
+        self.proprefs[newname] = (obj, attr)
+
+    def __getattr__(self, attr):
+        ref = self.proprefs.get(attr)
+        if ref is None:
+            raise AttributeError
+        return getattr(ref[0], ref[1])
+
+    def __setattr__(self, attr, value):
+        if attr == "proprefs":
+            return super().__setattr__(attr, value)
+        if (ref := self.proprefs.get(attr)) is not None:
+            return setattr(ref[0], ref[1], value)
+        return super().__setattr__(attr, value)
+
+    def __dir__(self):
+        return super().__dir__() + list(self.proprefs.keys())
+
+
+class BaseNode(Matcher, PropConsumer, ABC):
+    def __init__(
+        self,
+        name: str,
+        n_threads: int = 6,
+        elements: tuple[Union[type[Sensor], type[Actor]]] = (),
+        start: bool = False,
+        can_receive=False,
+        host: Optional[str] = None,
+        port: Optional[int] = None,
+        poll: float = 0.08,
+        timeout: int = 10,
+    ):
+        super().__init__()
+        self.host, self.port = host, port
+        self.interface, self.params = [], {}
+        self.name = name
+        self.config = {}
+        self._lock = threading.Lock()
+        # TODO: do this better
+        os.makedirs("logs", exist_ok=True)
+        self.logfile = f"logs/{self.name}_{filestamp()}.csv"
+        for element in elements:
+            self.add_element(element)
+        self.exec = ThreadPoolExecutor(n_threads)
+        self.can_receive = can_receive
+        self.poll, self.timeout, self.signals = poll, timeout, {}
+        if start is True:
+            self.exec.submit(self.start)
+
+    def add_element(self, cls: Union[type[Actor], type[Sensor]]):
+        name = inc_name(cls, self.config)
+        element = cls()
+        if issubclass(cls, Actor):
+            self.actors[name] = element
+        elif issubclass(cls, Sensor):
+            if len(self.sensors) > self.n_threads - 2:
+                raise EnvironmentError("Not enough threads to add sensor.")
+            self.sensors[name] = element
+        else:
+            raise TypeError(f"{cls} is not a valid subelement for this class.")
+        self.config[name], self.params[name] = element.config, element.params
+        for prop in element.interface:
+            self.consume_property(element, prop, f"{name}_{prop}")
+        self.threads = {}
+
+    def restart_server(self):
+        if self.server is not None:
+            self.server['kill']()
+        if self.can_receive is False:
+            if (self.host is not None) or (self.port is not None):
+                raise TypeError(
+                    "cannot provide host/port for non-receiving node."
+                )
+        elif (self.host is None) or (self.port is None):
+            raise TypeError("must provide host and port for receiving node.")
+        elif self.can_receive is True:
+            self.server, self.server_events, self.inbox = stlisten(
+                self.host, self.port, ack=self.ack, executor=self.exec
+            )
+            self.threads |= self.server["threads"].copy()
+            for ix, sig in self.server.signals.items():
+                self.signals[f"server_{ix}"] = sig
+        else:
+            self.server, self.server_events, self.inbox = None, None, None
+
+    def start(self):
+        if self.__started is True:
+            raise EnvironmentError("Node already started.")
+        self.restart_server()
+        self.threads["main"] = self.exec.submit(self._start)
+        self.__started = True
+
+    def nodeid(self):
+        return {
+            "name": self.name,
+            "pid": os.getpid(),
+            "host": socket.gethostname(),
+        }
+
+    def busy(self):
+        # or maybe explicitly check threads? do we want a free one?
+        # idk
+        if self.exec._work_queue.qsize() > 0:
+            return True
+        return False
+
+    def _start(self):
+        raise NotImplementedError
+
+    def _is_locked(self):
+        return self._lock.locked()
+
+    def _set_locked(self, state: bool):
+        if state is True:
+            self._lock.acquire(blocking=False)
+        elif state is False:
+            self._lock.release()
+        else:
+            raise TypeError
+
+    locked = property(_is_locked, _set_locked)
+    __started = False
+    threads = None
+    server = None
+    server_events = None
+    inbox = None

@@ -3,6 +3,7 @@ import _io
 import datetime as dt
 import logging
 import re
+import time
 from pathlib import Path
 from socket import gethostname
 from typing import Callable, MutableMapping, Optional, Union, Sequence, Any
@@ -235,3 +236,54 @@ class Aliased:
         return f"Aliased: {self.aliases} -> {self.method}:\n" + repr(self.obj)
 
 
+def timeout_factory(
+    raise_timeout: bool = True, timeout: float = 5
+) -> tuple[Callable[[], int], Callable[[], None]]:
+    """
+    returns a tuple of functions. calling the first starts a wait timer if not
+    started, and also returns current wait time. calling the second resets the
+    wait timer.
+
+    Args:
+        raise_timeout: if True, raises timeout if waiting > timeout.
+        timeout: timeout in seconds, used only if raise_timeout is True
+    """
+    starts = []
+
+    def waiting():
+        """call me to start and check/raise timeout."""
+        if len(starts) == 0:
+            starts.append(time.time())
+            return 0
+        delay = time.time() - starts[-1]
+        if (raise_timeout is True) and (delay > timeout):
+            raise TimeoutError
+        return delay
+
+    def unwait():
+        """call me to reset timeout."""
+        try:
+            starts.pop()
+        except IndexError:
+            pass
+
+    return waiting, unwait
+
+
+def signal_factory(
+    threads: MutableMapping
+) -> Callable[[str, Optional[int]], None]:
+    """
+    creates a 'signaler' function that simply assigns values to a dict
+    bound in enclosing scope. this is primarily intended as a simple
+    inter-thread communication utility
+    """
+    def signaler(name, signal=0):
+        if name == "all":
+            for k in threads.keys():
+                threads[k] = signal
+            return
+        if name not in threads.keys():
+            raise KeyError
+        threads[name] = signal
+    return signaler
