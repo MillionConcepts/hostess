@@ -1,6 +1,7 @@
 """base classes and helpers for Nodes, Stations, Sensors, and Actors."""
 from __future__ import annotations
 
+import inspect
 from abc import ABC
 from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
@@ -28,13 +29,13 @@ def configured(func, config):
     return with_configuration
 
 
-def associate_actor(cls, config, params, actors, props):
-    name = inc_name(cls, config)
+def associate_actor(cls, config, params, actors, props, name=None):
+    name = inc_name(cls.name if name is None else name, config)
     actors[name] = cls()
     config[name] = actors[name].config
     params[name] = {
-        "match": actors[name].match_params,
-        "exec": actors[name].exec_params,
+        "match": actors[name].params['match'],
+        "exec": actors[name].params['exec'],
     }
     for prop in actors[name].interface:
         props.append((f"{name}_{prop}", getattr(actors[name], prop)))
@@ -51,7 +52,7 @@ class Matcher(ABC):
             try:
                 actor.match(event, **kwargs)
                 matching_actors.append(actor)
-            except (NoMatch, AttributeError, KeyError, ValueError):
+            except (NoMatch, AttributeError, KeyError, ValueError, TypeError):
                 continue
             return matching_actors
         raise NoActorForEvent
@@ -83,15 +84,19 @@ class Sensor(Matcher, ABC):
     # TODO: config here has to be initialized, like in Definition.
     #  and perhaps should be propagated up in a flattened way
     def __init__(self):
+        super().__init__()
         if "sources" in dir(self):
             raise TypeError("bad configuration: can't nest Sources.")
-        config, actors, props = {"check": {}}, {}, []
+        props, actors = [], {}
+        checkp = inspect.getfullargspec(self.check).kwonlyargs
+        self.config = {"check": {k: None for k in checkp}}
+        self.check_params = tuple(checkp)
         params = {"check": self.check_params}
         for cls in chain(self.actions, self.loggers):
-            config, params, actors, props = associate_actor(
-                cls, config, params, actors, props
+            self.config, params, actors, props = associate_actor(
+                cls, self.config, params, actors, props
             )
-        self.config, self.params, self.actors = config, params, actors
+        self.params, self.actors = params, actors
         for prop in props:
             setattr(self, *prop)
         self.check = configured(self.check, self.config["check"])
@@ -112,7 +117,6 @@ class Sensor(Matcher, ABC):
     checker: Callable
     actions: tuple[type[Actor]] = ()
     loggers: tuple[type[Actor]] = ()
-    check_params = ()
     name: str
     interface = ()
 
@@ -121,8 +125,13 @@ class Actor(ABC):
     """base class for conditional responses to events."""
 
     def __init__(self):
-        self.config = {"match": {}, "exec": {}}
-        self.params = {"match": self.match_params, "exec": self.exec_params}
+        matchp = inspect.getfullargspec(self.match).kwonlyargs
+        execp = inspect.getfullargspec(self.execute).kwonlyargs
+        self.config = {
+            "match": {k: None for k in matchp},
+            "exec": {k: None for k in execp},
+        }
+        self.params = {"match": tuple(matchp), "exec": tuple(execp)}
         self.match = configured(self.match, self.config["match"])
         self.execute = configured(self.execute, self.config["exec"])
 
@@ -137,10 +146,7 @@ class Actor(ABC):
         raise NotImplementedError
 
     name: str
-
     config: Mapping
-    match_params = ()
-    exec_params = ()
     interface = ()
     actortype: str
 
@@ -165,8 +171,7 @@ class NoMatch(Exception):
     """actor does not match instruction. used for control flow."""
 
 
-def inc_name(cls, config):
-    name = cls.name
+def inc_name(name, config):
     if name in config:
         matches = filter(lambda k: re.match(name, k), config)
         name = f"{name}_{len(tuple(matches)) + 1}"
@@ -241,8 +246,8 @@ class BaseNode(Matcher, PropConsumer, ABC):
         if start is True:
             self.start()
 
-    def add_element(self, cls: Union[type[Actor], type[Sensor]]):
-        name = inc_name(cls, self.config)
+    def add_element(self, cls: Union[type[Actor], type[Sensor]], name=None):
+        name = inc_name(cls.name if name is None else name, self.config)
         element = cls()
         if issubclass(cls, Actor):
             self.actors[name] = element
@@ -259,7 +264,7 @@ class BaseNode(Matcher, PropConsumer, ABC):
 
     def restart_server(self):
         if self.server is not None:
-            self.server['kill']()
+            self.server["kill"]()
         if self.can_receive is False:
             if (self.host is not None) or (self.port is not None):
                 raise TypeError(
@@ -272,7 +277,7 @@ class BaseNode(Matcher, PropConsumer, ABC):
                 self.host,
                 self.port,
                 ackcheck=self.ackcheck,
-                executor=self.exec
+                executor=self.exec,
             )
             self.threads |= self.server.threads
             self.inbox = self.server.data

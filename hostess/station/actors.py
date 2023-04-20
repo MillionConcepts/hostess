@@ -5,8 +5,9 @@ import json
 import os
 import random
 import re
+from abc import ABC
 from pathlib import Path
-from typing import Any, Union
+from typing import Any, Union, Callable, Optional
 
 from cytoolz import valmap
 from dustgoggles.func import gmap
@@ -14,9 +15,9 @@ from dustgoggles.structures import unnest
 from google.protobuf.message import Message
 
 import hostess.station.nodes as nodes
+import hostess.station.proto.station_pb2 as pro
 from hostess.station.bases import Sensor, Actor, NoMatch
 from hostess.station.handlers import make_function_call, actiondict
-from hostess.station.messages import unpack_obj
 from hostess.station.proto_utils import m2d
 
 
@@ -45,7 +46,12 @@ class FunctionCall(Actor):
         return True
 
     def execute(
-        self, node: "nodes.Node", instruction: Message, key=None, noid=False, **_
+        self,
+        node: "nodes.Node",
+        instruction: Message,
+        key=None,
+        noid=False,
+        **_
     ) -> Any:
         if instruction.HasField("action"):
             action = instruction.action
@@ -73,7 +79,6 @@ class FunctionCall(Actor):
         report['duration'] = report['end'] - report['start']
 
     name = "functioncall"
-
     actortype = "action"
 
 
@@ -155,7 +160,6 @@ class LineLogger(Actor):
         with path.open("a") as stream:
             stream.write(f"{line}\n")
 
-    exec_params = ("path",)
     name = "linelog"
     actortype = "log"
 
@@ -173,31 +177,41 @@ class ReportStringMatch(Actor):
         node.actionable_events.append({'path': str(path), 'content': line})
 
     name = "grepreport"
-    match_params = ('patterns',)
-    exec_params = ('path',)
     actortype = "action"
 
 
-class MatchInfo(Actor):
-    def match(self, message, *, fields=(), patterns=(), **_):
-        if not isinstance(message, Message):
-            raise NoMatch("is not a Message")
-        notes = gmap(unpack_obj, message.info)
-        for note in notes:
+class InstructionFromInfo(Actor):
+    def match(self, note, *, fields=None, criteria=None, **_):
+        if criteria is None:
+            raise NoMatch("no criteria to match against")
+        for criterion in criteria:
+            if criterion(note):
+                return True
+        raise NoMatch("note did not match criteria")
 
-    def execute(self, node: "nodes.Node", line: str, *, path=None, **_):
-        node.actionable_events.append({'path': str(path), 'content': line})
+    def execute(
+        self,
+        station: "nodes.Station",
+        note,
+        *,
+        instruction_maker: Optional[Callable[[Any], pro.Instruction]] = None,
+        node_picker: Optional[Callable[[Any], str]] = None,
+        **_
+    ):
+        if instruction_maker is None:
+            raise TypeError("Must have an instruction maker.")
+        if node_picker is None:
+            node_picker = station.next_handler
+        station.outbox[node_picker(note)].append(instruction_maker(note))
 
-    name = "grepreport"
-    match_params = ('patterns',)
-    exec_params = ('path',)
-    actortype = "action"
+    name: str
+    actortype = "info"
 
 
-class FileWatch(Sensor):
+class FileSystemWatch(Sensor):
 
-    def __init__(self):
-        self.checker = tail_file
+    def __init__(self, checker=tail_file):
+        self.checker = checker
         super().__init__()
 
     def _set_target(self, path):
@@ -225,7 +239,6 @@ class FileWatch(Sensor):
     actions = (ReportStringMatch,)
     loggers = (LineLogger,)
     name = "filewatch"
-    check_params = ("path",)
     target = property(_get_target, _set_target)
     logfile = property(_get_logfile, _set_logfile)
     patterns = property(_get_patterns, _set_patterns)
@@ -233,3 +246,25 @@ class FileWatch(Sensor):
     _logfile = None
     _patterns = ()
     interface = ("logfile", "target", "patterns")
+
+
+def watch_dir(
+    contents, *, path: Path = None, **_
+) -> tuple[Optional[list[str]], list[str]]:
+    if path is None:
+        return contents, []
+    if not path.exists():
+        return contents, []
+    current = list(map(str, path.iterdir()))
+    if contents is None:
+        return current, current
+    return current, list(set(current).difference(contents))
+
+
+class DirWatch(FileSystemWatch):
+
+    def __init__(self):
+        super().__init__(checker=watch_dir)
+
+    name = "dirwatch"
+

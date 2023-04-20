@@ -1,11 +1,10 @@
 from __future__ import annotations
 
+from collections import defaultdict
 import json
 import random
-import selectors
 import socket
 import time
-from collections import defaultdict
 from typing import Union
 
 from dustgoggles.func import gmap
@@ -35,7 +34,7 @@ class Node(bases.BaseNode):
         poll=0.08,
         timeout=10,
         update_interval=10,
-        start=True,
+        start=False,
     ):
         """
         station: (hostname, port) of supervising Station
@@ -273,8 +272,9 @@ class Station(bases.BaseNode):
         self.max_inbox = max_inbox
         self.received = []
         self.events = []
-        self.nodes, self.instruction_queue = [], defaultdict(list)
+        self.nodes, self.outbox = [], defaultdict(list)
         self.tendtime, self.reset_tend = timeout_factory(False)
+        self.last_handler = None
     #
     # def check_inbox(self):
     #     n_comms = len(self.inbox)
@@ -332,7 +332,7 @@ class Station(bases.BaseNode):
             self.handle_incoming_message(comm["body"])
             if enum(message.state, "status") in ("shutdown", "crashed"):
                 return None, "decline to send ack to terminated node"
-            queue = self.instruction_queue[nodename]
+            queue = self.outbox[nodename]
             if len(queue) == 0:
                 return HOSTESS_ACK, "sent ack"
             response = queue.pop()
@@ -340,6 +340,17 @@ class Station(bases.BaseNode):
             return make_comm(response), status
         finally:
             self.locked = False
+
+    def handlers(self):
+        return [n for n in self.nodes if 'handler' in n['roles']]
+
+    def next_handler(self, _note):
+        if len(self.handlers()) == 0:
+            raise StopIteration("no handler nodes available.")
+        best = [n for n in self.handlers() if n['name'] != self.last_handler]
+        if len(best) == 0:
+            return self.handlers()[0]['name']
+        return best[0]['name']
 
     def log(self, *args, **kwargs):
         pass
