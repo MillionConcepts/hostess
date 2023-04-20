@@ -1,11 +1,12 @@
+import datetime as dt
 import random
 import re
 from multiprocessing import Pool
 
-from hostess.monitors import Stopwatch
 import hostess.station.proto.station_pb2 as pro
-from hostess.station.proto_utils import make_timestamp
 import hostess.station.talkie as tk
+from hostess.monitors import Stopwatch
+from hostess.station.messages import completed_task_msg
 
 
 def send_randbytes(
@@ -39,7 +40,7 @@ def test_tcp_server():
     """
     # launch the server with 7 threads and a 1-ms poll rate
     host, port, n_threads, rate = "localhost", 11129, 4, 0.001
-    server, _events, data = tk.launch_tcp_server(host, port, n_threads, rate)
+    server = tk.TCPTalk(host, port, n_threads, rate, decoder=None)
     # record time
     watch = Stopwatch()
     watch.start()
@@ -62,7 +63,7 @@ def test_tcp_server():
         messages[i], exceptions[i], res[i] = r.get()
     pool.terminate()
     # check received against sent messages
-    for rec in data:
+    for rec in server.data:
         message = rec["content"]
         if len(message) == 0:
             continue
@@ -70,21 +71,23 @@ def test_tcp_server():
             re.search(r"\d+", message[:4].decode("ascii")).group()
         )
         assert message == messages[message_id]
-    # close the socket and terminate the listeners so the test will terminate
-    server["kill"]()
+    # close the socket and stop the listeners so the test will terminate
+    server.kill()
 
 
 def test_protobuf():
     """attempt to construct a basic station protobuf Message"""
-    actions = [
-        pro.ActionReport(name="imagestats", status="success", level="pipe"),
-        pro.ActionReport(name="handler", status="success", level="action"),
-    ]
-    rdict = {"sendtime": make_timestamp(), "task_id": 3, "steps": actions}
-    report = pro.TaskReport(**rdict)
-    assert report.task_id == 3
-    assert report.steps[1].name == "handler"
-    return report
+    actiondict = {
+        'result': [0],
+        'start': dt.datetime.utcnow(),
+        'end': dt.datetime.utcnow(),
+        'status': 'success',
+        'id': 3
+    }
+    report = completed_task_msg(actiondict)
+    message = pro.Update(completed=report, instruction_id=3)
+    assert message.completed.action.result.value == b'\x00'
+    return message
 
 
 def test_comm():
@@ -97,19 +100,20 @@ def test_comm():
     assert decoded["header"]["length"] == len(report.SerializeToString())
 
 
-def test_comm_online():
+def test_comm_online(port=11223):
     """check online comm roundtrip"""
-    host, port, report = "localhost", 11222, test_protobuf()
-    server, events, data = tk.stlisten(host, port)
+    host, port, report = "localhost", port, test_protobuf()
+    server = tk.TCPTalk(host, port)
     for _ in range(1):
         ack, _ = tk.stsend(report, host, port, timeout=5)
+        response = server.data[-1]
         # Timestamp is variable-length depending on nanoseconds
-        assert data[-1]["event"] in ("decoded 69", "decoded 70")
-        assert data[-1]["content"]["header"]["length"] in (48, 49)
-        assert data[-1]["content"]["body"].steps[1].name == "handler"
-        assert data[-1]["content"]["err"] == ""
+        assert response["event"] in ("decoded 68", "decoded 69")
+        comm = response["content"]
+        assert comm["err"] == ""
+        assert comm["header"]["length"] in (47, 48)
+        message = comm["body"]
+        assert message.completed.action.result.value == b"\x00"
+        assert message.instruction_id == 3
         assert ack == tk.HOSTESS_ACK
-    server["kill"]()
-
-# test_tcp_server()
-#
+    server.kill()

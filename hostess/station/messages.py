@@ -113,9 +113,9 @@ def unpack_obj(obj: pro.PythonObject):
         raise NotImplementedError
     if enum(obj, "serialization") == "json":
         value = json.loads(obj.value)
-    elif enum(obj, "serialization") == "pickle":
+    elif enum(obj, "serialization") == "dill":
         value = dill.loads(obj.value)
-    elif obj.scanf is not None:
+    elif obj.scanf:
         value = struct.unpack(obj.scanf, obj.value)
         if isinstance(value, bytes):
             chartype = enum(obj, "chartype")

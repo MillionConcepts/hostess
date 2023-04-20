@@ -187,7 +187,7 @@ class TCPTalk:
         threads = tuple(self.threads.items())
         crashed_threads = []
         for k, v in threads:
-            if v.state == "RUNNING":
+            if v._state == "RUNNING":
                 continue
             self.sig(k, 0)
             time.sleep(self.poll * 2)
@@ -220,13 +220,13 @@ class TCPTalk:
                 return False, "guard", False, "closed socket"
             self.peers[peer] = True
             try:
-                # this is `read`
+                # callback is self._read
                 stream, event, status = callback(peersock)
             except KeyError:
                 # attempting to unregister an already-unregistered conn
                 return None, "guard", peer, "already unregistered"
-        elif callback.__name__ == self._ack.__name__:
-            # this is `ack`
+        elif callback.__name__ == "_ack":
+            # callback is self._ack
             stream, event, status = callback(peersock)
             try:
                 # remove peer from peering-lock dict, unless someone else
@@ -235,7 +235,7 @@ class TCPTalk:
             except KeyError:
                 pass
         elif callback.__name__ == "_accept":
-            # this is `accept`, above
+            # callback is self._accept
             stream, event, peer, status = callback(peersock)
         else:
             # who attached some weirdo function?
@@ -279,10 +279,10 @@ class TCPTalk:
                 continue
             peer, peerage = self._check_peerage(key)
             callback, peersock = key.data, key.fileobj  # explanatory variables
-            if (peerage is True) and (callback.__name__ != self._ack.__name__):
+            if (peerage is True) and (callback.__name__ != "_ack"):
                 # connection / read already handled
                 continue
-            if self.locked and callback.__name__ != self._ack.__name__:
+            if self.locked and callback.__name__ != "_ack":
                 continue
             try:
                 stream, event, peer, status = self._handle_callback(
@@ -394,7 +394,8 @@ class TCPTalk:
                 response, status = self.ackcheck(conn, data)
             else:
                 response, status = HOSTESS_ACK, "sent ack"
-            conn.send(response)
+            if response is not None:
+                conn.send(response)
             return None, status, "ok"
         except (KeyError, ValueError) as kve:
             # someone else got here first

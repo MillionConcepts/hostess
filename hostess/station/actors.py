@@ -16,6 +16,7 @@ from google.protobuf.message import Message
 import hostess.station.nodes as nodes
 from hostess.station.bases import Sensor, Actor, NoMatch
 from hostess.station.handlers import make_function_call, actiondict
+from hostess.station.messages import unpack_obj
 from hostess.station.proto_utils import m2d
 
 
@@ -181,7 +182,8 @@ class MatchInfo(Actor):
     def match(self, message, *, fields=(), patterns=(), **_):
         if not isinstance(message, Message):
             raise NoMatch("is not a Message")
-        info = message.info
+        notes = gmap(unpack_obj, message.info)
+        for note in notes:
 
     def execute(self, node: "nodes.Node", line: str, *, path=None, **_):
         node.actionable_events.append({'path': str(path), 'content': line})
@@ -201,7 +203,7 @@ class FileWatch(Sensor):
     def _set_target(self, path):
         self._watched = Path(path)
         self.config['check']['path'] = Path(path)
-        self.config['grepreport']['exec'] = Path(path)
+        self.config['grepreport']['exec']['path'] = Path(path)
 
     def _get_target(self):
         return self._watched

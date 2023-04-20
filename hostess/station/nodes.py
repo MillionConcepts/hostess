@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import datetime as dt
 import json
 import random
 import selectors
@@ -9,12 +8,13 @@ import time
 from collections import defaultdict
 from typing import Union
 
+from dustgoggles.func import gmap
 from google.protobuf.json_format import MessageToDict, Parse
 from google.protobuf.message import Message
 
 import hostess.station.proto.station_pb2 as pro
 from hostess.station import bases
-from hostess.station.messages import obj2msg, completed_task_msg
+from hostess.station.messages import obj2msg, completed_task_msg, unpack_obj
 from hostess.station.proto_utils import make_timestamp, dict2msg, enum
 from hostess.station.talkie import (
     stsend,
@@ -25,7 +25,6 @@ from hostess.station.talkie import (
 )
 
 
-# noinspection PyTypeChecker
 class Node(bases.BaseNode):
     def __init__(
         self,
@@ -46,22 +45,27 @@ class Node(bases.BaseNode):
         timeout: timeout, in s, for inter-node communications
         update: interval, in s, for check-in Updates to supervising Station
         """
+        super().__init__(
+            name=name,
+            n_threads=n_threads,
+            elements=elements,
+            start=start,
+            poll=poll,
+            timeout=timeout
+        )
         self.update_interval = update_interval
         self.actionable_events = []
-        self.actors, self.sensors = {}, {}
         self.station = station
         self.actions = {}
         self.n_threads = n_threads
         self.instruction_queue = []
         self.update_timer, self.reset_update_timer = timeout_factory(False)
-        super().__init__(
-            name=name, n_threads=n_threads, elements=elements, start=start
-        )
 
     def sensor_loop(self, sensor: bases.Sensor):
         exception = None
         try:
             while self.signals.get(sensor.name) is None:
+                # noinspection PyPropertyAccess
                 if not self.locked:
                     sensor.check(self)
                 time.sleep(self.poll)
@@ -170,7 +174,7 @@ class Node(bases.BaseNode):
         for logger in loggers:
             logger.execute(self, event, **extra_fields)
 
-    def match_instruction(self, event) -> bases.Actor:
+    def match_instruction(self, event) -> list[bases.Actor]:
         try:
             return self.match(event, "action")
         except StopIteration:
@@ -189,6 +193,7 @@ class Node(bases.BaseNode):
         except bases.DoNotUnderstand:
             # TODO: maybe add some more failure info
             rule, status = None, "bad_request"
+        # noinspection PyTypeChecker
         self.reply_to_instruction(instruction, status)
         self.log(instruction, direction="received", status=status)
         if actions is None:
@@ -219,6 +224,7 @@ class Node(bases.BaseNode):
             self.instruction_queue.append(decoded)
 
     def _base_message(self):
+        # noinspection PyProtectedMember
         return {
             "nodeid": self.nodeid(),
             "time": MessageToDict(make_timestamp()),
@@ -256,72 +262,82 @@ class HeadlessNode(Node):
 
 
 class Station(bases.BaseNode):
-    def __init__(self, host, port, name="station", n_threads=8):
+    def __init__(self, host, port, name="station", n_threads=8, max_inbox=100):
+        super().__init__(
+            host=host,
+            port=port,
+            name=name,
+            n_threads=n_threads,
+            can_receive=True
+        )
+        self.max_inbox = max_inbox
         self.received = []
         self.events = []
         self.nodes, self.instruction_queue = [], defaultdict(list)
-        super().__init__(host=host, port=port, name=name, n_threads=n_threads)
         self.tendtime, self.reset_tend = timeout_factory(False)
+    #
+    # def check_inbox(self):
+    #     n_comms = len(self.inbox)
+    #     for ix in range(n_comms):
+    #         comm = self.inbox.pop()
+    #         self.received.append(comm)
+    #         self.match_comm(comm)
 
-    def check_inbox(self):
-        n_comms = len(self.inbox)
-        for ix in range(n_comms):
-            comm = self.inbox.pop()
-            self.received.append(comm)
-            self.match_comm(comm)
+    def handle_info(self, message):
+        notes = gmap(unpack_obj, message.info)
+        for note in notes:
+            try:
+                actions = self.match(note, "info")
+            except bases.NoActorForEvent:
+                continue
+            for action in actions:
+                action.execute(self, note)
 
-    def match_comm(self, comm):
-        self.match(comm, "response")
+    def handle_incoming_message(self, message: pro.Update):
+        # TODO: internal information about crashed and shut down nodes
+        try:
+            return self.handle_info(message)
+        except (AttributeError, KeyError):
+            pass
+        # TODO: handle action report
 
-    def start(self):
+    def _start(self):
         while self.signals.get('start') is None:
             if self.tendtime() > self.poll * 30:
                 crashed_threads = self.server.tend()
+                if len(self.inbox) > self.max_inbox:
+                    self.inbox = self.inbox[-self.max_inbox:]
                 self.reset_tend()
                 if len(crashed_threads) > 0:
                     self.log({'server_errors': crashed_threads})
+
             time.sleep(self.poll)
 
-    def ack(
-        self, sel: selectors.DefaultSelector, comm: dict, conn: socket.socket
-    ):
-        response = None
+    def ackcheck(self, _conn: socket.socket, comm: dict):
+        # TODO: lockout might be too strict
+        self.locked = True
         try:
-            sel.unregister(conn)
-            self.locked = True
-        except KeyError as ke:
-            # someone else got here first
-            return None, "ack attempt", f"{ke}"
-        # in lieu of logging here, we periodically dump the contents of
-        # self.received
-        if comm["err"]:
-            self.locked = False
-            # TODO: send did-not-understand
-            conn.send(HOSTESS_ACK)
-            return None, "sent decode err", None
-        message = comm["body"]
-        try:
-            nodename = message.nodeid.name
-        except (AttributeError, ValueError):
-            self.locked = False
-            # TODO: send not-enough-info message
-            conn.send(HOSTESS_ACK)
-            return None, "sent not-enough-info", None
-        if not enum(message.state, "status") in ("shutdown", "crashed"):
-            # TODO: internal information about crashed and shut down nodes
+            # in lieu of logging here, we periodically dump the contents of
+            # self.received
+            if comm["err"]:
+                # TODO: send did-not-understand
+                return HOSTESS_ACK, "notified sender of error"
+            message = comm["body"]
+            self.received.append(message)
+            try:
+                nodename = message.nodeid.name
+            except (AttributeError, ValueError):
+                # TODO: send not-enough-info message
+                return HOSTESS_ACK, "notified sender not enough info"
+            self.handle_incoming_message(comm["body"])
+            if enum(message.state, "status") in ("shutdown", "crashed"):
+                return None, "decline to send ack to terminated node"
             queue = self.instruction_queue[nodename]
-            if len(queue) > 0:
-                response = queue.pop()
-        if response is None:
-            response, record = HOSTESS_ACK, "sent ack"
-        else:
-            record = f"sent instruction {response.id}"
-        try:
-            conn.send(make_comm(response))
-            return None, record, None
-        except (KeyError, ValueError) as kve:
-            # someone else got here first
-            return None, "ack attempt", f"{kve}"
+            if len(queue) == 0:
+                return HOSTESS_ACK, "sent ack"
+            response = queue.pop()
+            status = f"sent instruction {response.id}"
+            return make_comm(response), status
         finally:
             self.locked = False
 

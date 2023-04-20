@@ -228,7 +228,7 @@ class BaseNode(Matcher, PropConsumer, ABC):
         self.host, self.port = host, port
         self.interface, self.params = [], {}
         self.name = name
-        self.config = {}
+        self.config, self.threads, self.actors, self.sensors = {}, {}, {}, {}
         self._lock = threading.Lock()
         # TODO: do this better
         os.makedirs("logs", exist_ok=True)
@@ -239,7 +239,7 @@ class BaseNode(Matcher, PropConsumer, ABC):
         self.can_receive = can_receive
         self.poll, self.timeout, self.signals = poll, timeout, {}
         if start is True:
-            self.exec.submit(self.start)
+            self.start()
 
     def add_element(self, cls: Union[type[Actor], type[Sensor]]):
         name = inc_name(cls, self.config)
