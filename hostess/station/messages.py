@@ -15,7 +15,6 @@ from hostess.station.proto import station_pb2 as pro
 from hostess.station.proto_utils import make_timestamp, enum, dict2msg
 
 
-
 # TODO: optional base64 encoding for some channels
 def byteorder():
     return "<" if sys.byteorder == "little" else ">"
