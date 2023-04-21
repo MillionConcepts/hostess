@@ -1,24 +1,33 @@
+"""
+implementations of Actor and Sensor base classes, along with some helper
+functions.
+"""
+
 from __future__ import annotations
 
 import datetime as dt
-import json
-import os
 import random
 import re
-from abc import ABC
 from pathlib import Path
 from typing import Any, Union, Callable, Optional
 
-from cytoolz import valmap
-from dustgoggles.func import gmap
-from dustgoggles.structures import unnest
 from google.protobuf.message import Message
 
 import hostess.station.nodes as nodes
 import hostess.station.proto.station_pb2 as pro
 from hostess.station.bases import Sensor, Actor, NoMatch
-from hostess.station.handlers import make_function_call, actiondict
-from hostess.station.proto_utils import m2d
+from hostess.station.handlers import (
+    make_function_call,
+    actiondict,
+    tail_file,
+    watch_dir,
+    flatten_into_json,
+)
+
+
+# keys a dict must have to count as a valid "actiondict" for inclusion in
+# a Node's actions list
+NODE_ACTION_FIELDS = frozenset({"id", "start", "stop", "status", "result"})
 
 
 class PipeActorPlaceholder(Actor):
@@ -27,6 +36,7 @@ class PipeActorPlaceholder(Actor):
     Instructions to the calling node. we haven't implemented this, so it
     doesn't do anything.
     """
+
     def match(self, instruction: Any, **_):
         if instruction.WhichOneof("task") == "pipe":
             return True
@@ -37,9 +47,11 @@ class PipeActorPlaceholder(Actor):
 
 class FunctionCall(Actor):
     """
-    actor for do instructions that directly call a python function within the
-    node's execution environment.
+    Actor to execute Instructions that ask a Node to call a Python
+    function from the node's execution environment. see
+    handlers.make_function_call for serious implementation details.
     """
+
     def match(self, instruction: Any, **_) -> bool:
         if instruction.action.WhichOneof("command") != "functioncall":
             raise NoMatch("not a function call instruction")
@@ -51,7 +63,7 @@ class FunctionCall(Actor):
         instruction: Message,
         key=None,
         noid=False,
-        **_
+        **_,
     ) -> Any:
         if instruction.HasField("action"):
             action = instruction.action
@@ -63,43 +75,30 @@ class FunctionCall(Actor):
         node.actions[key] = actiondict(action) | caches
         report = node.actions[key]  # just shorthand
         if noid is False:
-            report['instruction_id'] = key
+            report["instruction_id"] = key
         call()
-        if len(caches['result']) != 0:
-            caches['result'] = caches['result'][0]
+        if len(caches["result"]) != 0:
+            caches["result"] = caches["result"][0]
         else:
-            caches['result'] = None
-        if isinstance(caches['result'], Exception):
-            report['status'] = 'crash'
+            caches["result"] = None
+        if isinstance(caches["result"], Exception):
+            report["status"] = "crash"
         else:
-            report['status'] = 'success'
+            report["status"] = "success"
         # in some cases could check stderr but would have to be careful
         # due to the many processes that communicate on stderr on purpose
-        report['end'] = dt.datetime.utcnow()
-        report['duration'] = report['end'] - report['start']
+        report["end"] = dt.datetime.utcnow()
+        report["duration"] = report["end"] - report["start"]
 
     name = "functioncall"
     actortype = "action"
-
-
-NODE_ACTION_FIELDS = frozenset({"id", "start", "stop", "status", "result"})
-
-
-# required keys for an in-memory action entry in node.actions
-
-
-def flatten_into_json(event, maxsize: int = 64):
-    # TODO: if this ends up being unperformant with huge messages, do something
-    if isinstance(event, Message):
-        event = m2d(event)
-    # TODO: figure out how to not make this infinity json objects
-    return json.dumps(gmap(lambda v: v[:maxsize], valmap(str, unnest(event))))
 
 
 class BaseNodeLog(Actor):
     """
     default logging actor: log completed actions and incoming/outgoing messages
     """
+
     def match(self, event, **_) -> bool:
         if isinstance(event, Message):
             return True
@@ -108,46 +107,20 @@ class BaseNodeLog(Actor):
                 return True
         raise NoMatch("Not a running/completed action or a received Message")
 
-    def execute(self, node: "nodes.Node", event: Union[dict, Message], **_) -> Any:
-        node.log_event(flatten_into_json(event, maxsize=64))
+    def execute(
+        self, node: "nodes.Node", event: Union[dict, Message], **_
+    ) -> Any:
+        node._log_event(flatten_into_json(event, maxsize=64))
 
     name = "base_log_actor"
     actortype = "log"
 
 
-def increment_suffix(name, keys):
-    matches = filter(lambda k: re.match(name, k), keys)
-    numbers = []
-    for m in matches:
-        if not (number := re.search(r"_(\d+)", m)):
-            continue
-        numbers.append(number.group(1))
-    if len(numbers) == 0:
-        return 0
-    return max(numbers)
-
-
-def tail_file(position, *, path: Path = None, **_):
-    if path is None:
-        return position, []
-    if not path.exists():
-        return None, []
-    if position is None:
-        position = os.stat(path).st_size - 1
-    if os.stat(path).st_size - 1 == position:
-        return position, []
-    if os.stat(path).st_size - 1 < position:
-        position = os.stat(path).st_size - 1
-        return position, []
-    with path.open() as stream:
-        stream.seek(position)
-        lines = stream.readlines()
-        position = stream.tell()
-        return position, lines
-
-
 class LineLogger(Actor):
-    """logs all lines passed to it, separately from node's main logging."""
+    """
+    logs all strings passed to it. intended to be attached to a Sensor as a
+    supplement to a Node's primary logging.
+    """
 
     def match(self, line, **_):
         if isinstance(line, str):
@@ -165,6 +138,13 @@ class LineLogger(Actor):
 
 
 class ReportStringMatch(Actor):
+    """
+    checks whether a string matches any of a sequence of regex patterns.
+    executing it inserts the string into the associated node's list of
+    actionable events, optionally annotated with a path denoting the string's
+    source.
+    """
+
     def match(self, line, *, patterns=(), **_):
         if not isinstance(line, str):
             raise NoMatch("is not a string")
@@ -174,14 +154,24 @@ class ReportStringMatch(Actor):
         raise NoMatch("does not match patterns")
 
     def execute(self, node: "nodes.Node", line: str, *, path=None, **_):
-        node.actionable_events.append({'path': str(path), 'content': line})
+        node.actionable_events.append({"path": str(path), "content": line})
 
     name = "grepreport"
     actortype = "action"
 
 
 class InstructionFromInfo(Actor):
-    def match(self, note, *, fields=None, criteria=None, **_):
+    """
+    skeleton info Actor for Stations. check, based on configurable criteria,
+    whether a piece of info received in an Update indicates that we should
+    assign a task to some handler Node, and if it does, create an Instruction
+    from that info based on an instruction-making function.
+    """
+
+    # note: fields doesn't do anything atm
+    def match(
+        self, note, *, fields=None, criteria: list[Callable] = None, **_
+    ) -> bool:
         if criteria is None:
             raise NoMatch("no criteria to match against")
         for criterion in criteria:
@@ -196,7 +186,7 @@ class InstructionFromInfo(Actor):
         *,
         instruction_maker: Optional[Callable[[Any], pro.Instruction]] = None,
         node_picker: Optional[Callable[[Any], str]] = None,
-        **_
+        **_,
     ):
         if instruction_maker is None:
             raise TypeError("Must have an instruction maker.")
@@ -209,6 +199,11 @@ class InstructionFromInfo(Actor):
 
 
 class FileSystemWatch(Sensor):
+    """
+    simple Sensor for watching contents of a filesystem. offers an
+    interface for changing target path and regex match patterns. base class
+    tails a file. see DirWatch below for an inheritor that diffs a directory.
+    """
 
     def __init__(self, checker=tail_file):
         self.checker = checker
@@ -216,8 +211,8 @@ class FileSystemWatch(Sensor):
 
     def _set_target(self, path):
         self._watched = Path(path)
-        self.config['check']['path'] = Path(path)
-        self.config['grepreport']['exec']['path'] = Path(path)
+        self.config["check"]["path"] = Path(path)
+        self.config["grepreport"]["exec"]["path"] = Path(path)
 
     def _get_target(self):
         return self._watched
@@ -227,14 +222,14 @@ class FileSystemWatch(Sensor):
 
     def _set_logfile(self, path):
         self._logfile = path
-        self.config['linelog']['exec']['path'] = Path(path)
+        self.config["linelog"]["exec"]["path"] = Path(path)
 
     def _get_patterns(self):
         return self._patterns
 
     def _set_patterns(self, patterns):
         self._patterns = patterns
-        self.config['grepreport']['match']['patterns'] = patterns
+        self.config["grepreport"]["match"]["patterns"] = patterns
 
     actions = (ReportStringMatch,)
     loggers = (LineLogger,)
@@ -248,23 +243,8 @@ class FileSystemWatch(Sensor):
     interface = ("logfile", "target", "patterns")
 
 
-def watch_dir(
-    contents, *, path: Path = None, **_
-) -> tuple[Optional[list[str]], list[str]]:
-    if path is None:
-        return contents, []
-    if not path.exists():
-        return contents, []
-    current = list(map(str, path.iterdir()))
-    if contents is None:
-        return current, current
-    return current, list(set(current).difference(contents))
-
-
 class DirWatch(FileSystemWatch):
-
     def __init__(self):
         super().__init__(checker=watch_dir)
 
     name = "dirwatch"
-

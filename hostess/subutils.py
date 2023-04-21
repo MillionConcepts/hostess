@@ -20,11 +20,13 @@ from hostess.utilities import Aliased, curry
 
 
 def append_write(path, text):
+    """shorthand wrapper to append-write to file."""
     with open(path, "a+") as file:
         file.write(text)
 
 
-def target_to_method(stream_target):
+def _target_to_method(stream_target) -> Callable:
+    """utility function for the console_stream_handlers workflow"""
     if isinstance(stream_target, Path):
         return partial(append_write, stream_target)
     t_dir = dir(stream_target)
@@ -34,16 +36,17 @@ def target_to_method(stream_target):
 
 
 def make_stream_handler(targets):
+    """make a stream handler heuristically aimed at arbitrary targets"""
     if targets is None:
         return None
     # noinspection PyArgumentList
-    return juxt(tuple(map(target_to_method, targets)))
+    return juxt(tuple(map(_target_to_method, targets)))
 
 
 def console_stream_handlers(out_targets=None, err_targets=None):
     """
     create a pair of stdout and stderr handler functions to pass to a
-    `sh` subprocess call.
+    `sh` subprocess call. (or anything else that needs a similar callback)
     """
     out_actions = make_stream_handler(out_targets)
     err_actions = make_stream_handler(err_targets)
@@ -75,7 +78,12 @@ def deferinto(func, *args, _target, **kwargs):
     return deferred_into
 
 
-def make_piped_callback(func):
+def make_piped_callback(func: Callable) -> tuple[Pipe, Callable]:
+    """
+    make a callback that's suitable as a target for a multiprocessing
+    object, wrapped in such a way that it sends its output back to the Pipe
+    `here`.
+    """
     here, there = Pipe()
 
     def sendback(*args, **kwargs):
@@ -88,7 +96,13 @@ def make_piped_callback(func):
     return here, sendback
 
 
-def piped(func, block=True):
+def piped(func: Callable, block=True) -> Callable:
+    """
+    wrapper to run a function in another process and get its results
+    back through a pipe. if created in non-blocking mode, returns the Process
+    object rather than the result; in this case, the caller is responsible for
+    polling the process.
+    """
 
     @wraps(func)
     def through_pipe(*args, **kwargs):
@@ -106,6 +120,13 @@ def piped(func, block=True):
 
 
 def make_call_redirect(func, fork=False):
+    """
+    a more intensive version of `piped` that directs stdout and stderr
+    rather than simply a return value, and automatically places all these
+    streams into caches accessible in the caller's [rpcess]. intended for
+    longer-term, speculative, or callback-focused processes. if fork is True,
+    runs in a double-forked, mostly-daemonized process.
+    """
     r_here, r_there = Pipe()
     o_here, o_there = Pipe()
     p_here, p_there = Pipe()
@@ -134,6 +155,7 @@ def make_call_redirect(func, fork=False):
 
 
 def make_watch_caches():
+    """shorthand for constructing the correct dictionary"""
     return {'result': [], 'out': [], 'err': []}
 
 

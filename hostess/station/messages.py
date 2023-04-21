@@ -1,3 +1,5 @@
+"""utilities for interpreting and constructing specific Messages."""
+
 from __future__ import annotations
 
 import json
@@ -5,6 +7,7 @@ import random
 import sys
 import struct
 from types import NoneType
+from typing import Optional, Any, Collection, Literal, Union
 
 import dill
 from dustgoggles.func import gmap
@@ -15,21 +18,35 @@ from hostess.station.proto import station_pb2 as pro
 from hostess.station.proto_utils import make_timestamp, enum, dict2msg
 
 
-# TODO: optional base64 encoding for some channels
-def byteorder():
+def byteorder() -> str:
+    """what is the system byteorder (as struct.Struct wants to hear it)"""
     return "<" if sys.byteorder == "little" else ">"
 
 
-def scalarchar(scalar):
+def scalarchar(scalar) -> tuple[str, Optional[str]]:
+    """
+    what is the correct struct code for this object? also return a description
+    of the 'string' type if it is str, bytes, or NoneType
+    """
     if not isinstance(scalar, (str, bytes, int, float, bool, NoneType)):
         raise TypeError(f"{type(scalar)} is not supported by scalarchar.")
     if isinstance(scalar, (str, bytes, NoneType)):
         repeat = len(scalar) if scalar is not None else 1
         return f"{repeat}s", type(scalar).__name__.lower()
+    # noinspection PyUnresolvedReferences
     return np.min_scalar_type(scalar).char, None
 
 
-def obj2scanf(obj):
+def obj2scanf(obj) -> tuple[str, Optional[str]]:
+    """
+    construct a struct / scanf string for an object, along with a description
+    of the 'string' type if it is str, bytes, or None. can handle most basic
+    data types, as well as unmixed lists or tuples of the same, although it's
+    silly to use it on lists or tuples containing mixed data types or many
+    distinct strings/bytestrings -- it would be easier just to pickle them
+    or dump them as JSON, because the struct string will be long enough to
+    cancel out any benefits of the terser binary packing.
+    """
     if not isinstance(
         obj, (str, bytes, int, float, list, tuple, bool, NoneType)
     ):
@@ -46,6 +63,7 @@ def obj2scanf(obj):
 
 
 def make_action(description=None, **fields):
+    """construct a default pro.Action message"""
     if fields.get("id") is None:
         fields["id"] = random.randint(int(1e7), int(1e8))
     action = pro.Action(description=description, **fields)
@@ -54,15 +72,24 @@ def make_action(description=None, **fields):
     return action
 
 
-def default_arg_packing(arguments):
+def default_arg_packing(kwargs: dict[str, Any]) -> list[pro.PythonObject]:
+    """
+    pack a kwarg dict into a list of pro.PythonObjects to be inserted into a
+    Message.
+    """
     interp = []
-    for k, v in arguments.items():
+    for k, v in kwargs.items():
         obj = obj2msg(v, k)
         interp.append(obj)
     return interp
 
 
-def obj2msg(obj, name=""):
+# TODO: optional base64 encoding for some channels
+def obj2msg(obj: Any, name: str = "") -> pro.PythonObject:
+    """
+    default function for serializing an in-memory object as a pro.PythonObject
+    Message.
+    """
     if isinstance(obj, (str, bytes, int, float)):
         scanf, chartype = obj2scanf(obj)
         obj = pro.PythonObject(
@@ -79,22 +106,32 @@ def obj2msg(obj, name=""):
 
 
 def make_function_call_action(
-    func, module=None, arguments=None, context="thread", **action_fields
-):
+    func: str,
+    module: Optional[str] = None,
+    kwargs: Union[list[pro.PythonObject], dict[str, Any], None] = None,
+    context: Literal["thread", "process", "detached"] = "thread",
+    **action_fields
+) -> pro.Action:
+    """
+    make an Action describing a function call task to be inserted into an
+    Instruction.
+    """
     if "name" not in action_fields:
         action_fields["name"] = func
     try:
-        assert isinstance(arguments[0], pro.PythonObject)
-        arguments = arguments
+        # if kwargs is already a list of PythonObjects, don't try to repack
+        assert isinstance(kwargs[0], pro.PythonObject)
+        objects = kwargs
     except (AssertionError, KeyError):
-        arguments = default_arg_packing(arguments)
+        objects = default_arg_packing(kwargs)
     call = pro.FunctionCall(
-        func=func, module=module, context=context, arguments=arguments
+        func=func, module=module, context=context, arguments=objects
     )
     return make_action(**action_fields, functioncall=call)
 
 
-def make_instruction(instructiontype, **kwargs):
+def make_instruction(instructiontype, **kwargs) -> pro.Instruction:
+    """make an Instruction Message."""
     if kwargs.get("id") is None:
         kwargs['id'] = random.randint(int(1e7), int(1e8))
     instruction = pro.Instruction(
@@ -107,8 +144,10 @@ def make_instruction(instructiontype, **kwargs):
     return instruction
 
 
-def unpack_obj(obj: pro.PythonObject):
+def unpack_obj(obj: pro.PythonObject) -> Any:
+    """default deserialization function for pro.PythonObject Messages"""
     if enum(obj, "compression") not in ("nocompression", None):
+        # TODO: handle inline compression
         raise NotImplementedError
     if enum(obj, "serialization") == "json":
         value = json.loads(obj.value)
@@ -127,7 +166,11 @@ def unpack_obj(obj: pro.PythonObject):
     return value
 
 
-def completed_task_msg(actiondict, steps=None):
+def completed_task_msg(actiondict: dict, steps=None) -> pro.TaskReport:
+    """
+    construct a TaskReport from an action dict (like the ones produced by
+    watched_process and derivatives) to add to an Update.
+    """
     if steps is not None:
         raise NotImplementedError
     fields = {}

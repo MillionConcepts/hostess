@@ -1,4 +1,6 @@
 """generic utility objects for hostess"""
+from __future__ import annotations
+
 import _io
 import datetime as dt
 import logging
@@ -311,3 +313,11 @@ def trywrap(func, name):
             }
 
     return trywrapped
+
+
+def configured(func, config):
+    @wraps(func)
+    def with_configuration(*args, **kwargs):
+        return func(*args, **kwargs, **config)
+
+    return with_configuration

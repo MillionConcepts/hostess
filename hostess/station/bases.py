@@ -4,7 +4,6 @@ from __future__ import annotations
 import inspect
 from abc import ABC
 from concurrent.futures import ThreadPoolExecutor
-from functools import wraps
 from inspect import getmembers_static
 from itertools import chain
 import os
@@ -18,18 +17,11 @@ from dustgoggles.func import filtern
 
 from hostess.station.proto_utils import enum
 from hostess.station.talkie import TCPTalk
-from hostess.utilities import filestamp
-
-
-def configured(func, config):
-    @wraps(func)
-    def with_configuration(*args, **kwargs):
-        return func(*args, **kwargs, **config)
-
-    return with_configuration
+from hostess.utilities import filestamp, configured
 
 
 def associate_actor(cls, config, params, actors, props, name=None):
+    """utility function for associating an actor with a Sensor."""
     name = inc_name(cls.name if name is None else name, config)
     actors[name] = cls()
     config[name] = actors[name].config
@@ -187,25 +179,43 @@ def validate_instruction(instruction):
 
 
 class PropConsumer:
+    """
+    implements functionality for "consuming" the properties of associated
+    objects. designed to permit Nodes and similar objects to promote the
+    interface properties of attached elements into their own interfaces as
+    pseudo-attributes.
+    """
     def __init__(self):
         self.proprefs = {}
 
     def consume_property(self, obj, attr, newname=None):
-        prop = filtern(lambda kv: kv[0] == attr, getmembers_static(type(obj)))[
-            1
-        ]
+        """
+        promote the `attr` property of `obj` into this object's interface.
+        if `newname` is not None, assign it to the `newname` key of this
+        object's property reference dict (`proprefs`); otherwise, use the
+        original name.
+        """
+        prop = filtern(lambda m: m[0] == attr, getmembers_static(type(obj)))[1]
         if not isinstance(prop, property):
             raise TypeError(f"{attr} of {type(obj).__name__} not a property")
         newname = attr if newname is None else newname
         self.proprefs[newname] = (obj, attr)
 
     def __getattr__(self, attr):
+        """
+        if normal attribute lookup fails, attempt to refer it to a property
+        of an associated object.
+        """
         ref = self.proprefs.get(attr)
         if ref is None:
             raise AttributeError
         return getattr(ref[0], ref[1])
 
     def __setattr__(self, attr, value):
+        """
+        refer assignments to pseudo-attributes defined in self.proprefs to the
+        properties of the underlying objects.
+        """
         if attr == "proprefs":
             return super().__setattr__(attr, value)
         if (ref := self.proprefs.get(attr)) is not None:
@@ -213,10 +223,16 @@ class PropConsumer:
         return super().__setattr__(attr, value)
 
     def __dir__(self):
+        """
+        add the pseudo-attributes in proprefs to this object's directory so
+        that they look real.
+        """
+        # noinspection PyUnresolvedReferences
         return super().__dir__() + list(self.proprefs.keys())
 
 
 class BaseNode(Matcher, PropConsumer, ABC):
+    """base class for Nodes and Stations."""
     def __init__(
         self,
         name: str,
@@ -247,6 +263,11 @@ class BaseNode(Matcher, PropConsumer, ABC):
             self.start()
 
     def add_element(self, cls: Union[type[Actor], type[Sensor]], name=None):
+        """
+        associate an Actor or Sensor with this object, consuming its
+        interface properties and making it available for matching or sensor
+        looping.
+        """
         name = inc_name(cls.name if name is None else name, self.config)
         element = cls()
         if issubclass(cls, Actor):
@@ -263,6 +284,9 @@ class BaseNode(Matcher, PropConsumer, ABC):
         self.threads = {}
 
     def restart_server(self):
+        """
+        (re)start the node's TCPTalk server (if it is supposed to have one).
+        """
         if self.server is not None:
             self.server["kill"]()
         if self.can_receive is False:
@@ -294,6 +318,7 @@ class BaseNode(Matcher, PropConsumer, ABC):
         self.__started = True
 
     def nodeid(self):
+        """basic identifying information for node."""
         return {
             "name": self.name,
             "pid": os.getpid(),
@@ -301,8 +326,9 @@ class BaseNode(Matcher, PropConsumer, ABC):
         }
 
     def busy(self):
-        # or maybe explicitly check threads? do we want a free one?
-        # idk
+        """are we too busy to do new stuff?"""
+        # TODO: or maybe explicitly check threads? do we want a free one?
+        #  idk
         if self.exec._work_queue.qsize() > 0:
             return True
         return False

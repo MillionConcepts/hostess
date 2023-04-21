@@ -1,3 +1,8 @@
+"""
+utilities for dealing with the protobuf format. Not intended for
+hostess-specific messages -- these are more generic utilities.
+"""
+
 import datetime as dt
 from types import MappingProxyType as MPt
 from typing import Union, Optional
@@ -68,6 +73,7 @@ def dict2msg(
 
 
 def make_duration(delta: Union[dt.timedelta, float]) -> Duration:
+    """create a Duration Message from a UNIX time or a dt.timedelta object"""
     duration = Duration()
     if isinstance(delta, float):
         duration.FromSeconds(delta)
@@ -77,6 +83,10 @@ def make_duration(delta: Union[dt.timedelta, float]) -> Duration:
 
 
 def make_timestamp(datetime: Optional[dt.datetime] = None):
+    """
+    create a Timestamp Message from either the current time or a dt.datetime
+    object
+    """
     timestamp = Timestamp()
     if datetime is None:
         timestamp.GetCurrentTime()
