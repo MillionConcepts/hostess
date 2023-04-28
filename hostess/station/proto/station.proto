@@ -119,7 +119,7 @@ enum UpdateReason {
   wilco = 4;
   bad_request = 5;
   exiting = 6;
-  task_completion = 7;
+  completion = 7;
 }
 
 message Update {

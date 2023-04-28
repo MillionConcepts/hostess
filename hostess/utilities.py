@@ -321,3 +321,8 @@ def configured(func, config):
         return func(*args, **kwargs, **config)
 
     return with_configuration
+
+
+# just a little printer to show what crashed/completed
+def filterdone(threads):
+    return [(n, t) for n, t in threads.items() if t._state != "RUNNING"]

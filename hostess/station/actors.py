@@ -156,7 +156,8 @@ class ReportStringMatch(Actor):
     def execute(
         self,
         node: "nodes.Node",
-        line: str, patterns=(),
+        line: str,
+        patterns=(),
         *,
         path=None,
         **_
@@ -206,8 +207,25 @@ class InstructionFromInfo(Actor):
             node_picker = station.next_handler
         station.outbox[node_picker(note)].append(instruction_maker(note))
 
+    def _set_criteria(self, criteria):
+        self.config['match']["criteria"] = criteria
+
+    def _get_criteria(self):
+        return self.config['match']['criteria']
+
+    def _set_instruction_maker(self, instruction_maker):
+        self.config['exec']['instruction_maker'] = instruction_maker
+
+    def _get_instruction_maker(self):
+        return self.config['exec']['instruction_maker']
+
     name: str
     actortype = "info"
+    interface = ("instruction_maker", "criteria")
+    instruction_maker = property(
+        _get_instruction_maker, _set_instruction_maker
+    )
+    criteria = property(_get_criteria, _set_criteria)
 
 
 class FileSystemWatch(Sensor):

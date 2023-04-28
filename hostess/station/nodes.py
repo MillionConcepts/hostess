@@ -186,7 +186,7 @@ class Node(bases.BaseNode):
         # TODO; multi-step case
         message = Parse(json.dumps(mdict), pro.Update())
         report = completed_task_msg(action)
-        message.MergeFrom(pro.Update(completed=report))
+        message.MergeFrom(pro.Update(completed=report, reason='completion'))
         self.send_to_station(message)
 
     def _check_in(self):
@@ -341,9 +341,8 @@ class Node(bases.BaseNode):
         }
         msg = Parse(json.dumps(mdict), pro.Update())
         if err is not None:
-            msg.MergeFrom(pro.Update(info=[err]))
+            msg.MergeFrom(pro.Update(info=[pack_obj(err)]))
         self.send_to_station(msg)
-
 
 
 class HeadlessNode(Node):

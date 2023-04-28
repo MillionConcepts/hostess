@@ -285,6 +285,7 @@ class BaseNode(Matcher, PropConsumer, ABC):
         """
         name = inc_name(cls.name if name is None else name, self.config)
         element = cls()
+        element.name = name
         if issubclass(cls, Actor):
             self.actors[name] = element
         elif issubclass(cls, Sensor):
@@ -358,7 +359,8 @@ class BaseNode(Matcher, PropConsumer, ABC):
         if state is True:
             self._lock.acquire(blocking=False)
         elif state is False:
-            self._lock.release()
+            if self._lock.locked():
+                self._lock.release()
         else:
             raise TypeError
 
