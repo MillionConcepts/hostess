@@ -214,6 +214,10 @@ message Action{
 
 message Pipeline {uint32 id = 1; string name = 2; repeated Action steps = 3;}
 
+enum ConfigParamType {unknowntype=0; config_property=1; config_dict=2;}
+
+message ConfigParam {ConfigParamType paramtype = 1; PythonObject value = 2;}
+
 message Instruction {
   InstructionType type = 1;
   uint32 id = 2;
@@ -221,5 +225,5 @@ message Instruction {
   oneof task {Action action = 4; Pipeline pipe = 5;}
   /* identifying metadata, will be included in logs */
   map<string, string> metadata = 6;
-  map<string, PythonObject> config = 7;
+  repeated ConfigParam config = 7;
 }

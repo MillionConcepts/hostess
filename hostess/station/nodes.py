@@ -1,19 +1,25 @@
 from __future__ import annotations
 
-from collections import defaultdict
 import json
 import random
 import socket
 import time
-from typing import Union
+from collections import defaultdict
+from typing import Union, Literal, Mapping, Optional
 
 from dustgoggles.func import gmap
+from dustgoggles.structures import rmerge
 from google.protobuf.json_format import MessageToDict, Parse
 from google.protobuf.message import Message
 
 import hostess.station.proto.station_pb2 as pro
 from hostess.station import bases
-from hostess.station.messages import obj2msg, completed_task_msg, unpack_obj
+from hostess.station.messages import (
+    pack_obj,
+    completed_task_msg,
+    unpack_obj,
+    make_instruction,
+)
 from hostess.station.proto_utils import make_timestamp, dict2msg, enum
 from hostess.station.talkie import (
     stsend,
@@ -22,6 +28,8 @@ from hostess.station.talkie import (
     HOSTESS_ACK,
     make_comm,
 )
+
+ConfigParamType = Literal["config_property", "config_dict"]
 
 
 class Node(bases.BaseNode):
@@ -113,7 +121,7 @@ class Node(bases.BaseNode):
         mdict["reason"] = "info"
         message = Parse(json.dumps(mdict), pro.Update())
         # TODO: this might want to be more sophisticated
-        info = pro.Update(info=[obj2msg(e) for e in self.actionable_events])
+        info = pro.Update(info=[pack_obj(e) for e in self.actionable_events])
         message.MergeFrom(info)
         self.send_to_station(message)
         self.actionable_events[:] = []
@@ -124,7 +132,7 @@ class Node(bases.BaseNode):
         .start method inherited from BaseNode.
         """
         for name, sensor in self.sensors.items():
-            self.threads[name] = self.exec.submit(self.sensor_loop, sensor)
+            self.threads[name] = self.exec.submit(self._sensor_loop, sensor)
         exception = None
         try:
             while True:
@@ -156,6 +164,8 @@ class Node(bases.BaseNode):
             # TODO: other cleanup tasks, like signaling or killing threads --
             #  not sure exactly how hard we want to do this!
             self._send_exit_report(exception)
+            if exception is not None:
+                raise exception
 
     def _send_exit_report(self, exception=None):
         """
@@ -166,7 +176,7 @@ class Node(bases.BaseNode):
         mdict["state"]["status"] = status
         message = Parse(json.dumps(mdict), pro.Update())
         if exception is not None:
-            info = pro.Update(info=[obj2msg(exception, "exception")])
+            info = pro.Update(info=[pack_obj(exception, "exception")])
             message.MergeFrom(info)
         self.send_to_station(message)
 
@@ -222,21 +232,39 @@ class Node(bases.BaseNode):
         for action in actions:
             action.execute(self, instruction, key=key, noid=noid)
 
+    def _configure_from_instruction(self, instruction: Message):
+        for param in instruction.config:
+            if enum(param, "paramtype") == "config_property":
+                try:
+                    setattr(self, param.value.name, unpack_obj(param.value))
+                except AttributeError:
+                    raise bases.DoNotUnderstand(
+                        f"no property {param.value.name}"
+                    )
+            elif enum(param, "paramtype") == "config_dict":
+                self.config = rmerge(self.config, unpack_obj(param.value))
+            else:
+                raise bases.DoNotUnderstand("unknown ConfigParamType")
+
     def _handle_instruction(self, instruction: Message):
         """interpret, reply to, and execute (if relevant) an Instruction."""
-        actions = None
         try:
             bases.validate_instruction(instruction)
-            # TODO: Actors for default config/shutdown handling. or maybe
-            #  those should be directly attached to this class?
-            actions = self._match_instruction(instruction)
-            status = "wilco"
-        except bases.DoNotUnderstand:
+            status, err = "wilco", ''
+            if enum(instruction, "type") == "configure":
+                self._configure_from_instruction(instruction)
+        except bases.DoNotUnderstand as what:
             # TODO: maybe add some more failure info
             rule, status = None, "bad_request"
+            err = pack_obj(f"{type(what)}: {what}")
         # noinspection PyTypeChecker
-        self._reply_to_instruction(instruction, status)
-        self._log(instruction, direction="received", status=status)
+        self._reply_to_instruction(instruction, status, err)
+        self._log(instruction, direction="received", status=status, err=err)
+        # note that config/shutdown etc. behavior is not performed by Actors.
+        # TODO: implement shutdown etc.
+        if enum(instruction, "type") != "do":
+            return
+        actions = self._match_task_instruction(instruction)
         if actions is None:
             return
         if instruction.id is None:
@@ -295,17 +323,27 @@ class Node(bases.BaseNode):
         """
         if not message.HasField("state"):
             return
-        message.state.MergeFrom(pro.NodeState(config=obj2msg(self.config)))
+        message.state.MergeFrom(pro.NodeState(config=pack_obj(self.config)))
         return message
 
-    def _reply_to_instruction(self, instruction, status: str):
+    def _reply_to_instruction(
+        self,
+        instruction,
+        status: str,
+        err: Optional[pro.PythonObject] = None
+    ):
         """
         send a reply Update to an Instruction informing the Station that we
         will or won't do the thing.
         """
-        mdict = self._base_message()
-        mdict["reason"], mdict["instruction_id"] = status, instruction.id
-        self.send_to_station(Parse(json.dumps(mdict), pro.Update()))
+        mdict = self._base_message() | {
+            "reason": status, 'instruction_id':  instruction.id
+        }
+        msg = Parse(json.dumps(mdict), pro.Update())
+        if err is not None:
+            msg.MergeFrom(pro.Update(info=[err]))
+        self.send_to_station(msg)
+
 
 
 class HeadlessNode(Node):
@@ -349,6 +387,21 @@ class Station(bases.BaseNode):
         self.nodes, self.outbox = [], defaultdict(list)
         self.tendtime, self.reset_tend = timeout_factory(False)
         self.last_handler = None
+
+    def set_node_properties(self, node: str, **propvals):
+        if len(propvals) == 0:
+            raise TypeError("can't send a no-op config instruction")
+        config = [
+            pro.ConfigParam(paramtype="config_property", value=pack_obj(v, k))
+            for k, v in propvals.items()
+        ]
+        self.outbox[node].append(make_instruction("configure", config=config))
+
+    def set_node_config(self, node: str, config: Mapping):
+        config = pro.ConfigParam(
+            paramtype="config_dict", value=pack_obj(config)
+        )
+        self.outbox[node].append(make_instruction("configure", config=config))
 
     def _handle_info(self, message: Message):
         """

@@ -17,7 +17,7 @@ from dustgoggles.func import filtern
 
 from hostess.station.proto_utils import enum
 from hostess.station.talkie import TCPTalk
-from hostess.utilities import filestamp, configured
+from hostess.utilities import filestamp, configured, trywrap
 
 
 def associate_actor(cls, config, params, actors, props, name=None):
@@ -26,8 +26,8 @@ def associate_actor(cls, config, params, actors, props, name=None):
     actors[name] = cls()
     config[name] = actors[name].config
     params[name] = {
-        "match": actors[name].params['match'],
-        "exec": actors[name].params['exec'],
+        "match": actors[name].params["match"],
+        "exec": actors[name].params["exec"],
     }
     for prop in actors[name].interface:
         props.append((f"{name}_{prop}", getattr(actors[name], prop)))
@@ -155,6 +155,10 @@ class NoTaskError(DoNotUnderstand):
     """control node issued a 'do' instruction with no attached task."""
 
 
+class NoConfigError(DoNotUnderstand):
+    """control node issued a 'configure' instruction with no config."""
+
+
 class NoInstructionType(DoNotUnderstand):
     """control node issued an instruction with no type."""
 
@@ -174,7 +178,9 @@ def validate_instruction(instruction):
     """first-pass instruction validation"""
     if enum(instruction, "type") == "unknowninst":
         raise NoInstructionType
-    if (instruction.type == "do") and not instruction.HasField("task"):
+    if enum(instruction, "type") == "configure" and instruction.config is None:
+        raise NoConfigError
+    if enum(instruction, "type") == "do" and not instruction.HasField("task"):
         raise NoTaskError
 
 
@@ -185,6 +191,7 @@ class PropConsumer:
     interface properties of attached elements into their own interfaces as
     pseudo-attributes.
     """
+
     def __init__(self):
         self.proprefs = {}
 
@@ -230,9 +237,18 @@ class PropConsumer:
         # noinspection PyUnresolvedReferences
         return super().__dir__() + list(self.proprefs.keys())
 
+    def _get_interface(self):
+        return [k for k in self.proprefs.keys()]
+
+    def _set_interface(self, _):
+        raise TypeError("interface does not support assignment")
+
+    interface = property(_get_interface, _set_interface)
+
 
 class BaseNode(Matcher, PropConsumer, ABC):
     """base class for Nodes and Stations."""
+
     def __init__(
         self,
         name: str,
@@ -247,8 +263,7 @@ class BaseNode(Matcher, PropConsumer, ABC):
     ):
         super().__init__()
         self.host, self.port = host, port
-        self.interface, self.params = [], {}
-        self.name = name
+        self.params, self.name = {}, name
         self.config, self.threads, self.actors, self.sensors = {}, {}, {}, {}
         self._lock = threading.Lock()
         # TODO: do this better
@@ -300,7 +315,7 @@ class BaseNode(Matcher, PropConsumer, ABC):
             self.server = TCPTalk(
                 self.host,
                 self.port,
-                ackcheck=self.ackcheck,
+                ackcheck=self._ackcheck,
                 executor=self.exec,
             )
             self.threads |= self.server.threads
@@ -314,7 +329,7 @@ class BaseNode(Matcher, PropConsumer, ABC):
         if self.__started is True:
             raise EnvironmentError("Node already started.")
         self.restart_server()
-        self.threads["main"] = self.exec.submit(self._start)
+        self.threads["main"] = self.exec.submit(trywrap(self._start, "main"))
         self.__started = True
 
     def nodeid(self):
@@ -353,3 +368,4 @@ class BaseNode(Matcher, PropConsumer, ABC):
     server = None
     server_events = None
     inbox = None
+    _ackcheck: Optional[Callable] = None

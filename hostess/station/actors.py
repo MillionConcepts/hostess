@@ -153,9 +153,21 @@ class ReportStringMatch(Actor):
                 return True
         raise NoMatch("does not match patterns")
 
-    def execute(self, node: "nodes.Node", line: str, *, path=None, **_):
-        node.actionable_events.append({"path": str(path), "content": line})
-
+    def execute(
+        self,
+        node: "nodes.Node",
+        line: str, patterns=(),
+        *,
+        path=None,
+        **_
+    ):
+        node.actionable_events.append(
+            {
+                "path": str(path),
+                "content": line,
+                "match": [p for p in patterns if re.search(p, line)]
+            }
+        )
     name = "grepreport"
     actortype = "action"
 
@@ -230,6 +242,7 @@ class FileSystemWatch(Sensor):
     def _set_patterns(self, patterns):
         self._patterns = patterns
         self.config["grepreport"]["match"]["patterns"] = patterns
+        self.config["grepreport"]["exec"]["patterns"] = patterns
 
     actions = (ReportStringMatch,)
     loggers = (LineLogger,)

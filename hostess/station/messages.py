@@ -79,19 +79,23 @@ def default_arg_packing(kwargs: dict[str, Any]) -> list[pro.PythonObject]:
     """
     interp = []
     for k, v in kwargs.items():
-        obj = obj2msg(v, k)
+        obj = pack_obj(v, k)
         interp.append(obj)
     return interp
 
 
 # TODO: optional base64 encoding for some channels
-def obj2msg(obj: Any, name: str = "") -> pro.PythonObject:
+def pack_obj(obj: Any, name: str = "") -> pro.PythonObject:
     """
     default function for serializing an in-memory object as a pro.PythonObject
     Message.
     """
     if isinstance(obj, (str, bytes, int, float)):
         scanf, chartype = obj2scanf(obj)
+        if isinstance(obj, str):
+            obj = obj.encode('utf-8')
+        elif isinstance(obj, NoneType):
+            obj = b"\x00"
         obj = pro.PythonObject(
             name=name,
             scanf=scanf,
@@ -154,13 +158,14 @@ def unpack_obj(obj: pro.PythonObject) -> Any:
     elif enum(obj, "serialization") == "dill":
         value = dill.loads(obj.value)
     elif obj.scanf:
-        value = struct.unpack(obj.scanf, obj.value)
-        if isinstance(value, bytes):
+        unpacked = struct.unpack(obj.scanf, obj.value)
+        if any(isinstance(v, bytes) for v in unpacked):
             chartype = enum(obj, "chartype")
             if chartype == "str":
-                value = str(value)
+                unpacked = tuple(map(lambda s: s.decode('utf-8'), unpacked))
             elif chartype == "nonetype":
-                value = None
+                unpacked = [None for _ in unpacked]
+        value = unpacked if len(unpacked) > 1 else unpacked[0]
     else:
         value = obj.value
     return value
@@ -177,7 +182,7 @@ def completed_task_msg(actiondict: dict, steps=None) -> pro.TaskReport:
     if len(actiondict['result']) > 1:
         raise NotImplementedError
     if len(actiondict['result']) == 1:
-        fields['result'] = obj2msg(actiondict.pop('result')[0])
+        fields['result'] = pack_obj(actiondict.pop('result')[0])
     fields['time'] = dict2msg(actiondict, pro.ActionTime)
     action = dict2msg(actiondict, pro.ActionReport)
     action.MergeFrom(pro.ActionReport(**fields))
