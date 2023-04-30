@@ -34,7 +34,66 @@ def associate_actor(cls, config, params, actors, props, name=None):
     return config, params, actors, props
 
 
-class Matcher(ABC):
+class AttrConsumer:
+    """
+    implements functionality for "consuming" the attributes of associated
+    objects. designed to permit Nodes and similar objects to promote the
+    interface properties of attached elements into their own interfaces as
+    pseudo-attributes.
+    """
+
+    def __init__(self):
+        self.attrefs = {}
+
+    def consume_property(self, obj, attr, newname=None):
+        """
+        promote the `attr` attribute of `obj` into this object's interface.
+        if `newname` is not None, assign it to the `newname` key of this
+        object's attribute reference dict (`attrefs`); otherwise, use the
+        original name.
+        """
+        newname = attr if newname is None else newname
+        self.attrefs[newname] = (obj, attr)
+
+    def __getattr__(self, attr):
+        """
+        if normal attribute lookup fails, attempt to refer it to a property
+        of an associated object.
+        """
+        ref = self.attrefs.get(attr)
+        if ref is None:
+            raise AttributeError
+        return getattr(ref[0], ref[1])
+
+    def __setattr__(self, attr, value):
+        """
+        refer assignments to pseudo-attributes defined in self.proprefs to the
+        properties of the underlying objects.
+        """
+        if attr == "attrefs":
+            return super().__setattr__(attr, value)
+        if (ref := self.attrefs.get(attr)) is not None:
+            return setattr(ref[0], ref[1], value)
+        return super().__setattr__(attr, value)
+
+    def __dir__(self):
+        """
+        add the pseudo-attributes in attrefs to this object's directory so
+        that they look real.
+        """
+        # noinspection PyUnresolvedReferences
+        return super().__dir__() + list(self.attrefs.keys())
+
+    def _get_interface(self):
+        return [k for k in self.attrefs.keys()]
+
+    def _set_interface(self, _):
+        raise TypeError("interface does not support assignment")
+
+    interface = property(_get_interface, _set_interface)
+
+
+class Matcher(AttrConsumer, ABC):
     """base class for things that can match sequences of actors."""
 
     def match(self, event: Any, category=None, **kwargs) -> list[Actor]:
@@ -67,7 +126,29 @@ class Matcher(ABC):
             return list(self.actors.values())
         return [r for r in self.actors.values() if r.actortype == actortype]
 
+    def add_element(self, cls: Union[type[Actor], type[Sensor]], name=None):
+        """
+        associate an Actor or Sensor with this object, consuming its
+        interface properties and making it available for matching or sensor
+        looping.
+        """
+        name = inc_name(cls.name if name is None else name, self.config)
+        element = cls()
+        element.name = name
+        if issubclass(cls, Actor):
+            self.actors[name] = element
+        elif issubclass(cls, Sensor):
+            self.sensors[name] = element
+        else:
+            raise TypeError(f"{cls} is not a valid subelement for this class.")
+        self.config[name], self.params[name] = element.config, element.params
+        for prop in element.interface:
+            self.consume_property(element, prop, f"{name}_{prop}")
+
     actors: dict[str, Actor]
+    config: dict
+    params: dict[str, Any]
+    sensors: dict[str, "Sensor"]
 
 
 class Sensor(Matcher, ABC):
@@ -94,6 +175,11 @@ class Sensor(Matcher, ABC):
         self.check = configured(self.check, self.config["check"])
         self.memory = None
 
+    def add_element(self, cls: type[Actor], name=None):
+        if issubclass(cls, Sensor):
+            raise TypeError("cannot add Sensors to a Sensor.")
+        super().add_element(cls, name)
+
     def check(self, node, **check_kwargs):
         self.memory, events = self.checker(self.memory, **check_kwargs)
         for event in events:
@@ -104,6 +190,18 @@ class Sensor(Matcher, ABC):
                     actor.execute(node, event)
             except NoActorForEvent:
                 continue
+
+    def __str__(self):
+        pstring = f"{type(self).__name__} ({self.name})\n"
+        pstring += f"interface:\n"
+        for attr in self.interface:
+            pstring += f"    {attr}: {getattr(self, attr)}\n"
+        pstring += f"actors: {[a for a in self.actors]}\n"
+        pstring += f"config: {self.config}\n"
+        return pstring
+
+    def __repr__(self):
+        return self.__str__()
 
     base_config = MPt({})
     checker: Callable
@@ -184,69 +282,7 @@ def validate_instruction(instruction):
         raise NoTaskError
 
 
-class PropConsumer:
-    """
-    implements functionality for "consuming" the properties of associated
-    objects. designed to permit Nodes and similar objects to promote the
-    interface properties of attached elements into their own interfaces as
-    pseudo-attributes.
-    """
-
-    def __init__(self):
-        self.proprefs = {}
-
-    def consume_property(self, obj, attr, newname=None):
-        """
-        promote the `attr` property of `obj` into this object's interface.
-        if `newname` is not None, assign it to the `newname` key of this
-        object's property reference dict (`proprefs`); otherwise, use the
-        original name.
-        """
-        prop = filtern(lambda m: m[0] == attr, getmembers_static(type(obj)))[1]
-        if not isinstance(prop, property):
-            raise TypeError(f"{attr} of {type(obj).__name__} not a property")
-        newname = attr if newname is None else newname
-        self.proprefs[newname] = (obj, attr)
-
-    def __getattr__(self, attr):
-        """
-        if normal attribute lookup fails, attempt to refer it to a property
-        of an associated object.
-        """
-        ref = self.proprefs.get(attr)
-        if ref is None:
-            raise AttributeError
-        return getattr(ref[0], ref[1])
-
-    def __setattr__(self, attr, value):
-        """
-        refer assignments to pseudo-attributes defined in self.proprefs to the
-        properties of the underlying objects.
-        """
-        if attr == "proprefs":
-            return super().__setattr__(attr, value)
-        if (ref := self.proprefs.get(attr)) is not None:
-            return setattr(ref[0], ref[1], value)
-        return super().__setattr__(attr, value)
-
-    def __dir__(self):
-        """
-        add the pseudo-attributes in proprefs to this object's directory so
-        that they look real.
-        """
-        # noinspection PyUnresolvedReferences
-        return super().__dir__() + list(self.proprefs.keys())
-
-    def _get_interface(self):
-        return [k for k in self.proprefs.keys()]
-
-    def _set_interface(self, _):
-        raise TypeError("interface does not support assignment")
-
-    interface = property(_get_interface, _set_interface)
-
-
-class BaseNode(Matcher, PropConsumer, ABC):
+class BaseNode(Matcher, ABC):
     """base class for Nodes and Stations."""
 
     def __init__(
@@ -276,28 +312,6 @@ class BaseNode(Matcher, PropConsumer, ABC):
         self.poll, self.timeout, self.signals = poll, timeout, {}
         if start is True:
             self.start()
-
-    def add_element(self, cls: Union[type[Actor], type[Sensor]], name=None):
-        """
-        associate an Actor or Sensor with this object, consuming its
-        interface properties and making it available for matching or sensor
-        looping.
-        """
-        name = inc_name(cls.name if name is None else name, self.config)
-        element = cls()
-        element.name = name
-        if issubclass(cls, Actor):
-            self.actors[name] = element
-        elif issubclass(cls, Sensor):
-            if len(self.sensors) > self.n_threads - 2:
-                raise EnvironmentError("Not enough threads to add sensor.")
-            self.sensors[name] = element
-        else:
-            raise TypeError(f"{cls} is not a valid subelement for this class.")
-        self.config[name], self.params[name] = element.config, element.params
-        for prop in element.interface:
-            self.consume_property(element, prop, f"{name}_{prop}")
-        self.threads = {}
 
     def restart_server(self):
         """
@@ -363,6 +377,20 @@ class BaseNode(Matcher, PropConsumer, ABC):
                 self._lock.release()
         else:
             raise TypeError
+
+    def __str__(self):
+        pstring = f"{type(self).__name__} ({self.name})\n"
+        pstring += f"threads: {self.threads}\n"
+        pstring += f"interface:\n"
+        for attr in self.interface:
+            pstring += f"    {attr}: {getattr(self, attr)}\n"
+        pstring += f"actors: {[a for a in self.actors]}\n"
+        pstring += f"sensors: {[s for s in self.sensors]}\n"
+        pstring += f"config: {self.config}"
+        return pstring
+
+    def __repr__(self):
+        return self.__str__()
 
     locked = property(_is_locked, _set_locked)
     __started = False

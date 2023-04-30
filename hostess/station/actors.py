@@ -30,6 +30,33 @@ from hostess.station.handlers import (
 NODE_ACTION_FIELDS = frozenset({"id", "start", "stop", "status", "result"})
 
 
+def init_execution(node, instruction, key, noid):
+    """'invariant' start of a 'do' execution"""
+    if instruction.HasField("action"):
+        action = instruction.action
+    else:
+        action = instruction
+    if key is None:
+        key = random.randint(0, int(1e7))
+    node.actions[key] = actiondict(action)
+    report = node.actions[key]  # just shorthand
+    if noid is False:
+        report["instruction_id"] = key
+    return action, report
+
+
+def conclude_execution(result, report):
+    """'invariant' cleanup for a 'do' execution"""
+    if isinstance(result, Exception):
+        report["status"] = "crash"
+    else:
+        report["status"] = "success"
+    # in some cases could check stderr but would have to be careful
+    # due to the many processes that communicate on stderr on purpose
+    report["end"] = dt.datetime.utcnow()
+    report["duration"] = report["end"] - report["start"]
+
+
 class PipeActorPlaceholder(Actor):
     """
     pipeline execution actor. resubmits individual steps of pipelines as
@@ -65,30 +92,15 @@ class FunctionCall(Actor):
         noid=False,
         **_,
     ) -> Any:
-        if instruction.HasField("action"):
-            action = instruction.action
-        else:
-            action = instruction
+        action, report = init_execution(node, instruction, key, noid)
         caches, call = make_function_call(action.functioncall)
-        if key is None:
-            key = random.randint(0, int(1e7))
-        node.actions[key] = actiondict(action) | caches
-        report = node.actions[key]  # just shorthand
-        if noid is False:
-            report["instruction_id"] = key
+        node.actions[key] |= caches
         call()
         if len(caches["result"]) != 0:
             caches["result"] = caches["result"][0]
         else:
             caches["result"] = None
-        if isinstance(caches["result"], Exception):
-            report["status"] = "crash"
-        else:
-            report["status"] = "success"
-        # in some cases could check stderr but would have to be careful
-        # due to the many processes that communicate on stderr on purpose
-        report["end"] = dt.datetime.utcnow()
-        report["duration"] = report["end"] - report["start"]
+        conclude_execution(caches['result'], report)
 
     name = "functioncall"
     actortype = "action"

@@ -20,7 +20,7 @@ from hostess.station.messages import (
     unpack_obj,
     make_instruction,
 )
-from hostess.station.proto_utils import make_timestamp, dict2msg, enum
+from hostess.station.proto_utils import make_timestamp, enum
 from hostess.station.talkie import (
     stsend,
     read_comm,
@@ -172,6 +172,7 @@ class Node(bases.BaseNode):
         send Update to Station informing it that the node is exiting, and why.
         """
         mdict = self._base_message()
+        mdict['reason'] = 'exiting'
         status = "crashed" if exception is not None else "shutdown"
         mdict["state"]["status"] = status
         message = Parse(json.dumps(mdict), pro.Update())
@@ -190,15 +191,15 @@ class Node(bases.BaseNode):
         self.send_to_station(message)
 
     def _check_in(self):
-        """send check-in Update to the STation."""
+        """send check-in Update to the Station."""
         mdict = self._base_message()
         mdict["reason"] = "scheduled"
         # TODO: multi-step case
-        action_reports = []
-        for id_, action in self.actions.items():
-            action_reports.append(dict2msg(action, pro.ActionReport))
+        # action_reports = []
+        # for id_, action in self.actions.items():
+        #     action_reports.append(dict2msg(action, pro.ActionReport))
         message = Parse(json.dumps(mdict), pro.Update())
-        message.MergeFrom(pro.Update(running=action_reports))
+        # message.MergeFrom(pro.Update(running=action_reports))
         self.send_to_station(message)
         self.reset_update_timer()
 
@@ -248,34 +249,35 @@ class Node(bases.BaseNode):
 
     def _handle_instruction(self, instruction: Message):
         """interpret, reply to, and execute (if relevant) an Instruction."""
+        status, err = "wilco", ''
         try:
             bases.validate_instruction(instruction)
-            status, err = "wilco", ''
             if enum(instruction, "type") == "configure":
                 self._configure_from_instruction(instruction)
-        except bases.DoNotUnderstand as what:
-            # TODO: maybe add some more failure info
-            rule, status = None, "bad_request"
-            err = pack_obj(f"{type(what)}: {what}")
-        # noinspection PyTypeChecker
-        self._reply_to_instruction(instruction, status, err)
-        self._log(instruction, direction="received", status=status, err=err)
-        # note that config/shutdown etc. behavior is not performed by Actors.
-        # TODO: implement shutdown etc.
-        if enum(instruction, "type") != "do":
-            return
-        actions = self._match_task_instruction(instruction)
-        if actions is None:
-            return
-        if instruction.id is None:
-            key, noid, noid_infix = random.randint(0, int(1e7)), True, "noid_"
-        else:
-            key, noid, noid_infix = instruction.id, False, ""
-        threadname = f"Instruction_{noid_infix}{key}"
-        # TODO: this could get sticky for the multi-step case
-        self.threads[threadname] = self.exec.submit(
-            self._do_actions, actions, instruction, key, noid
-        )
+            # config/shutdown etc. behavior is not performed by Actors.
+            # TODO: implement shutdown etc.
+            if enum(instruction, "type") != "do":
+                return
+            actions = self._match_task_instruction(instruction)
+            if actions is None:
+                return
+            if instruction.id is None:
+                key, noid, noid_infix = (
+                    random.randint(0, int(1e7)), True, "noid_"
+                )
+            else:
+                key, noid, noid_infix = instruction.id, False, ""
+            threadname = f"Instruction_{noid_infix}{key}"
+            # TODO: this could get sticky for the multi-step case
+            self.threads[threadname] = self.exec.submit(
+                self._do_actions, actions, instruction, key, noid
+            )
+        except bases.DoNotUnderstand as dne:
+            status, err = "bad_request", dne
+        finally:
+            # noinspection PyTypeChecker
+            self._reply_to_instruction(instruction, status, err)
+            self._log(instruction, direction="recv", status=status, err=err)
 
     def send_to_station(self, message):
         """send a Message to the Station."""
@@ -284,12 +286,12 @@ class Node(bases.BaseNode):
         response, _ = stsend(message, *self.station)
         if response == "timeout":
             # TODO: do something else
-            self._log("timeout", direction="received")
+            self._log("timeout", direction="recv")
             return
         decoded = read_comm(response)
         if isinstance(decoded, dict):
             decoded = decoded["body"]
-        self._log(decoded, direction="received")
+        self._log(decoded, direction="recv")
         if isinstance(decoded, pro.Instruction):
             self.instruction_queue.append(decoded)
 

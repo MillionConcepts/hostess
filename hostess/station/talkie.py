@@ -12,7 +12,7 @@ from itertools import cycle
 from types import MappingProxyType as MPt
 from typing import Optional, Callable, Union
 
-from google.protobuf.message import Message
+from google.protobuf.message import Message, DecodeError
 
 from hostess.station.proto import station_pb2 as hostess_proto
 from hostess.station.proto_utils import m2d
@@ -100,7 +100,10 @@ def read_comm(
     except AttributeError:
         err.append("mtype")
         return {"header": header, "body": body, "err": ";".join(err)}
-    # TODO: handling for bad decode
+    except DecodeError:
+        err.append('protobuf decode')
+        print(err, f"header len: {header['length']}, real len: {len(body)}")
+        return {"header": header, "body": body, "err": ";".join(err)}
     if unpack_proto is True:
         message = m2d(message)
     return {"header": header, "body": message, "err": ";".join(err)}
@@ -395,7 +398,8 @@ class TCPTalk:
             else:
                 response, status = HOSTESS_ACK, "sent ack"
             if response is not None:
-                conn.send(response)
+                conn.sendall(response)
+            conn.close()
             return None, status, "ok"
         except (KeyError, ValueError) as kve:
             # someone else got here first
@@ -423,7 +427,9 @@ class TCPTalk:
             return None, False
 
 
-def tcp_send(data, host, port, timeout=10, delay=0, chunksize=None):
+def tcp_send(
+    data, host, port, timeout=10, delay=0, chunksize=None, eomstrs=None
+):
     """simple utility for one-shot TCP send."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(timeout)
@@ -437,7 +443,20 @@ def tcp_send(data, host, port, timeout=10, delay=0, chunksize=None):
         else:
             sock.sendall(data)
         try:
-            return sock.recv(1024), sock.getsockname()
+            reattempts = 0
+            data = sock.recv(4096)
+            response = data
+            while reattempts < 10:
+                while len(data) > 0:
+                    data = sock.recv(4096)
+                    response += data
+                if eomstrs is None:
+                    break
+                elif any([response.endswith(e) for e in eomstrs]):
+                    break
+                reattempts += 1
+                time.sleep(0.1)
+            return response, sock.getsockname()
         except TimeoutError:
             return "timeout", sock.getsockname()
         finally:
@@ -448,4 +467,12 @@ def tcp_send(data, host, port, timeout=10, delay=0, chunksize=None):
 @wraps(tcp_send)
 def stsend(data, host, port, timeout=10, delay=0, chunksize=None):
     """wrapper for tcpsend that autoencodes data as hostess comms."""
-    return tcp_send(make_comm(data), host, port, timeout, delay, chunksize)
+    return tcp_send(
+        make_comm(data),
+        host,
+        port,
+        timeout,
+        delay,
+        chunksize,
+        (HOSTESS_EOM, HOSTESS_ACK)
+    )

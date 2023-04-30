@@ -207,9 +207,11 @@ message Action{
     FunctionCall functioncall = 5;
     ScriptCall scriptcall = 6;
     CodeBlob scriptblob = 7;
+    /* actions that should be executed using a locally-instantiated callable */
+    PythonObject localcall = 8;
   }
   /* this action blocks new actions from execution */
-  bool wait = 8;
+  bool wait = 9;
 }
 
 message Pipeline {uint32 id = 1; string name = 2; repeated Action steps = 3;}
