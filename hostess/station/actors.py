@@ -47,6 +47,7 @@ def init_execution(node, instruction, key, noid):
 
 def conclude_execution(result, report):
     """'invariant' cleanup for a 'do' execution"""
+    report['result'] = result
     if isinstance(result, Exception):
         report["status"] = "crash"
     else:
@@ -96,11 +97,11 @@ class FunctionCall(Actor):
         caches, call = make_function_call(action.functioncall)
         node.actions[key] |= caches
         call()
-        if len(caches["result"]) != 0:
-            caches["result"] = caches["result"][0]
+        if len(node.actions[key]['result']) != 0:
+            result = node.actions[key]["result"]
         else:
-            caches["result"] = None
-        conclude_execution(caches['result'], report)
+            result = None
+        conclude_execution(result, report)
 
     name = "functioncall"
     actortype = "action"

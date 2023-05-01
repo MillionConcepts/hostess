@@ -49,19 +49,23 @@ def make_comm(body: Union[bytes, Message]) -> bytes:
     create a hostess comm from a buffer or a protobuf Message.
     automatically attach header and footer.
     """
+    wrapsize = HEADER_STRUCT.size + len(HOSTESS_EOM)
     if "SerializeToString" in dir(body):
         # i.e., it's a protobuf Message
         buf = body.SerializeToString()
-        header_kwargs = {"mtype": body.__class__.__name__, "length": len(buf)}
+        header_kwargs = {
+            "mtype": body.__class__.__name__, "length": len(buf) + wrapsize
+        }
     else:
-        header_kwargs, buf = {"mtype": "none", "length": len(body)}, body
+        buf = body
+        header_kwargs = {"mtype": "none", "length": len(body) + wrapsize}
     return make_header(**header_kwargs) + buf + HOSTESS_EOM
 
 
 def read_header(buffer: bytes) -> dict[str, Union[str, bool, int]]:
     """attempt to read a hostess header from the first 13 bytes of `buffer`."""
     try:
-        unpacked = HEADER_STRUCT.unpack(buffer[:14])
+        unpacked = HEADER_STRUCT.unpack(buffer[:13])
         assert buffer[:8] == HOSTESS_SOH
         try:
             mtype = CODE_TO_MTYPE[unpacked[1]]
@@ -88,7 +92,7 @@ def read_comm(
     err, body = [], buffer[HEADER_STRUCT.size :]
     if body.endswith(HOSTESS_EOM):
         body = body[: -len(HOSTESS_EOM)]
-    if len(body) != header["length"]:
+    if len(buffer) != header["length"]:
         err.append("length")
     if header["mtype"] == "none":
         return {"header": header, "body": body, "err": ";".join(err)}
@@ -102,7 +106,6 @@ def read_comm(
         return {"header": header, "body": body, "err": ";".join(err)}
     except DecodeError:
         err.append('protobuf decode')
-        print(err, f"header len: {header['length']}, real len: {len(body)}")
         return {"header": header, "body": body, "err": ";".join(err)}
     if unpack_proto is True:
         message = m2d(message)
@@ -118,14 +121,13 @@ class TCPTalk:
         port,
         n_threads=4,
         poll=0.01,
-        decoder: Optional[Callable] = read_comm,
+        decoder: Callable = read_comm,
         ackcheck: Optional[Callable] = None,
         executor: Optional[ThreadPoolExecutor] = None,
         lock: Optional[threading.Lock] = None,
-        chunksize: int = 4096,
+        chunksize: int = 16384,
         delay: float = 0.01,
         timeout: int = 10,
-        eomstr: bytes = HOSTESS_EOM,
     ):
         """
         Args:
@@ -143,7 +145,6 @@ class TCPTalk:
             chunksize: chunk size for reading responses from socket
             delay: time to wait before checking socket again on bad reads
             timeout: timeout on socket
-            eomstr: expected end-of-message string
         """
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         atexit.register(self.sock.close)
@@ -151,7 +152,6 @@ class TCPTalk:
         self.timeout, self.delay, self.chunksize = timeout, delay, chunksize
         self.poll, self.decoder, self.ackcheck = poll, decoder, ackcheck
         self.sel = selectors.DefaultSelector()
-        self.eomstr = eomstr
         try:
             self.sock.bind((host, port))
             self.sock.listen()
@@ -332,57 +332,47 @@ class TCPTalk:
         """
         read-from-socket callback for read threads. attached to keys by `sel`.
         """
-        event, stream, status = None, b"", "unk"
+        event, status, stream = None, "unk", b""
         try:
             self.sel.unregister(conn)
-            reading = True
             waiting, unwait = timeout_factory(timeout=self.timeout)
-            while reading:
-                data, status, reading = self._tryread(conn)
+            stream, length = conn.recv(self.chunksize), None
+            length = read_header(stream)['length']
+            while waiting() >= 0:  # syntactic handwaving.. breaks w/exception.
+                if (length is not None) and (len(stream) >= length):
+                    break
+                data, status = self._tryread(conn)
                 if status == "unavailable":
-                    waiting()
                     time.sleep(self.delay)
                     continue
-                unwait()
                 stream += data
-            if status in ("stopped", "eom"):
-                # tell the selector the socket is ready for an `ack` callback
-                # TODO: something else for not-eom?
-                # TODO: add a hook here to attach the received data to a kwarg
-                #  of the ack function
-                if self.decoder is not None:
-                    stream, event, status = self._trydecode(stream)
-                self.sel.register(
-                    conn, selectors.EVENT_WRITE, curry(self._ack)(stream)
-                )
+                unwait()
+            # tell the selector the socket is ready for an `ack` callback
+            stream, event, status = self._trydecode(stream)
+            self.sel.register(
+                conn, selectors.EVENT_WRITE, curry(self._ack)(stream)
+            )
         except BrokenPipeError:
             status = "broken pipe"
         except TimeoutError:
             status = "timed out"
-        except OSError as ose:
-            status = str(ose)
+        except (IOError, KeyError, OSError) as err:
+            status = f"{type(err)}: {str(err)}"
         event = f"read {len(stream)}" if event is None else event
         return stream, event, status
 
     def _tryread(
         self, conn: socket.socket
-    ) -> tuple[Optional[bytes], str, bool]:
+    ) -> tuple[Optional[bytes], str]:
         """inner read-individual-chunk-from-socket handler for `read`"""
-        status, reading = "streaming", True
+        status = "streaming"
         try:
             data = conn.recv(self.chunksize)
         except OSError as ose:
             if "temporarily" not in str(ose):
                 raise
-            if self.eomstr is None:
-                raise
-            return None, "unavailable", True
-        if data == b"":
-            status, reading = "stopped", False
-        if self.eomstr is not None:
-            if data.endswith(self.eomstr):
-                status, reading = "eom", False
-        return data, status, reading
+            return None, "unavailable"
+        return data, status
 
     def _ack(self, data, conn: socket.socket) -> tuple[None, str, str]:
         """
@@ -393,13 +383,12 @@ class TCPTalk:
         """
         try:
             self.sel.unregister(conn)
+            response, status = make_comm(b""), "sent_ack"
             if self.ackcheck is not None:
                 response, status = self.ackcheck(conn, data)
-            else:
-                response, status = HOSTESS_ACK, "sent ack"
-            if response is not None:
-                conn.sendall(response)
-            conn.close()
+            if response is None:
+                return None, status, ""
+            conn.sendall(response)
             return None, status, "ok"
         except (KeyError, ValueError) as kve:
             # someone else got here first
@@ -428,14 +417,15 @@ class TCPTalk:
 
 
 def tcp_send(
-    data, host, port, timeout=10, delay=0, chunksize=None, eomstrs=None
+    data, host, port, timeout=10, delay=0, chunksize=None, headerread=None
 ):
     """simple utility for one-shot TCP send."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(timeout)
         sock.connect((host, port))
+        sockname = sock.getsockname()
         if (delay > 0) or (chunksize is not None):
-            chunksize = 4096 if chunksize is None else chunksize
+            chunksize = 16384 if chunksize is None else chunksize
             while len(data) > 0:
                 data, chunk = data[chunksize:], data[:chunksize]
                 sock.send(chunk)
@@ -443,24 +433,40 @@ def tcp_send(
         else:
             sock.sendall(data)
         try:
-            reattempts = 0
-            data = sock.recv(4096)
-            response = data
-            while reattempts < 10:
-                while len(data) > 0:
-                    data = sock.recv(4096)
-                    response += data
-                if eomstrs is None:
-                    break
-                elif any([response.endswith(e) for e in eomstrs]):
-                    break
-                reattempts += 1
-                time.sleep(0.1)
-            return response, sock.getsockname()
+            response = read_from_socket(headerread, sock, timeout)
+            return response, sockname
         except TimeoutError:
-            return "timeout", sock.getsockname()
+            return "timeout", sockname
         finally:
             sock.close()
+
+
+def read_from_socket(headerread, sock, timeout):
+    # TODO, maybe: move _tryread?
+    waiting, unwait = timeout_factory(timeout=timeout)
+    data = sock.recv(16384)
+    response, length = data, None
+    try:
+        if headerread is not None:
+            try:
+                length = headerread(response)['length']
+            except (IOError, KeyError):
+                pass
+        while True:
+            if (length is not None) and (len(response) >= length):
+                break
+            data = sock.recv(16384)
+            if len(data) == 0:
+                if length is None:
+                    break
+                waiting()
+                time.sleep(0.01)
+                continue
+            response += data
+            unwait()
+    finally:
+        sock.close()
+    return response
 
 
 # TODO: consider benchmarking pos-only / unnested versions
@@ -474,5 +480,5 @@ def stsend(data, host, port, timeout=10, delay=0, chunksize=None):
         timeout,
         delay,
         chunksize,
-        (HOSTESS_EOM, HOSTESS_ACK)
+        headerread=read_header
     )

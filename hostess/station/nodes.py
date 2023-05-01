@@ -5,7 +5,7 @@ import random
 import socket
 import time
 from collections import defaultdict
-from typing import Union, Literal, Mapping, Optional
+from typing import Union, Literal, Mapping, Optional, Any
 
 from dustgoggles.func import gmap
 from dustgoggles.structures import rmerge
@@ -106,6 +106,7 @@ class Node(bases.BaseNode):
             if action["status"] != "running":
                 self._log(action)
                 # TODO: determine if we should reset update timer here
+                # TODO: error handling
                 self._report_on_action(action)
                 # TODO: if report was successful, record the response
                 to_clean.append(instruction_id)
@@ -227,7 +228,9 @@ class Node(bases.BaseNode):
         try:
             return self.match(event, "action")
         except StopIteration:
-            raise bases.NoActorForEvent
+            raise bases.NoActorForEvent(
+                str(self.explain_match(event, "action"))
+            )
 
     def _do_actions(self, actions, instruction, key, noid):
         for action in actions:
@@ -404,6 +407,21 @@ class Station(bases.BaseNode):
         )
         self.outbox[node].append(make_instruction("configure", config=config))
 
+    # TODO, maybe: signatures on these match-and-execute things are getting
+    #  a little weird and specialized. maybe that's ok, but maybe we should
+    #  make a more unified interface.
+    def match_and_execute(self, obj: Any, category: str):
+        try:
+            actions = self.match(obj, category)
+        except bases.NoActorForEvent:
+            # TODO: _plausibly_ log this?
+            return
+        except (AttributeError, KeyError):
+            # TODO: log this
+            return
+        for action in actions:
+            action.execute(self, obj)
+
     def _handle_info(self, message: Message):
         """
         check info received in a Message against the Station's 'info' Actors,
@@ -412,12 +430,18 @@ class Station(bases.BaseNode):
         """
         notes = gmap(unpack_obj, message.info)
         for note in notes:
-            try:
-                actions = self.match(note, "info")
-            except bases.NoActorForEvent:
-                continue
-            for action in actions:
-                action.execute(self, note)
+            self.match_and_execute(note, "info")
+
+    def _handle_report(self, message: Message):
+        if not message.HasField('completed'):
+            return
+        # TODO: handle instruction tracking / report logging
+        if len(message.completed.steps) > 0:
+            raise NotImplementedError
+        if not message.completed.HasField('action'):
+            return
+        obj = unpack_obj(message.completed.action.result)
+        self.match_and_execute(obj, "completion")
 
     def _handle_incoming_message(self, message: pro.Update):
         """
@@ -425,12 +449,12 @@ class Station(bases.BaseNode):
         will eventually also deal with node state tracking, logging, etc.
         """
         # TODO: internal state tracking for crashed and shutdown nodes
-        try:
-            return self._handle_info(message)
-        except (AttributeError, KeyError):
-            pass
-        # TODO: log action report
-        # TODO: log other stuff
+        for method in self._handle_info, self._handle_report:
+            try:
+                method(message)
+            except NotImplementedError:
+                # TODO: plausibly some logging
+                pass
 
     def _start(self):
         """
@@ -460,13 +484,13 @@ class Station(bases.BaseNode):
             #  inbox + at exit.
             if comm["err"]:
                 # TODO: send did-not-understand
-                return HOSTESS_ACK, "notified sender of error"
+                return make_comm(b""), "notified sender of error"
             message = comm["body"]
             try:
                 nodename = message.nodeid.name
             except (AttributeError, ValueError):
                 # TODO: send not-enough-info message
-                return HOSTESS_ACK, "notified sender not enough info"
+                return make_comm(b""), "notified sender not enough info"
             # interpret the comm here in case we want to immediately send a
             # response based on its contents (e.g., in a gPhoton 2-like
             # pipeline that's mostly coordinating execution of a big list of
@@ -482,10 +506,13 @@ class Station(bases.BaseNode):
             #  we might want a special control code for that.
             queue = self.outbox[nodename]
             if len(queue) == 0:
-                return HOSTESS_ACK, "sent ack"
+                return make_comm(b""), "sent ack"
             response = queue.pop()
             status = f"sent instruction {response.id}"
             return make_comm(response), status
+        # TODO: handle this in some kind of graceful way
+        except Exception as ex:
+            raise
         finally:
             self.locked = False
 

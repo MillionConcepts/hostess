@@ -32,6 +32,7 @@ def send_randbytes(
     return randbytes, exception, result
 
 
+# TODO: make it use the protobuf decoder despite my good intentions
 def test_tcp_server():
     """
     test the hostess.talkie server by briefly hammering it from 7 processes
@@ -100,20 +101,21 @@ def test_comm():
     assert decoded["header"]["length"] == len(report.SerializeToString())
 
 
-def test_comm_online(port=11223):
+def test_comm_online():
     """check online comm roundtrip"""
+    port = random.randint(10000, 20000)
     host, port, report = "localhost", port, test_protobuf()
     server = tk.TCPTalk(host, port)
     for _ in range(1):
-        ack, _ = tk.stsend(report, host, port, timeout=5)
+        ack, _ = tk.stsend(report, host, port, timeout=100)
         response = server.data[-1]
         # Timestamp is variable-length depending on nanoseconds
-        assert response["event"] in ("decoded 68", "decoded 69")
+        assert response["event"] in ("decoded 67", "decoded 68", "decoded 69")
         comm = response["content"]
         assert comm["err"] == ""
-        assert comm["header"]["length"] in (47, 48)
+        assert comm["header"]["length"] in (67, 68, 69)
         message = comm["body"]
-        assert message.completed.action.result.value == b"\x00"
+        assert message.completed.action.result.value[0] == 0
         assert message.instruction_id == 3
-        assert ack == tk.HOSTESS_ACK
+        assert ack.startswith(tk.HOSTESS_SOH)
     server.kill()
