@@ -102,8 +102,10 @@ class Matcher(AttrConsumer, ABC):
                 matching_actors.append(actor)
             except (NoMatch, AttributeError, KeyError, ValueError, TypeError):
                 continue
-            return matching_actors
-        raise NoActorForEvent
+        if len(matching_actors) == 0:
+            raise NoActorForEvent
+        return matching_actors
+
 
     # TODO: maybe redundant
     def explain_match(self, event: Any, category=None, **kwargs) -> dict[str]:
