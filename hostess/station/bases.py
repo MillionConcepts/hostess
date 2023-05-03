@@ -95,7 +95,7 @@ class Matcher(AttrConsumer, ABC):
 
     def match(self, event: Any, category=None, **kwargs) -> list[Actor]:
         matching_actors = []
-        actors = self.matching_actors(category)
+        actors = self.filter_actors_by_category(category)
         for actor in actors:
             try:
                 actor.match(event, **kwargs)
@@ -106,11 +106,10 @@ class Matcher(AttrConsumer, ABC):
             raise NoActorForEvent
         return matching_actors
 
-
     # TODO: maybe redundant
     def explain_match(self, event: Any, category=None, **kwargs) -> dict[str]:
         reasons = {}
-        actors = self.matching_actors(category)
+        actors = self.filter_actors_by_category(category)
         for actor in actors:
             try:
                 reasons[actor.name] = actor.match(event, **kwargs)
@@ -120,7 +119,7 @@ class Matcher(AttrConsumer, ABC):
                 reasons[actor.name] = f"{type(err)}: {err}"
         return reasons
 
-    def matching_actors(self, actortype):
+    def filter_actors_by_category(self, actortype):
         if actortype is None:
             return list(self.actors.values())
         return [r for r in self.actors.values() if r.actortype == actortype]
