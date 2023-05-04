@@ -106,7 +106,6 @@ class Matcher(AttrConsumer, ABC):
             raise NoActorForEvent
         return matching_actors
 
-    # TODO: maybe redundant
     def explain_match(self, event: Any, category=None, **kwargs) -> dict[str]:
         reasons = {}
         actors = self.filter_actors_by_category(category)
@@ -152,8 +151,6 @@ class Matcher(AttrConsumer, ABC):
 class Sensor(Matcher, ABC):
     """bass class for watching an input source."""
 
-    # TODO: config here has to be initialized, like in Definition.
-    #  and perhaps should be propagated up in a flattened way
     def __init__(self):
         super().__init__()
         if "sources" in dir(self):
