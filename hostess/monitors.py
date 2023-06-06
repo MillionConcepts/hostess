@@ -53,7 +53,7 @@ class Bouncer(FakeBouncer):
     def clean(self):
         now = time.time()
         self.events = list(
-            filter(lambda t: now - t > self.window, self.events)
+            filter(lambda t: (now - t) < self.window, self.events)
         )
 
     def block(self):
@@ -157,7 +157,6 @@ class AbstractMonitor(ABC):
             self.total = self.absolute - self.first
         if lap is True:
             self.last = self.absolute
-            self.lap += 1
 
     def update(self, lap=False):
         if self.paused is True:
@@ -490,4 +489,6 @@ class TimeSwitcher:
 
     def __str__(self):
         return self.__repr__()
+
+
 
