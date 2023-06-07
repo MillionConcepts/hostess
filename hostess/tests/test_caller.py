@@ -8,7 +8,7 @@ from hostess.caller import (
     generic_python_endpoint, to_heredoc, format_deserializer, format_importer
 )
 from hostess.subutils import run
-from hostess.tests.test_utilz import defwrap
+from hostess.tests.utilz import defwrap
 
 
 def test_to_heredoc():

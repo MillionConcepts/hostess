@@ -37,6 +37,3 @@ def test_di():
 
     somelist = [1, 2, 3]
     assert pointless_layer(id(somelist)) == 1
-
-
-
