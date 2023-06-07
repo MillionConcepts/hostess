@@ -9,7 +9,7 @@ import time
 from functools import wraps
 from pathlib import Path
 from socket import gethostname
-from typing import Callable, MutableMapping, Optional, Union, Sequence, Any
+from typing import Callable, MutableMapping, Optional, Sequence, Any, Hashable
 
 import rich.console
 from cytoolz import first
@@ -25,9 +25,9 @@ def filestamp() -> str:
     return re.sub(r"[-: ]", "_", stamp()[:-2])
 
 
-def logstamp() -> str:
+def logstamp(extra: int = 0) -> str:
     """shorthand for standardized text timestamp only (no hostname)"""
-    return f"{dt.datetime.utcnow().isoformat()[:-7]}"
+    return f"{dt.datetime.utcnow().isoformat()[:(-7 + extra)]}"
 
 
 hostess_CONSOLE = rich.console.Console()
@@ -51,14 +51,9 @@ def gb(b, round_to=2):
         return round(value, round_to)
 
 
-def keygrab(mapping_list, key, value):
-    """returns first element of mapping_list such that element[key]==value"""
-    return next(filter(lambda x: x[key] == value, mapping_list))
-
-
 # noinspection PyUnresolvedReferences,PyProtectedMember
 def infer_stream_length(
-    stream: Union[_io.BufferedReader, _io._IOBase, Path]
+    stream: _io.BufferedReader | _io.BinaryIO | Path | str | requests.Response,
 ) -> Optional[int]:
     """
     attempts to infer the size of a potential read from an object.
@@ -139,31 +134,42 @@ def clear_cached_results(path, prefix):
         result.unlink()
 
 
-def record_and_yell(message: str, cache: MutableMapping, loud: bool = False):
+def record_and_yell(
+    message: str, cache: MutableMapping, loud: bool = False, extra: int = 0
+):
     """
     place message into a cache object with a timestamp; optionally print it
     """
     if loud is True:
         print(message)
-    cache[logstamp()] = message
+    cache[logstamp(extra)] = message
 
 
 def notary(
     cache: Optional[MutableMapping] = None,
-) -> Callable[[str, bool, bool], Optional[MutableMapping]]:
+    be_loud: bool = False,
+    resolution: int = 0,
+) -> Callable[[Any], Optional[MutableMapping]]:
     """
     create a function that records, timestamps, and optionally prints messages.
     if you pass eject=True to that function, it will return its note cache.
     Args:
         cache: cache for notes (if None, creates a dict)
+        be_loud: if True, makes output function verbose by default. individual
+            calls can override this setting.
+        resolution: time resolution in significant digits after the second.
+            collisions can occur if entries are sent faster than the time
+            resolution.
     Returns:
         note: callable for notetaking
     """
     if cache is None:
         cache = {}
 
+    resolution = resolution if resolution == 0 else resolution + 1
+
     def note(
-        message: str = "", loud: bool = False, eject: bool = False
+        message: str = "", loud: bool = be_loud, eject: bool = False
     ) -> Optional[MutableMapping]:
         """
         Args:
@@ -176,7 +182,7 @@ def notary(
         """
         if eject is True:
             return cache
-        return record_and_yell(message, cache, loud)
+        return record_and_yell(message, cache, loud, resolution)
 
     return note
 
@@ -274,9 +280,7 @@ def timeout_factory(
     return waiting, unwait
 
 
-def signal_factory(
-    threads: MutableMapping,
-) -> Callable[[str, Optional[int]], None]:
+def signal_factory(threads: MutableMapping,) -> Callable[[Hashable], None]:
     """
     creates a 'signaler' function that simply assigns values to a dict
     bound in enclosing scope. this is primarily intended as a simple
@@ -295,6 +299,7 @@ def signal_factory(
     return signaler
 
 
+# TODO, maybe: replace with a dynamic?
 @curry
 def trywrap(func, name):
     @wraps(func)
