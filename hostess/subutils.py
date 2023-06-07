@@ -415,7 +415,7 @@ def clean_process_records(
             time.sleep(poll_delay)
 
 
-def run(cmd: str, shell="bash", _viewer=False, **kwargs):
+def run(cmd: str, _shell="bash", _viewer=False, **kwargs) -> Viewer | str:
     """
     run the literal text of cmd in the specified shell using `sh`.
     provides more control than os.system and creates less hassle than
@@ -423,12 +423,12 @@ def run(cmd: str, shell="bash", _viewer=False, **kwargs):
     of those strategies.
     """
     if _viewer is False:
-        return getattr(sh, shell)(sh.echo(cmd), **kwargs)
+        return getattr(sh, _shell)(_in=sh.echo(cmd), **kwargs)
     out, err = [], []
     handlers = console_stream_handlers((out,), (err,))
     kwargs |= handlers
     viewer = Viewer(
-        getattr(sh, shell)(sh.echo(cmd), **kwargs)
+        getattr(sh, _shell)(_in=sh.echo(cmd), **kwargs)
     )
     viewer.out, viewer.err = out, err
     return viewer
