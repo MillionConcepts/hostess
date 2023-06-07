@@ -25,7 +25,6 @@ from hostess.station.talkie import (
     stsend,
     read_comm,
     timeout_factory,
-    HOSTESS_ACK,
     make_comm,
 )
 
@@ -173,7 +172,7 @@ class Node(bases.BaseNode):
         send Update to Station informing it that the node is exiting, and why.
         """
         mdict = self._base_message()
-        mdict['reason'] = 'exiting'
+        mdict["reason"] = "exiting"
         status = "crashed" if exception is not None else "shutdown"
         mdict["state"]["status"] = status
         message = Parse(json.dumps(mdict), pro.Update())
@@ -188,7 +187,7 @@ class Node(bases.BaseNode):
         # TODO; multi-step case
         message = Parse(json.dumps(mdict), pro.Update())
         report = completed_task_msg(action)
-        message.MergeFrom(pro.Update(completed=report, reason='completion'))
+        message.MergeFrom(pro.Update(completed=report, reason="completion"))
         self.send_to_station(message)
 
     def _check_in(self):
@@ -252,7 +251,7 @@ class Node(bases.BaseNode):
 
     def _handle_instruction(self, instruction: Message):
         """interpret, reply to, and execute (if relevant) an Instruction."""
-        status, err = "wilco", ''
+        status, err = "wilco", ""
         try:
             bases.validate_instruction(instruction)
             if enum(instruction, "type") == "configure":
@@ -266,7 +265,9 @@ class Node(bases.BaseNode):
                 return
             if instruction.id is None:
                 key, noid, noid_infix = (
-                    random.randint(0, int(1e7)), True, "noid_"
+                    random.randint(0, int(1e7)),
+                    True,
+                    "noid_",
                 )
             else:
                 key, noid, noid_infix = instruction.id, False, ""
@@ -332,17 +333,15 @@ class Node(bases.BaseNode):
         return message
 
     def _reply_to_instruction(
-        self,
-        instruction,
-        status: str,
-        err: Optional[pro.PythonObject] = None
+        self, instruction, status: str, err: Optional[pro.PythonObject] = None
     ):
         """
         send a reply Update to an Instruction informing the Station that we
         will or won't do the thing.
         """
         mdict = self._base_message() | {
-            "reason": status, 'instruction_id':  instruction.id
+            "reason": status,
+            "instruction_id": instruction.id,
         }
         msg = Parse(json.dumps(mdict), pro.Update())
         if err is not None:
@@ -433,12 +432,12 @@ class Station(bases.BaseNode):
             self.match_and_execute(note, "info")
 
     def _handle_report(self, message: Message):
-        if not message.HasField('completed'):
+        if not message.HasField("completed"):
             return
         # TODO: handle instruction tracking / report logging
         if len(message.completed.steps) > 0:
             raise NotImplementedError
-        if not message.completed.HasField('action'):
+        if not message.completed.HasField("action"):
             return
         obj = unpack_obj(message.completed.action.result)
         self.match_and_execute(obj, "completion")
