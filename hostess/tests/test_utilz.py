@@ -4,3 +4,5 @@ def defwrap(defline: str, source: str):
     return f"{defline}:\n{indented}"
 
 
+def return_this(payload):
+    return payload

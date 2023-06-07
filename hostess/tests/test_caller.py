@@ -4,12 +4,15 @@ import pickle
 from dustgoggles.dynamic import Dynamic
 from dustgoggles.test_utils import random_nested_dict
 
-from hostess.caller import to_heredoc, format_deserializer, format_importer
+from hostess.caller import (
+    generic_python_endpoint, to_heredoc, format_deserializer, format_importer
+)
+from hostess.subutils import run
 from hostess.tests.test_utilz import defwrap
 
 
 def test_to_heredoc():
-    """white-box test for to_heredoc"""
+    """whitebox test for to_heredoc"""
     expected_heredoc = """__BOUNDARYTAG__ 
     def add(a, b):
         return a + b
@@ -37,14 +40,26 @@ def test_format_deserializer():
 
 
 def test_format_importer():
-    """whitebox test of importer dynamically generated from format_importer"""
+    """whitebox test of function dynamically generated from format_importer"""
     imsource = format_importer("statistics", "mean")
     # format_importer is meant for script injection, so we need to chop off
     # the guard clause for this test
     imsource = imsource.replace('if __name__ == "__main__":\n', '')
+    # un-indent
     imsource = imsource.replace('    ', '')
     usemean = "return target((1, 2, 3))"
     domean = Dynamic(
         defwrap("def domean()", imsource + usemean)
     )
     assert domean() == 2
+
+
+def test_endpoint():
+    """simple test of hostess's generic python code injector"""
+    script = generic_python_endpoint(
+        module="hostess.tests.test_utilz",
+        func="return_this",
+        payload='hi',
+        print_result=True
+    )
+    assert run(script) == 'hi\n'
