@@ -6,6 +6,7 @@ import inspect
 from collections import defaultdict
 from typing import Mapping, Union
 
+from dustgoggles.func import zero
 from pympler.asizeof import asizeof
 
 from hostess.monitors import make_stat_records, make_stat_printer
@@ -100,19 +101,10 @@ def filter_ipython_history(item):
     return False
 
 
-def print_referents(obj, filter_literal=True, filter_ipython=True):
-    return print_references(
-        obj, gc.get_referents, filter_literal, filter_ipython
-    )
-
-
-def print_referrers(obj, filter_literal=True, filter_ipython=True):
-    return print_references(
-        obj, gc.get_referrers, filter_literal, filter_ipython
-    )
-
-
-def print_references(obj, method, filter_literal=True, filter_ipython=True):
+def analyze_references(
+    obj, method, filter_literal=True, filter_ipython=True, verbose=True
+):
+    print_ = print if verbose is True else zero
     refs = method(obj)
     if filter_literal is True:
         refs = tuple(
@@ -125,9 +117,25 @@ def print_references(obj, method, filter_literal=True, filter_ipython=True):
     ]
     for ref, extra in zip(refs, extra_printables):
         if extra is not None:
-            print(id(ref), type(ref), id(extra), type(extra))
-        print(id(ref), type(ref))
-    return refs
+            print_(id(ref), type(ref), id(extra), type(extra))
+        print_(id(ref), type(ref))
+    return refs, extra_printables
+
+
+def analyze_referents(
+    obj, filter_literal=True, filter_ipython=True, verbose=True
+):
+    return analyze_references(
+        obj, gc.get_referents, filter_literal, filter_ipython, verbose
+    )
+
+
+def analyze_referrers(
+    obj, filter_literal=True, filter_ipython=True, verbose=True
+):
+    return analyze_references(
+        obj, gc.get_referrers, filter_literal, filter_ipython, verbose
+    )
 
 
 def lineno():
