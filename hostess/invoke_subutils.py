@@ -1,8 +1,10 @@
 """working subutils module based on invoke"""
-from typing import Optional
+from concurrent.futures import ThreadPoolExecutor
+from typing import Optional, Callable
 
 from cytoolz import keyfilter, identity
 from dustgoggles.composition import Composition
+from dustgoggles.func import zero
 from dustgoggles.structures import listify
 import invoke
 
@@ -67,7 +69,7 @@ def console_stream_handler(
     return handler
 
 
-class CBuffers:
+class CBuffer:
     """
     simple class to accept writes and execute a Composition in response.
     streamlined alternative to invoke's Watchers etc. if no Composition
@@ -110,6 +112,25 @@ class CBuffers:
         return PseudoBuffer()
 
 
+def done(
+    func: Callable, runner: invoke.runners.Result | invoke.runners.Runner
+):
+    """simple callback wrapper for invoke.runner / result completion"""
+    def wait_then_call():
+        try:
+            runner.wait()
+        except AttributeError:
+            pass
+        if "returncode" in dir(runner):
+            returncode = runner.returncode
+        else:
+            returncode = runner.process.returncode
+        return func(returncode, runner.stdout, runner.stderr)
+
+    executor = ThreadPoolExecutor(1)
+    executor.submit(wait_then_call)
+
+
 class Command:
     """factory for command executions via Invoke."""
 
@@ -144,13 +165,131 @@ class Command:
         self, *args, **kwargs
     ) -> invoke.runners.Runner | invoke.runners.Result:
         rkwargs = keyfilter(lambda k: k.startswith("_"), self.kwargs | kwargs)
+        for s in filter(lambda k: k in rkwargs, ("_bg", "_async")):
+            rkwargs['_asynchronous'] = rkwargs[s]
         rkwargs = {k[1:]: v for k, v in rkwargs.items()}
-        return self.runclass(self.ctx).run(
+        try:
+            done_callback = rkwargs.pop("done")
+        except KeyError:
+            done_callback = None
+        output = self.runclass(self.ctx).run(
             self.cstring(*args, **kwargs), **rkwargs
         )
+        if done_callback is not None:
+            done(done_callback, output)
+        return output
 
     def __str__(self):
         return f"Command: {self.cstring()}"
 
     def __repr__(self):
         return self.__str__()
+
+
+### NOT DONE !!! DO NOT USE !!! ###
+class Viewer:
+    """
+    encapsulates an invoke.runners.Runner. does a variety of automated
+    output handling, initialization, and metadata tracking, and prevents it
+    from throwing errors in REPL environments.
+    """
+
+    def __init__(
+            self,
+            runner: invoke.runners.Runner,
+            cbuffer: cbuffer,
+            metadata=None
+    ):
+        (
+            self.runner, self.cbuffer, self.metadata
+        ) = runner, cbuffer, metadata
+
+    def __getattr__(self, attr):
+        try:
+            return getattr(self.runner, attr)
+        except AttributeError:
+            return getattr(self.process, attr)
+
+    def _is_done(self):
+        return self.runner.process_is_finished
+
+    def _is_running(self):
+        return not self.runner.process_is_finished
+
+    def __str__(self):
+        runstring = "running" if self.running else "finished"
+        base = f"Viewer for {runstring} process {self.cmd}, PID {self.pid}"
+        outlist = self.out[-20:]
+        if len(self.out) > 20:
+            outlist = ["..."] + outlist
+        return base + "".join([f"\n{line}" for line in outlist])
+
+    def __repr__(self):
+        return self.__str__()
+
+    def wait_for_output(self, use_err=False, polling_interval=0.05,
+                        timeout=10):
+        if self.done:
+            return
+        stream = self.out if use_err is False else self.err
+        waiting, _ = timeout_factory(timeout)
+        starting_length = len(stream)
+        while (len(stream) == starting_length) and self.running:
+            time.sleep(polling_interval)
+            waiting()
+        return
+
+    @classmethod
+    def from_command(
+            cls,
+            command,
+            *args,
+            ctx=None,
+            runclass=None,
+            **kwargs,
+    ):
+        viewer = object.__new__(cls)
+        if not isinstance(command, Command):
+            command = Command(command, ctx, runclass)
+
+    done = property(_is_done)
+    running = property(_is_running)
+    initialized = False
+    _children = None
+    _get_children = False
+    _pid_records = None
+
+#     @property
+#     def children(self):
+#         if self._get_children is False:
+#             return None
+#         if (self._children not in ([], None)) and not self.process.is_alive():
+#             return self._children
+#         if (self._pid_records is None) and (self._get_children is True):
+#             raise ValueError(
+#                 "This object has not been initialized correctly; cannot find "
+#                 "spawned child processes."
+#             )
+#         if self.remote_pid is None:
+#             raise ValueError(
+#                 "The remote process does not appear to have correctly "
+#                 "returned a process identifier."
+#             )
+#         ps_records = ps_to_records(self._pid_records)
+#         try:
+#             ppids = [self.remote_pid]
+#             children = list(filter(lambda p: p['pid'] in ppids, ps_records))
+#             generation = tuple(
+#                 filter(lambda p: p['ppid'] in ppids, ps_records)
+#             )
+#             while len(generation) > 0:
+#                 children += generation
+#                 ppids = [p['pid'] for p in generation]
+#                 generation = tuple(
+#                     filter(lambda p: p['ppid'] in ppids, ps_records)
+#                 )
+#             self._children = children
+#         except (StopIteration, KeyError):
+#             warnings.warn("couldn't identify child processes.")
+#             self._children = []
+#         return self._children
