@@ -1,16 +1,20 @@
 """working subutils module based on invoke"""
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor, Future
-from functools import partial
+from contextlib import redirect_stdout, redirect_stderr
+from functools import partial, wraps
+from multiprocessing import Process, Pipe
 from typing import Optional, Literal, Mapping, Collection, Hashable, Any, \
-    Callable
+    Callable, MutableMapping, MutableSequence
 
 import invoke
 from cytoolz import keyfilter, identity
 from dustgoggles.composition import Composition
+from dustgoggles.func import intersection
 from dustgoggles.structures import listify
 
-from hostess.utilities import timeout_factory
+from hostess.utilities import timeout_factory, curry, Aliased
 
 
 class Nullify:
@@ -71,9 +75,9 @@ def dispatch_callback(
     """simple callback for a Dispatcher"""
     _wait_on(to_wait_on)
     if callback is None:
-        return dispatch.execute(step=step)
+        return dispatch.execute(steps=(step,))
     else:
-        return dispatch.execute(callback(), step=step)
+        return dispatch.execute(callback(), steps=(step,))
 
 
 def done_callback(
@@ -241,10 +245,10 @@ def replace_aliases(mapping: dict, aliasdict: Mapping[str, Collection[str]]):
             del mapping[a]
 
 
-class Command:
-    """factory for command executions via Invoke."""
+class RunCommand:
+    """callable for managed command execution via Invoke."""
 
-    def __init__(self, command, ctx=None, runclass=None, **kwargs):
+    def __init__(self, command="", ctx=None, runclass=None, **kwargs):
         self.command = command
         if ctx is None:
             self.ctx = invoke.context.Context()
@@ -295,9 +299,10 @@ class Command:
         # by Invoke, but Invoke does not offer completion handling except
         # via the more complex Watcher system.
         dcallback = rkwargs.pop("done", None)
-        output = self.runclass(self.ctx).run(
-            self.cstring(*args, **kwargs), **rkwargs
-        )
+        cstring = self.cstring(*args, **kwargs)
+        if cstring == "":
+            raise ValueError("no command specified.")
+        output = self.runclass(self.ctx).run(cstring, **rkwargs)
         # need the runner/result to actually create a thread to watch the
         # done callback. we also never want to actually return a Promise
         # object because it tends to behave badly.
@@ -308,7 +313,9 @@ class Command:
         return output
 
     def __str__(self):
-        return f"Command: {self.cstring()}"
+        if (cstring := self.cstring()) == "":
+            cstring = "no curried command"
+        return f"{self.__class__.__name__} ({cstring})"
 
     def __repr__(self):
         return self.__str__()
@@ -387,12 +394,12 @@ class Viewer:
     ):
         """
         todo: this constructor still necessary? we'll see about the children
-        / disown / remote stuff I guess.
+         / disown / remote stuff I guess.
         """
         if cbuffer is None:
             cbuffer = CBuffer()
-        if not isinstance(command, Command):
-            command = Command(command, ctx, runclass)
+        if not isinstance(command, RunCommand):
+            command = RunCommand(command, ctx, runclass)
         # note that Viewers _only_ run commands asynchronously. use the wait or
         # wait_for_output methods if you want to block.
         base_kwargs = {
@@ -448,3 +455,141 @@ class Viewer:
 #             warnings.warn("couldn't identify child processes.")
 #             self._children = []
 #         return self._children
+
+
+def defer(func, *args, **kwargs):
+    """wrapper to defer function execution."""
+
+    def deferred():
+        return func(*args, **kwargs)
+
+    return deferred
+
+
+def deferinto(func, *args, _target, **kwargs):
+    """wrapper to defer function execution and place its result into _target"""
+
+    def deferred_into():
+        _target.append(func(*args, **kwargs))
+
+    return deferred_into
+
+
+def make_piped_callback(func: Callable) -> tuple[Pipe, Callable]:
+    """
+    make a callback that's suitable as a target for a multiprocessing
+    object, wrapped in such a way that it sends its output back to the Pipe
+    `here`.
+    """
+    here, there = Pipe()
+
+    def sendback(*args, **kwargs):
+        try:
+            result = func(*args, **kwargs)
+        except Exception as ex:
+            result = ex
+        return there.send(result)
+
+    return here, sendback
+
+
+def piped(func: Callable, block=True) -> Callable:
+    """
+    wrapper to run a function in another process and get its results
+    back through a pipe. if created in non-blocking mode, returns the Process
+    object rather than the result; in this case, the caller is responsible for
+    polling the process.
+    """
+
+    @wraps(func)
+    def through_pipe(*args, **kwargs):
+        here, sendback = make_piped_callback(func)
+        proc = Process(target=sendback, args=args, kwargs=kwargs)
+        proc.start()
+        if block is True:
+            proc.join()
+            result = here.recv()
+            proc.close()
+            return result
+        return proc
+
+    return through_pipe
+
+
+def make_call_redirect(func, fork=False):
+    """
+    a more intensive version of `piped` that directs stdout and stderr
+    rather than simply a return value, and automatically places all these
+    streams into caches accessible in the caller's [rpcess]. intended for
+    longer-term, speculative, or callback-focused processes. if fork is True,
+    runs in a double-forked, mostly-daemonized process.
+    """
+    r_here, r_there = Pipe()
+    o_here, o_there = Pipe()
+    p_here, p_there = Pipe()
+    e_here, e_there = Pipe()
+
+    # noinspection PyTypeChecker
+    @wraps(func)
+    def run_redirected(*args, **kwargs):
+        if fork is True:
+            if os.fork() != 0:
+                return
+            p_there.send(os.getpid())
+        with (
+            redirect_stdout(Aliased(o_there, ("write",), "send")),
+            redirect_stderr(Aliased(e_there, ("write",), "send"))
+        ):
+            try:
+                result = func(*args, **kwargs)
+            except Exception as ex:
+                result = ex
+            return r_there.send(result)
+    proximal = {'result': r_here, 'out': o_here, 'err': e_here}
+    if fork is True:
+        proximal['pids'] = p_here
+    return run_redirected, proximal
+
+
+def make_watch_caches():
+    """shorthand for constructing the correct dictionary"""
+    return {'result': [], 'out': [], 'err': []}
+
+
+@curry
+def watched_process(
+    func: Callable,
+    *,
+    caches: MutableMapping[str, MutableSequence],
+    fork: bool = False
+) -> Callable:
+    """
+    decorator to run a function in a subprocess, redirecting its stdout,
+    stderr, and any return value to `caches`. if fork is True, double-fork the
+    execution so it will not terminate when the original calling process
+    terminates. adds the kwargs _blocking and _poll to the decorated function,
+    setting auto-join/poll and polling interval respectively.
+    if _blocking is False, simply return the Process object and a dict of
+    pipes: in this case, the calling process is responsible for polling the
+    pipes if it wishes to receive output.
+    """
+    assert len(intersection(caches.keys(), {'result', 'out', 'err'})) == 3
+    target, proximal = make_call_redirect(func, fork)
+
+    @wraps(func)
+    def run_and_watch(*args, _blocking=True, _poll=0.05, **kwargs):
+        process = Process(target=target, args=args, kwargs=kwargs)
+        process.start()
+        caches['pids'] = [process.pid]
+        if _blocking is False:
+            return process, caches
+        while True:
+            for k, v in proximal.items():
+                if v.poll():
+                    caches[k].append(v.recv())
+            if not process.is_alive():
+                break
+            time.sleep(_poll)
+        return process, proximal
+
+    return run_and_watch
