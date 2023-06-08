@@ -294,11 +294,6 @@ def get_jupyter_token(command, jupyter_executable, remote_port):
     )
 
 
-CONDA_NAMES = ("anaconda3", "miniconda3", "miniforge", "mambaforge")
-CONDA_PARENTS = ("~", "/opt")
-CONDA_SEARCH_PATHS = tuple(
-    [f"{root}/{name}" for root, name in product(CONDA_PARENTS, CONDA_NAMES)]
-)
 
 
 def jupyter_connect(

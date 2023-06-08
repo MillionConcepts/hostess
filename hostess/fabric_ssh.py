@@ -1,11 +1,16 @@
 import io
+import re
 import time
+from itertools import product
 from multiprocessing import Process
 from typing import Hashable, Mapping
 
+from dustgoggles.func import zero
 from fabric import Connection
+from invoke import UnexpectedExit
 
 from hostess.config import GENERAL_DEFAULTS
+import hostess.shortcuts as short
 from hostess.subutils import RunCommand
 
 
@@ -99,3 +104,75 @@ def merge_csv(
     return pd.concat(framelist).reset_index(drop=True)
 
 
+# jupyter / conda utilities
+
+CONDA_NAMES = ("anaconda3", "miniconda3", "miniforge", "mambaforge")
+CONDA_PARENTS = ("~", "/opt")
+CONDA_SEARCH_PATHS = tuple(
+    [f"{root}/{name}" for root, name in product(CONDA_PARENTS, CONDA_NAMES)]
+)
+TOKEN_PATTERN = re.compile(r"(?<=\?token=)([a-z]|\d)+")
+
+
+def find_conda_env(cmd: RunCommand, env: str = None) -> str:
+    env = "base" if env is None else env
+    suffix = f"/envs/{env}" if env != "base" else ""
+    try:
+        envs = str(cmd(f"cat ~/.conda/environments.txt").stdout).splitlines()
+        if env == "base":
+            return next(filter(lambda l: "envs" not in l, envs))
+        else:
+            return next(filter(lambda l: suffix in l, envs))
+    except (UnexpectedExit, StopIteration):
+        pass
+    lines = cmd(
+        short.chain(
+            [short.truthy(f"-e {path}{suffix}") for path in CONDA_SEARCH_PATHS]
+        )
+    ).stdout.splitlines()
+    for line, path in zip(lines, CONDA_SEARCH_PATHS):
+        if "True" in line:
+            return f"{path}/{suffix}"
+    raise FileNotFoundError("conda environment not found.")
+
+
+def stop_jupyter_factory(command, jupyter, remote_port):
+    def stop_it(waitable):
+        waitable.wait()
+        command(f"{jupyter} stop --NbserverStopApp.port={remote_port}")
+
+    return stop_it
+
+
+def jupyter_connect(
+    ssh: SSH,
+    local_port: int = 22222,
+    remote_port: int = 8888,
+    env: str = None,
+    get_token: bool = True,
+    kill_on_exit: bool = True,
+    **command_kwargs,
+):
+    if env is not None:
+        jupyter = f"{find_conda_env(ssh, env)}" f"/bin/jupyter notebook"
+    else:
+        jupyter = "jupyter notebook"
+    if kill_on_exit is True:
+        done = stop_jupyter_factory(ssh, jupyter, remote_port)
+    else:
+        done = zero
+    jupyter_launch = ssh(
+        f"{jupyter} --port {remote_port} --no-browser",
+        _done=done,
+#         TODO: work on yielding a viewer i guess?
+#         _viewer=True,
+        _bg=True,
+        **command_kwargs,
+    )
+    if get_token:
+        token = get_jupyter_token(ssh, jupyter, remote_port)
+        jupyter_url = f"http://localhost:{local_port}/?token={token}"
+    else:
+        jupyter_url = f"http://localhost:{local_port}"
+    ssh.tunnel(local_port, remote_port)
+    return jupyter_url, ssh.tunnels[-1], jupyter_launch

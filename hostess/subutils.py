@@ -310,6 +310,7 @@ class RunCommand:
             output = output.runner
         if dcallback is not None:
             _submit_callback(dcallback, output)
+        output.command = cstring
         return output
 
     def __str__(self):
@@ -339,6 +340,7 @@ class Viewer:
         self.out = cbuffer.caches['out']
         self.err = cbuffer.caches['err']
 
+    # TODO: untangle this a bit
     def __getattr__(self, attr):
         if attr == "runner":
             return super().__getattribute__(attr)
@@ -357,7 +359,12 @@ class Viewer:
 
     def __str__(self) -> str:
         runstring = "running" if self.running else "finished"
-        base = f"Viewer for {runstring} process {self.args}, PID {self.pid}"
+        base = f"Viewer for {runstring} process {self.command}"
+        try:
+            base += f" , PID {self.pid}"
+        except AttributeError:
+            # TODO: fetch remote PIDs with shell tricks
+            pass
         outlist = self.out[-20:]
         if len(self.out) > 20:
             outlist = ["..."] + outlist
