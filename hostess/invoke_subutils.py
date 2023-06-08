@@ -1,12 +1,100 @@
 """working subutils module based on invoke"""
-from concurrent.futures import ThreadPoolExecutor
-from typing import Optional, Callable
+import time
+from concurrent.futures import ThreadPoolExecutor, Future
+from functools import partial
+from typing import Optional, Literal, Mapping, Collection, Hashable, Any, \
+    Callable
 
+import invoke
 from cytoolz import keyfilter, identity
 from dustgoggles.composition import Composition
 from dustgoggles.func import zero
 from dustgoggles.structures import listify
-import invoke
+
+from hostess.utilities import timeout_factory
+
+
+class Nullify:
+
+    @staticmethod
+    def read(_size=None):
+        return b""
+
+    @staticmethod
+    def write(_obj):
+        return
+
+    @staticmethod
+    def flush():
+        return
+
+    @staticmethod
+    def seek(_hence):
+        return
+
+
+class DispatchBuffer:
+    def __init__(self, dispatcher: "Dispatcher", stream: str):
+        self.dispatcher, self.stream = dispatcher, stream
+
+    def read(self, _=None):
+        return self.dispatcher.caches[self.stream]
+
+    def write(self, message):
+        return self.dispatcher.execute(message, stream=self.stream)
+
+    @staticmethod
+    def seek(*args, **kwargs):
+        return
+
+    @staticmethod
+    def flush():
+        return
+
+
+def _wait_on(it):
+    try:
+        it.wait()
+    except AttributeError:
+        return
+
+
+def _submit_callback(callback: Callable, waitable: Any) -> Future:
+    return ThreadPoolExecutor(1).submit(callback, waitable)
+
+
+def dispatch_callback(
+    dispatch: "Dispatcher",
+    callback: Optional[Callable] = None,
+    step: Optional[Hashable] = None,
+    to_wait_on: Any = None,
+) -> Any:
+    """simple callback for a Dispatcher"""
+    _wait_on(to_wait_on)
+    if callback is None:
+        return dispatch.execute(step=step)
+    else:
+        return dispatch.execute(callback(), step=step)
+
+
+def done_callback(
+    dispatch: "Dispatcher",
+    runner: invoke.runners.Result | invoke.runners.Runner
+) -> Future:
+    """simple dispatcher callback for invoke.runner / result completion"""
+    def callback():
+        if "returncode" in dir(runner):
+            returncode = runner.returncode
+        else:
+            # noinspection PyUnresolvedReferences
+            returncode = runner.process.returncode
+        return {
+            'success': not runner.failed,
+            'returncode': returncode,
+            'command': runner.command
+        }
+
+    return dispatch_callback(dispatch, runner, callback, "done")
 
 
 class Dispatcher(Composition):
@@ -49,86 +137,103 @@ class Dispatcher(Composition):
             pass
         raise AttributeError(f"No attribute or cache '{attr}'")
 
+    def yield_buffer(self, step):
+        return DispatchBuffer(self, step)
+
     active_steps = ()
     singular = False
 
 
+def _nonelist(obj):
+    return [] if obj is None else obj
+
+
 def console_stream_handler(
-    handle_out=identity, handle_err=identity, out=None, err=None
-):
+    out=None,
+    err=None,
+    done=None,
+    handle_out=None,
+    handle_err=None,
+    handle_done=None
+) -> Dispatcher:
     """
-    produce a Composition suited for handling stdout and stderr.
-    optionally add inline callbacks.
+    produce a Dispatcher suited for capturing stdout, stderr, and process
+    completion, optionally with inline callbacks.
     """
-    out = [] if out is None else out
-    err = [] if err is None else err
-    handler = Dispatcher({"out": handle_out, "err": handle_err})
-    handler.add_send("out", target=out)
-    handler.add_send("err", target=err)
+    out, err, done = map(_nonelist, (out, err, done))
+    handler = Dispatcher(
+        steps={"out": identity, "err": identity, "done": identity}
+    )
+    handler.add_send("out", pipe=handle_out, target=out)
+    handler.add_send("err", pipe=handle_err, target=err)
+    handler.add_send("done", pipe=handle_done, target=done)
     handler.singular = True
     return handler
 
 
 class CBuffer:
     """
-    simple class to accept writes and execute a Composition in response.
-    streamlined alternative to invoke's Watchers etc. if no Composition
-    is passed during initialization, creates a default console handler.
+    wrapper class for a Dispatcher that includes the ability to yield
+    pseudo-buffers that execute the Dispatcher on "write".
+    streamlined alternative to invoke's Watchers etc. if no Dispatcher
+    is passed during initialization, CBuffer creates a simple console handler.
+    the Dispatcher should have at least steps "out", "err", and "done".
     """
-
-    def __init__(self, composition: Optional[Composition] = None):
-        if composition is None:
-            composition = console_stream_handler()
-        self.composition = composition
-        self.caches = self.composition.caches
+    def __init__(self, dispatcher: Optional[Dispatcher] = None):
+        if dispatcher is None:
+            dispatcher = console_stream_handler()
+        self.dispatcher = dispatcher
+        self.caches = self.dispatcher.caches
         self.deferred_sends = None
+        self.buffers = {
+            stream: self.makebuffer(stream)
+            for stream in self.dispatcher.keys()
+        }
+        if not {"out", "err", "done"}.issubset(self.buffers.keys()):
+            raise TypeError(
+                "dispatcher must have at least out, err, and done steps."
+            )
 
     def __getattr__(self, attr):
-        return self.composition.__getattr__(attr)
+        return self.dispatcher.__getattr__(attr)
 
     def execute(self, *args, stream, **kwargs):
-        return self.composition.execute(*args, **kwargs, steps=stream)
+        return self.dispatcher.execute(*args, **kwargs, steps=stream)
+
+    def __call__(self, *args, stream, **kwargs):
+        return self.execute(*args, stream, **kwargs)
 
     def cacheoff(self):
-        self.deferred_sends = self.composition.sends
-        self.composition.sends = {}
+        self.deferred_sends = self.dispatcher.sends
+        self.dispatcher.sends = {}
 
     def cacheon(self):
         if self.deferred_sends is None:
             return
-        self.composition.sends = self.deferred_sends
+        self.dispatcher.sends = self.deferred_sends
         self.deferred_sends = None
 
     def makebuffer(self, stream):
-        class PseudoBuffer:
-            @staticmethod
-            def write(message):
-                return self.execute(message, stream=stream)
-
-            @staticmethod
-            def flush():
-                return
-
-        return PseudoBuffer()
+        return DispatchBuffer(self.dispatcher, stream)
 
 
-def done(
-    func: Callable, runner: invoke.runners.Result | invoke.runners.Runner
-):
-    """simple callback wrapper for invoke.runner / result completion"""
-    def wait_then_call():
-        try:
-            runner.wait()
-        except AttributeError:
-            pass
-        if "returncode" in dir(runner):
-            returncode = runner.returncode
-        else:
-            returncode = runner.process.returncode
-        return func(returncode, runner.stdout, runner.stderr)
+def trydelete(obj, target):
+    try:
+        del obj[target]
+    except KeyError:
+        pass
 
-    executor = ThreadPoolExecutor(1)
-    executor.submit(wait_then_call)
+
+def replace_aliases(mapping: dict, aliasdict: Mapping[str, Collection[str]]):
+    """
+    swap in alias keys in a dict. intended primarily as a helper for aliased
+    kwargs. impure; mutates mapping if any keys match aliasdict.
+    """
+    for target, aliases in aliasdict.items():
+        for a in filter(lambda k: k in mapping, aliases):
+            trydelete(mapping, target)
+            mapping[target] = mapping[a]
+            del mapping[a]
 
 
 class Command:
@@ -165,18 +270,36 @@ class Command:
         self, *args, **kwargs
     ) -> invoke.runners.Runner | invoke.runners.Result:
         rkwargs = keyfilter(lambda k: k.startswith("_"), self.kwargs | kwargs)
-        for s in filter(lambda k: k in rkwargs, ("_bg", "_async")):
-            rkwargs['_asynchronous'] = rkwargs[s]
         rkwargs = {k[1:]: v for k, v in rkwargs.items()}
-        try:
-            done_callback = rkwargs.pop("done")
-        except KeyError:
-            done_callback = None
+        replace_aliases(
+            rkwargs,
+            {
+                "out_stream": ("out",),
+                "err_stream": ("err",),
+                "asynchronous": ("async", "bg")
+            }
+        )
+        # do not print to stdout/stderr by default
+        verbose = rkwargs.pop("verbose", False)
+        if verbose is not True:
+            for k in filter(
+                lambda k: k not in rkwargs, ("out_stream", "err_stream")
+            ):
+                rkwargs[k] = Nullify()
+        # simple done callback handling -- simple stdout/stderr is handled
+        # by Invoke, but Invoke does not offer completion handling except
+        # via the more complex Watcher system.
+        dcallback = rkwargs.pop("done", None)
         output = self.runclass(self.ctx).run(
             self.cstring(*args, **kwargs), **rkwargs
         )
-        if done_callback is not None:
-            done(done_callback, output)
+        # need the runner/result to actually create a thread to watch the
+        # done callback. we also never want to actually return a Promise
+        # object because it tends to behave badly.
+        if "runner" in dir(output):
+            output = output.runner
+        if dcallback is not None:
+            _submit_callback(dcallback, output)
         return output
 
     def __str__(self):
@@ -195,14 +318,13 @@ class Viewer:
     """
 
     def __init__(
-            self,
-            runner: invoke.runners.Runner,
-            cbuffer: cbuffer,
-            metadata=None
+        self,
+        runner: invoke.runners.Runner,
+        cbuffer: CBuffer,
+        metadata: Optional[Mapping] = None
     ):
-        (
-            self.runner, self.cbuffer, self.metadata
-        ) = runner, cbuffer, metadata
+        self.runner, self.cbuffer = runner, cbuffer
+        self.metadata = {} if metadata is None else metadata
 
     def __getattr__(self, attr):
         try:
@@ -210,13 +332,13 @@ class Viewer:
         except AttributeError:
             return getattr(self.process, attr)
 
-    def _is_done(self):
+    def _is_done(self) -> bool:
         return self.runner.process_is_finished
 
-    def _is_running(self):
+    def _is_running(self) -> bool:
         return not self.runner.process_is_finished
 
-    def __str__(self):
+    def __str__(self) -> str:
         runstring = "running" if self.running else "finished"
         base = f"Viewer for {runstring} process {self.cmd}, PID {self.pid}"
         outlist = self.out[-20:]
@@ -224,29 +346,33 @@ class Viewer:
             outlist = ["..."] + outlist
         return base + "".join([f"\n{line}" for line in outlist])
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return self.__str__()
 
-    def wait_for_output(self, use_err=False, polling_interval=0.05,
-                        timeout=10):
+    def wait_for_output(
+        self,
+        stream: Literal["out", "err"] = "out",
+        poll=0.05,
+        timeout=10
+    ):
         if self.done:
             return
-        stream = self.out if use_err is False else self.err
-        waiting, _ = timeout_factory(timeout)
+        stream = self.out if stream == "out" else self.err
+        waiting, _ = timeout_factory(timeout=timeout)
         starting_length = len(stream)
         while (len(stream) == starting_length) and self.running:
-            time.sleep(polling_interval)
+            time.sleep(poll)
             waiting()
         return
 
     @classmethod
     def from_command(
-            cls,
-            command,
-            *args,
-            ctx=None,
-            runclass=None,
-            **kwargs,
+        cls,
+        command,
+        *args,
+        ctx=None,
+        runclass=None,
+        **kwargs,
     ):
         viewer = object.__new__(cls)
         if not isinstance(command, Command):
