@@ -314,8 +314,6 @@ class Command:
         return self.__str__()
 
 
-
-### NOT DONE !!! DO NOT USE !!! ###
 class Viewer:
     """
     encapsulates an invoke.runners.Runner. does a variety of automated
