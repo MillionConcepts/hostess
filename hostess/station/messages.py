@@ -6,7 +6,7 @@ import json
 import random
 import sys
 import struct
-from types import NoneType
+from types import MappingProxyType as MPt, NoneType
 from typing import Optional, Any, Collection, Literal, Union
 
 import dill
@@ -112,7 +112,7 @@ def pack_obj(obj: Any, name: str = "") -> pro.PythonObject:
 def make_function_call_action(
     func: str,
     module: Optional[str] = None,
-    kwargs: Union[list[pro.PythonObject], dict[str, Any], None] = None,
+    kwargs: list[pro.PythonObject] | Mapping[str, Any] = MPt({}),
     context: Literal["thread", "process", "detached"] = "thread",
     **action_fields
 ) -> pro.Action:
@@ -126,7 +126,7 @@ def make_function_call_action(
         # if kwargs is already a list of PythonObjects, don't try to repack
         assert isinstance(kwargs[0], pro.PythonObject)
         objects = kwargs
-    except (AssertionError, KeyError):
+    except (AssertionError, KeyError, TypeError):
         objects = default_arg_packing(kwargs)
     call = pro.FunctionCall(
         func=func, module=module, context=context, arguments=objects
