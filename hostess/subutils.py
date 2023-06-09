@@ -287,7 +287,8 @@ class RunCommand:
             {
                 "_out_stream": ("_out",),
                 "_err_stream": ("_err",),
-                "_asynchronous": ("_async", "_bg")
+                "_asynchronous": ("_async", "_bg"),
+                "_viewer": ("_v",)
             }
         )
         # do not print to stdout/stderr by default
@@ -609,6 +610,16 @@ def watched_process(
         return process, proximal
 
     return run_and_watch
+
+
+# convenience aliases
+
+def runv(*args, **kwargs):
+    return Viewer.from_command(*args, **kwargs)
+
+
+def run(*args, **kwargs):
+    return RunCommand(*args, **kwargs)().stdout
 
 
 Processlike = Viewer | invoke.runners.Runner | invoke.runners.Result
