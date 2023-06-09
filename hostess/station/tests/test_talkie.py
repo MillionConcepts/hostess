@@ -3,6 +3,8 @@ import random
 import re
 from multiprocessing import Pool
 
+import dill
+
 import hostess.station.proto.station_pb2 as pro
 import hostess.station.talkie as tk
 from hostess.monitors import Stopwatch
@@ -80,6 +82,7 @@ def test_protobuf():
     """attempt to construct a basic station protobuf Message"""
     actiondict = {
         'result': [0],
+        'name': 'imagestats',
         'start': dt.datetime.utcnow(),
         'end': dt.datetime.utcnow(),
         'status': 'success',
@@ -87,7 +90,7 @@ def test_protobuf():
     }
     report = completed_task_msg(actiondict)
     message = pro.Update(completed=report, instruction_id=3)
-    assert message.completed.action.result.value == b'\x00'
+    assert dill.loads(message.completed.action.result.value) == [0]
     return message
 
 
@@ -96,9 +99,9 @@ def test_comm():
     report = test_protobuf()
     encoded = tk.make_comm(report)
     decoded = tk.read_comm(encoded)
-    assert decoded["header"]["mtype"] == "TaskReport"
-    assert decoded["body"].steps[0].name == "imagestats"
-    assert decoded["header"]["length"] == len(report.SerializeToString())
+    assert decoded["header"]["mtype"] == "Update"
+    assert decoded["body"].completed.action.name == "imagestats"
+    assert decoded["header"]["length"] == len(report.SerializeToString()) + 21
 
 
 def test_comm_online():
@@ -110,12 +113,12 @@ def test_comm_online():
         ack, _ = tk.stsend(report, host, port, timeout=100)
         response = server.data[-1]
         # Timestamp is variable-length depending on nanoseconds
-        assert response["event"] in ("decoded 67", "decoded 68", "decoded 69")
+        assert response["event"] in ("decoded 94", "decoded 95", "decoded 96")
         comm = response["content"]
         assert comm["err"] == ""
-        assert comm["header"]["length"] in (67, 68, 69)
+        assert comm["header"]["length"] == int(response['event'][-2:])
         message = comm["body"]
-        assert message.completed.action.result.value[0] == 0
+        assert message.completed.action.result.value[0] == 128
         assert message.instruction_id == 3
         assert ack.startswith(tk.HOSTESS_SOH)
     server.kill()
