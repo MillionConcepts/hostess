@@ -277,36 +277,49 @@ class RunCommand:
 
     def __call__(
         self, *args, **kwargs
-    ) -> invoke.runners.Runner | invoke.runners.Result:
+    ) -> "Processlike":
         rkwargs = keyfilter(lambda k: k.startswith("_"), self.kwargs | kwargs)
-        rkwargs = {k[1:]: v for k, v in rkwargs.items()}
+        kwargs = keyfilter(
+            lambda k: not k.startswith("_"), self.kwargs | kwargs
+        )
         replace_aliases(
             rkwargs,
             {
-                "out_stream": ("out",),
-                "err_stream": ("err",),
-                "asynchronous": ("async", "bg")
+                "_out_stream": ("_out",),
+                "_err_stream": ("_err",),
+                "_asynchronous": ("_async", "_bg")
             }
         )
         # do not print to stdout/stderr by default
         verbose = rkwargs.pop("verbose", False)
         if verbose is not True:
             for k in filter(
-                lambda k: k not in rkwargs, ("out_stream", "err_stream")
+                lambda k: k not in rkwargs, ("_out_stream", "_err_stream")
             ):
                 rkwargs[k] = Nullify()
         # simple done callback handling -- simple stdout/stderr is handled
         # by Invoke, but Invoke does not offer completion handling except
         # via the more complex Watcher system.
-        dcallback = rkwargs.pop("done", None)
+        dcallback = rkwargs.pop("_done", None)
         cstring = self.cstring(*args, **kwargs)
         if cstring == "":
             raise ValueError("no command specified.")
-        output = self.runclass(self.ctx).run(cstring, **rkwargs)
+        if rkwargs.pop("_viewer", False) is True:
+            output = Viewer.from_command(
+                self,
+                *args,
+                ctx=self.ctx,
+                runclass=self.runclass,
+                **(rkwargs | kwargs)
+            )
+        else:
+            rkwargs = {k[1:]: v for k, v in rkwargs.items()}
+            output = self.runclass(self.ctx).run(cstring, **(rkwargs | kwargs))
+
         # need the runner/result to actually create a thread to watch the
         # done callback. we also never want to actually return a Promise
         # object because it tends to behave badly.
-        if "runner" in dir(output):
+        if ("runner" in dir(output)) and (not isinstance(output, Viewer)):
             output = output.runner
         if dcallback is not None:
             _submit_callback(dcallback, output)
@@ -399,10 +412,6 @@ class Viewer:
         cbuffer=None,
         **kwargs,
     ):
-        """
-        todo: this constructor still necessary? we'll see about the children
-         / disown / remote stuff I guess.
-        """
         if cbuffer is None:
             cbuffer = CBuffer()
         if not isinstance(command, RunCommand):
@@ -418,7 +427,7 @@ class Viewer:
         if "_done" in kwargs:
             kwargs["_done"] = cbuffer.make_callback(kwargs["_done"], "done")
         viewer.__init__(cbuffer)
-        viewer.runner = command(*args, **kwargs | base_kwargs)
+        viewer.runner = command(*args, **kwargs | base_kwargs, _viewer=False)
         return viewer
 
     done = property(_is_done)
@@ -600,3 +609,6 @@ def watched_process(
         return process, proximal
 
     return run_and_watch
+
+
+Processlike = Viewer | invoke.runners.Runner | invoke.runners.Result

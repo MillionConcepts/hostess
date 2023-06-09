@@ -1,13 +1,17 @@
 import io
+import os
 import time
 from itertools import product
 from multiprocessing import Process
 import re
-from typing import Hashable, Mapping, Optional
+from pathlib import Path
+from typing import Hashable, Mapping, Optional, Union
 
 from dustgoggles.func import zero, filtern
+from dustgoggles.structures import listify
 from fabric import Connection
 from invoke import UnexpectedExit
+from magic import Magic
 
 from hostess.config import GENERAL_DEFAULTS
 import hostess.shortcuts as short
@@ -191,3 +195,20 @@ def jupyter_connect(
         jupyter_url += f"{jupyter_url}/?token={token}"
     ssh.tunnel(local_port, remote_port)
     return jupyter_url, ssh.tunnels[-1], jupyter_launch
+
+
+def find_ssh_key(keyname, paths=None) -> Union[Path, None]:
+    """look for private SSH key in common folders"""
+    if paths is None:
+        paths = list(GENERAL_DEFAULTS["secrets_folders"]) + [os.getcwd()]
+    for directory in filter(lambda p: p.exists(), map(Path, listify(paths))):
+        # TODO: public key option
+        matching_private_keys = filter(
+            lambda x: "private key" in Magic().from_file(x),
+            filter(lambda x: keyname in x.name, Path(directory).iterdir()),
+        )
+        try:
+            return next(matching_private_keys)
+        except StopIteration:
+            continue
+    return None
