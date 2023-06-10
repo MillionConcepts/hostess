@@ -299,7 +299,7 @@ class BaseNode(Matcher, ABC):
         self._lock = threading.Lock()
         # TODO: do this better
         os.makedirs("logs", exist_ok=True)
-        self.logfile = f"logs/{self.name}_{filestamp()}.csv"
+        # self.logfile = f"logs/{self.name}_{filestamp()}.csv"
         for element in elements:
             self.add_element(element)
         self.exec = ThreadPoolExecutor(n_threads)

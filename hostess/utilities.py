@@ -5,14 +5,19 @@ import _io
 import datetime as dt
 import logging
 import re
+import sys
 import time
 from functools import wraps
+from importlib import import_module
+from importlib.util import spec_from_file_location, module_from_spec
 from pathlib import Path
 from socket import gethostname
+from types import ModuleType
 from typing import Callable, MutableMapping, Optional, Sequence, Any, Hashable
 
 import rich.console
 from cytoolz import first
+from dustgoggles.dynamic import exc_report
 
 
 def stamp() -> str:
@@ -39,14 +44,14 @@ def console_and_log(message, level="info", style=None):
 
 
 def mb(b, round_to=2):
-    value = int(b) / 10**6
+    value = int(b) / 10 ** 6
     if round_to is not None:
         return round(value, round_to)
     return value
 
 
 def gb(b, round_to=2):
-    value = int(b) / 10**9
+    value = int(b) / 10 ** 9
     if round_to is not None:
         return round(value, round_to)
 
@@ -280,7 +285,9 @@ def timeout_factory(
     return waiting, unwait
 
 
-def signal_factory(threads: MutableMapping,) -> Callable[[Hashable], None]:
+def signal_factory(
+    threads: MutableMapping,
+) -> Callable[[Hashable], None]:
     """
     creates a 'signaler' function that simply assigns values to a dict
     bound in enclosing scope. this is primarily intended as a simple
@@ -313,9 +320,8 @@ def trywrap(func, name):
             return {
                 "name": name,
                 "retval": retval,
-                "exception": exception,
                 "time": dt.datetime.now(),
-            }
+            } | exc_report(exception, 0)
 
     return trywrapped
 
@@ -331,3 +337,24 @@ def configured(func, config):
 # just a little printer to show what crashed/completed
 def filterdone(threads):
     return [(n, t) for n, t in threads.items() if t._state != "RUNNING"]
+
+
+def get_module(module_name: str) -> ModuleType:
+    """
+    dynamically import a module by name. check to see if it's already in
+    sys.modules; if not, just try to import it; if that doesn't work, try to
+    interpret module_name as a path.
+    """
+    if module_name in sys.modules:
+        return sys.modules[module_name]
+    if Path(module_name).stem in sys.modules:
+        return sys.modules[module_name]
+    try:
+        return import_module(module_name)
+    except ModuleNotFoundError:
+        pass
+    spec = spec_from_file_location(Path(module_name).stem, module_name)
+    module = module_from_spec(spec)
+    spec.loader.exec_module(module)
+    sys.modules[Path(module_name).stem] = module
+    return module

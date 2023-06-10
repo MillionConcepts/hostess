@@ -420,25 +420,28 @@ def tcp_send(
     data, host, port, timeout=10, delay=0, chunksize=None, headerread=None
 ):
     """simple utility for one-shot TCP send."""
+    sockname = None
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.settimeout(timeout)
-        sock.connect((host, port))
-        sockname = sock.getsockname()
-        if (delay > 0) or (chunksize is not None):
-            chunksize = 16384 if chunksize is None else chunksize
-            while len(data) > 0:
-                data, chunk = data[chunksize:], data[:chunksize]
-                sock.send(chunk)
-                time.sleep(delay)
-        else:
-            sock.sendall(data)
         try:
-            response = read_from_socket(headerread, sock, timeout)
-            return response, sockname
+            sock.settimeout(timeout)
+            sock.connect((host, port))
+            sockname = sock.getsockname()
+            if (delay > 0) or (chunksize is not None):
+                chunksize = 16384 if chunksize is None else chunksize
+                while len(data) > 0:
+                    data, chunk = data[chunksize:], data[:chunksize]
+                    sock.send(chunk)
+                    time.sleep(delay)
+            else:
+                sock.sendall(data)
+                response = read_from_socket(headerread, sock, timeout)
+                return response, sockname
         except TimeoutError:
             return "timeout", sockname
+        except ConnectionError:
+            return "connection refused", sockname
         finally:
-            sock.close()
+            sock.close()  # TODO: redundant with context manager?
 
 
 def read_from_socket(headerread, sock, timeout):

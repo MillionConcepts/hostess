@@ -21,9 +21,8 @@ from hostess.station.handlers import (
     actiondict,
     tail_file,
     watch_dir,
-    flatten_into_json,
 )
-
+from hostess.station.messages import unpack_obj
 
 # keys a dict must have to count as a valid "actiondict" for inclusion in
 # a Node's actions list
@@ -73,6 +72,50 @@ class PipeActorPlaceholder(Actor):
     name = "pipeline"
 
 
+class FileWriter(Actor):
+    """basic actor to write to a file."""
+    def match(self, instruction: Any, **_) -> bool:
+        if instruction.action.name != "filewrite":
+            raise NoMatch("not a file write instruction")
+        if instruction.action.WhichOneof("command") != "localcall":
+            raise NoMatch("Not a properly-formatted local call")
+        return True
+
+    def execute(
+        self,
+        node: "nodes.Node",
+        instruction: Message,
+        key=None,
+        noid=False,
+        **_,
+    ):
+        action, report = init_execution(node, instruction, key, noid)
+        content = unpack_obj(instruction.action.localcall)
+        with open(self.file, self.mode) as stream:
+            stream.write(content)
+        conclude_execution("ok", report)
+
+    def _get_mode(self) -> str:
+        return self._mode
+
+    def _set_mode(self, mode: str):
+        self._mode = mode
+
+    def _get_file(self) -> Path:
+        return self._file
+
+    def _set_file(self, path: Path):
+        self._file = path
+
+    _file = None
+    _mode = "a"
+    file = property(_get_file, _set_file)
+    mode = property(_get_mode, _set_mode)
+    interface = ("file", "mode")
+    actortype = "action"
+    name = "filewrite"
+
+
 class FunctionCall(Actor):
     """
     Actor to execute Instructions that ask a Node to call a Python
@@ -106,27 +149,27 @@ class FunctionCall(Actor):
     name = "functioncall"
     actortype = "action"
 
-
-class BaseNodeLog(Actor):
-    """
-    default logging actor: log completed actions and incoming/outgoing messages
-    """
-
-    def match(self, event, **_) -> bool:
-        if isinstance(event, Message):
-            return True
-        elif isinstance(event, dict):
-            if NODE_ACTION_FIELDS.issubset(event.keys()):
-                return True
-        raise NoMatch("Not a running/completed action or a received Message")
-
-    def execute(
-        self, node: "nodes.Node", event: Union[dict, Message], **_
-    ) -> Any:
-        node._log_event(flatten_into_json(event, maxsize=64))
-
-    name = "base_log_actor"
-    actortype = "log"
+#
+# class BaseNodeLog(Actor):
+#     """
+#     default logging actor: log completed actions and incoming/outgoing messages
+#     """
+#
+#     def match(self, event, **_) -> bool:
+#         if isinstance(event, Message):
+#             return True
+#         elif isinstance(event, dict):
+#             if NODE_ACTION_FIELDS.issubset(event.keys()):
+#                 return True
+#         raise NoMatch("Not a running/completed action or a received Message")
+#
+#     def execute(
+#         self, node: "nodes.Node", event: Union[dict, Message], **_
+#     ) -> Any:
+#         node._log_event(flatten_into_json(event, maxsize=64))
+#
+#     name = "base_log_actor"
+#     actortype = "log"
 
 
 class LineLogger(Actor):

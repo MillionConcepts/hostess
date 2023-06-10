@@ -2,17 +2,13 @@
 from __future__ import annotations
 import datetime as dt
 import json
-from importlib import import_module
-from importlib.util import spec_from_file_location, module_from_spec
 import os
 from pathlib import Path
-import sys
-from types import ModuleType
-from typing import Optional, Union
+from typing import Optional, Union, MutableMapping, Any
 
 from cytoolz import valmap
-from dustgoggles.func import gmap
-from dustgoggles.structures import unnest
+from dustgoggles.func import gmap, constant
+from dustgoggles.structures import unnest, dig_and_edit
 
 from google.protobuf.message import Message
 
@@ -25,27 +21,7 @@ from hostess.subutils import (
     watched_process,
     deferinto,
 )
-
-
-def get_module(module_name: str) -> ModuleType:
-    """
-    dynamically import a module by name. check to see if it's already in
-    sys.modules; if not, just try to import it; if that doesn't work, try to
-    interpret module_name as a path.
-    """
-    if module_name in sys.modules:
-        return sys.modules[module_name]
-    if Path(module_name).stem in sys.modules:
-        return sys.modules[module_name]
-    try:
-        return import_module(module_name)
-    except ModuleNotFoundError:
-        pass
-    spec = spec_from_file_location(Path(module_name).stem, module_name)
-    module = module_from_spec(spec)
-    spec.loader.exec_module(module)
-    sys.modules[Path(module_name).stem] = module
-    return module
+from hostess.utilities import get_module, curry
 
 
 def unpack_callargs(arguments: list[pro.PythonObject]):
@@ -134,9 +110,21 @@ def watch_dir(
     return current, list(set(current).difference(contents))
 
 
-def flatten_into_json(event: Union[Message, dict], maxsize: int = 64) -> str:
+def json_sanitize(value: Any, maxlen: int = 64):
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, str):
+        value = value[:maxlen]
+    else:
+        value = repr(value)
+    return value[:maxlen]
+
+
+def flatten_for_json(
+    event: Union[Message, dict], maxlen: int = 64
+) -> dict:
     """very simple, semi-placeholder log-formatting function."""
     # TODO: if this ends up being unperformant with huge messages, do something
     if isinstance(event, Message):
         event = m2d(event)
-    return json.dumps(gmap(lambda v: v[:maxsize], valmap(str, unnest(event))))
+    return valmap(curry(json_sanitize, maxlen=maxlen), event)

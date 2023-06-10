@@ -5,8 +5,12 @@ import random
 import socket
 import time
 from collections import defaultdict
+from itertools import count
+from pathlib import Path
 from typing import Union, Literal, Mapping, Optional, Any
 
+from cytoolz import valmap
+from dustgoggles.dynamic import exc_report
 from dustgoggles.func import gmap
 from dustgoggles.structures import rmerge
 from google.protobuf.json_format import MessageToDict, Parse
@@ -14,6 +18,7 @@ from google.protobuf.message import Message
 
 import hostess.station.proto.station_pb2 as pro
 from hostess.station import bases
+from hostess.station.handlers import json_sanitize, flatten_for_json
 from hostess.station.messages import (
     pack_obj,
     completed_task_msg,
@@ -27,6 +32,7 @@ from hostess.station.talkie import (
     timeout_factory,
     make_comm,
 )
+from hostess.utilities import logstamp
 
 ConfigParamType = Literal["config_property", "config_dict"]
 
@@ -42,6 +48,8 @@ class Node(bases.BaseNode):
         timeout=10,
         update_interval=10,
         start=False,
+        # TODO: something better
+        logdir=Path(__file__).parent / ".nodelogs"
     ):
         """
         configurable remote processor for hostess network. can gather data
@@ -70,6 +78,16 @@ class Node(bases.BaseNode):
         self.n_threads = n_threads
         self.instruction_queue = []
         self.update_timer, self.reset_update_timer = timeout_factory(False)
+        self.logdir = logdir
+        self.logdir.mkdir(exist_ok=True)
+        # TODO: hacky temp log thing, do it better
+        self.logid = f"{str(random.randint(0, 10000)).zfill(5)}"
+        # TODO: add local hostname of node
+        self.logfile = Path(
+            self.logdir,
+            f"{self.name}_{self.station[0]}_{self.station[1]}_"
+            f"{self.logid}.log"
+        )
 
     def _sensor_loop(self, sensor: bases.Sensor):
         """
@@ -93,6 +111,18 @@ class Node(bases.BaseNode):
                 "exception": exception,
             }
 
+    def check_on_action(self, instruction_id: int):
+        try:
+            result = self.threads[f"Instruction_{instruction_id}"].result(0)
+        except TimeoutError:
+            return None, True
+        except Exception as ex:
+            # action crashed without setting its status as such
+            self.actions[instruction_id]['status'] = 'crash'
+            return ex, False
+        return result, False
+
+
     def _check_actions(self):
         """
         check running actions (threads launched as part of a 'do'
@@ -102,13 +132,21 @@ class Node(bases.BaseNode):
         to_clean = []
         for instruction_id, action in self.actions.items():
             # TODO: multistep "pipeline" case
-            if action["status"] != "running":
-                self._log(action)
-                # TODO: determine if we should reset update timer here
-                # TODO: error handling
-                self._report_on_action(action)
-                # TODO: if report was successful, record the response
-                to_clean.append(instruction_id)
+            result, running = self.check_on_action(instruction_id)
+            if running is True:
+                continue
+            # TODO: accomplish this with a wrapper
+            if isinstance(result, Exception):
+                self._log(action | exc_report(result, 0))
+                action['result'] = result
+            else:
+                self._log(action, result=result)
+                action['result'] = result
+            # TODO: determine if we should reset update timer here
+            # TODO: error handling
+            self._report_on_action(action)
+            # TODO: if report was successful, record the response
+            to_clean.append(instruction_id)
         for target in to_clean:
             self.actions.pop(target)
 
@@ -123,7 +161,7 @@ class Node(bases.BaseNode):
         # TODO: this might want to be more sophisticated
         info = pro.Update(info=[pack_obj(e) for e in self.actionable_events])
         message.MergeFrom(info)
-        self.send_to_station(message)
+        self.talk_to_station(message)
         self.actionable_events[:] = []
 
     def _start(self):
@@ -163,8 +201,9 @@ class Node(bases.BaseNode):
             self.locked = True
             # TODO: other cleanup tasks, like signaling or killing threads --
             #  not sure exactly how hard we want to do this!
-            self._send_exit_report(exception)
             if exception is not None:
+                self.exec.submit(self._send_exit_report, exception)
+                self._log(exc_report(exception, 0), category="exit")
                 raise exception
 
     def _send_exit_report(self, exception=None):
@@ -177,9 +216,11 @@ class Node(bases.BaseNode):
         mdict["state"]["status"] = status
         message = Parse(json.dumps(mdict), pro.Update())
         if exception is not None:
-            info = pro.Update(info=[pack_obj(exception, "exception")])
+            info = pro.Update(
+                info=[pack_obj(exc_report(exception, 0), "exception")]
+            )
             message.MergeFrom(info)
-        self.send_to_station(message)
+        self.talk_to_station(message)
 
     def _report_on_action(self, action: dict):
         """report to Station on completed/failed action."""
@@ -188,7 +229,7 @@ class Node(bases.BaseNode):
         message = Parse(json.dumps(mdict), pro.Update())
         report = completed_task_msg(action)
         message.MergeFrom(pro.Update(completed=report, reason="completion"))
-        self.send_to_station(message)
+        self.talk_to_station(message)
 
     def _check_in(self):
         """send check-in Update to the Station."""
@@ -200,24 +241,19 @@ class Node(bases.BaseNode):
         #     action_reports.append(dict2msg(action, pro.ActionReport))
         message = Parse(json.dumps(mdict), pro.Update())
         # message.MergeFrom(pro.Update(running=action_reports))
-        self.send_to_station(message)
+        self.talk_to_station(message)
         self.reset_update_timer()
 
-    # TODO: figure out how to not make this infinity json objects.
-    #  this is basically a hook for logger Actors.
-    def _log_event(self, obj):
-        with open(self.logfile, "a") as stream:
-            stream.write(f"\n###\n{obj}\n###\n")
-
     def _log(self, event, **extra_fields):
-        """see if an event is loggable, then log it (this may just in."""
-        try:
-            loggers = self.match(event, "log")
-        except bases.NoActorForEvent:
-            # if we don't have a logger for something, that's fine
-            return
-        for logger in loggers:
-            logger.execute(self, event, **extra_fields)
+        logdict = valmap(json_sanitize, {"time": logstamp()} | extra_fields)
+        if isinstance(event, (dict, Message)):
+            # TODO, maybe: still want an event key?
+            logdict |= flatten_for_json(event)
+        else:
+            logdict['event'] = json_sanitize(event)
+        with self.logfile.open("a") as stream:
+            json.dump(logdict, stream, indent=2)
+            stream.write(",\n")
 
     def _match_task_instruction(self, event) -> list[bases.Actor]:
         """
@@ -276,28 +312,62 @@ class Node(bases.BaseNode):
             self.threads[threadname] = self.exec.submit(
                 self._do_actions, actions, instruction, key, noid
             )
-        except bases.DoNotUnderstand as dne:
-            status, err = "bad_request", dne
+        except bases.DoNotUnderstand:
+            status = "bad_request"
+            err = self.explain_match(instruction, "action")
         finally:
             # noinspection PyTypeChecker
             self._reply_to_instruction(instruction, status, err)
-            self._log(instruction, direction="recv", status=status, err=err)
+            self._log(
+                instruction,
+                category="comms",
+                direction="recv",
+                status=status,
+                err=err
+            )
 
-    def send_to_station(self, message):
-        """send a Message to the Station."""
-        message = self._insert_config(message)
+    def _trysend(self, message):
+        """
+        try to send a message to the Station. Sleep if it doesn't work.
+        """
+        response, was_locked, timeout_counter = None, self.locked, count()
+        waiting = False
+        while response in (None, "timeout", "connection refused"):
+            # if we couldn't get to the Station, log that fact, wait, and
+            # retry. lock self while this is happening to ensure we don't do
+            # this in big pulses.
+            if response in ("timeout", "connection refused"):
+                self.locked, waiting = True, True
+                if next(timeout_counter) % 10 == 0:
+                    self._log(response, category="comms", direction="recv")
+                # TODO, maybe: this could be a separate attribute
+                time.sleep(self.update_interval)
+            response, _ = stsend(self._insert_config(message), *self.station)
+        if waiting is True:
+            self._log(
+                "connection established", category="comms", direction="recv"
+            )
         self._log(message, direction="sent")
-        response, _ = stsend(message, *self.station)
-        if response == "timeout":
-            # TODO: do something else
-            self._log("timeout", direction="recv")
-            return
+        # if we locked ourselves due to bad responses, and we weren't already
+        # locked for some reason -- like we often will have been if sending
+        # a task report or something -- unlock ourselves.
+        if was_locked is True:
+            self.locked = False
+        return response
+
+    def _interpret_response(self, response):
+        """interpret a response from the Station."""
         decoded = read_comm(response)
         if isinstance(decoded, dict):
             decoded = decoded["body"]
         self._log(decoded, direction="recv")
         if isinstance(decoded, pro.Instruction):
             self.instruction_queue.append(decoded)
+
+    def talk_to_station(self, message):
+        """send a Message to the Station and queue any returned Instruction."""
+        response = self._trysend(message)
+        self._interpret_response(response)
 
     def _base_message(self):
         """
@@ -346,7 +416,7 @@ class Node(bases.BaseNode):
         msg = Parse(json.dumps(mdict), pro.Update())
         if err is not None:
             msg.MergeFrom(pro.Update(info=[pack_obj(err)]))
-        self.send_to_station(msg)
+        self.talk_to_station(msg)
 
 
 class HeadlessNode(Node):
@@ -360,7 +430,7 @@ class HeadlessNode(Node):
         super().__init__(station, *args, **kwargs)
         self.message_log = []
 
-    def send_to_station(self, message):
+    def talk_to_station(self, message):
         self.message_log.append(message)
 
 
@@ -536,3 +606,22 @@ class Station(bases.BaseNode):
 
     def log(self, *args, **kwargs):
         pass
+
+
+def launch_node(
+    station: tuple[str, int],
+    name: str,
+    node_module: str = "hostess.station.nodes",
+    node_class: str = "Node",
+):
+    """simple hook for launching a node."""
+    from hostess.utilities import import_module
+    module = import_module(node_module)
+    cls = getattr(module, node_class)
+    node = cls(station, name)
+    node.start()
+    time.sleep(0.1)
+    print("launcher: node started")
+    while node.threads['main'].running():
+        time.sleep(5)
+    print("launcher: exiting")
