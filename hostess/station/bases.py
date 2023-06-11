@@ -344,8 +344,9 @@ class BaseNode(Matcher, ABC):
         if self.__started is True:
             raise EnvironmentError("Node already started.")
         self.restart_server()
-        self.threads["main"] = self.exec.submit(trywrap(self._start, "main"))
+        self.threads["main"] = self.exec.submit(self._start)
         self.__started = True
+        self.state = "running"
 
     def nodeid(self):
         """basic identifying information for node."""
@@ -363,8 +364,22 @@ class BaseNode(Matcher, ABC):
             return True
         return False
 
-    def _start(self):
+    def _main_loop(self):
         raise NotImplementedError
+
+    def shutdown(self, exception: Optional[Exception]):
+        raise NotImplementedError
+
+    def _start(self):
+        """
+        private mmethod to start the node. should only be executed by the
+        public start() method.
+        """
+        try:
+            self._main_loop()
+        except Exception as ex:
+            return self.shutdown(ex)
+        return self.shutdown(None)
 
     def _is_locked(self):
         return self._lock.locked()
@@ -409,4 +424,5 @@ class BaseNode(Matcher, ABC):
     server = None
     server_events = None
     inbox = None
+    state = "stopped"
     _ackcheck: Optional[Callable] = None

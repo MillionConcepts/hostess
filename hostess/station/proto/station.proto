@@ -9,9 +9,9 @@ import "google/protobuf/timestamp.proto";
 /* TODO: autocompiler */
 
 message PythonSerial {bytes body = 1; string serialization = 2;}
-enum Serialization {unknownserialization=0; unserialized=1; json=2; dill=3;}
-enum Compression {uncompressed=0; gzip = 1; lz4 = 2;}
-enum CharType {unknownstringtype=0; str=1; bytes=2; nonetype=3;}
+enum Serialization {unknownserialization = 0; unserialized = 1; json = 2; dill = 3;}
+enum Compression {uncompressed = 0; gzip = 1; lz4 = 2;}
+enum CharType {unknownstringtype = 0; str = 1; bytes = 2; nonetype = 3;}
 /* for passing arguments directly into a call or constructing structured information */
 message PythonObject {
   bytes value = 1;
@@ -151,7 +151,7 @@ message PythonEncodedPayload {
   bytes body = 1; Serialization serialization = 2; Compression compression = 3;
 }
 
-enum ExecContext {unknowncontext=0; thread=1; process=2; detached=3;}
+enum ExecContext {unknowncontext = 0; thread = 1; process = 2; detached = 3;}
 
 message FunctionCall {
   /* module name or path */
@@ -216,7 +216,7 @@ message Action{
 
 message Pipeline {uint32 id = 1; string name = 2; repeated Action steps = 3;}
 
-enum ConfigParamType {unknowntype=0; config_property=1; config_dict=2;}
+enum ConfigParamType {unknowntype = 0; config_property = 1; config_dict = 2;}
 
 message ConfigParam {ConfigParamType paramtype = 1; PythonObject value = 2;}
 

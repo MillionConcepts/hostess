@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import random
 import socket
+import sys
 import time
 from collections import defaultdict
 from itertools import count
 from pathlib import Path
-from typing import Union, Literal, Mapping, Optional, Any
+from types import ModuleType
+from typing import Union, Literal, Mapping, Optional, Any, Type
 
 from cytoolz import valmap
 from dustgoggles.dynamic import exc_report
@@ -49,7 +51,8 @@ class Node(bases.BaseNode):
         update_interval=10,
         start=False,
         # TODO: something better
-        logdir=Path(__file__).parent / ".nodelogs"
+        logdir=Path(__file__).parent / ".nodelogs",
+        _is_process_owner=False
     ):
         """
         configurable remote processor for hostess network. can gather data
@@ -88,6 +91,7 @@ class Node(bases.BaseNode):
             f"{self.station[0]}_{self.station[1]}_{self.name}_"
             f"{self.logid}.log"
         )
+        self.__is_process_owner = _is_process_owner
 
     def _sensor_loop(self, sensor: bases.Sensor):
         """
@@ -121,7 +125,6 @@ class Node(bases.BaseNode):
             self.actions[instruction_id]['status'] = 'crash'
             return ex, False
         return result, False
-
 
     def _check_actions(self):
         """
@@ -164,6 +167,57 @@ class Node(bases.BaseNode):
         self.talk_to_station(message)
         self.actionable_events[:] = []
 
+    def _main_loop(self):
+        while self.signals.get("main") is None:
+            # TODO: lockouts might be overly strict. we'll see
+            # report actionable events (appended to actionable_events by
+            # Sensors) to Station
+            if (len(self.actionable_events) > 0) and (not self.locked):
+                self.locked = True
+                self._send_info()
+                self.locked = False
+            # periodically check in with Station
+            if self.update_timer() >= self.update_interval:
+                if ("check_in" not in self.threads) and (not self.locked):
+                    self._check_in()
+            # clean up and report on completed / crashed actions
+            if not self.locked:
+                self._check_actions()
+            # TODO: launch sensors that were dynamically added; relaunch
+            #  failed sensor threads
+            # act on any Instructions received from Station
+            if (len(self.instruction_queue) > 0) and (not self.locked):
+                self.locked = True
+                self._handle_instruction(self.instruction_queue.pop())
+                self.locked = False
+            time.sleep(self.poll)
+
+    def shutdown(self, exception: Optional[Exception] = None):
+        """shut down the node"""
+        self._log("beginning shutdown", category="exit")
+        self.signals['main'] = True
+        self.locked = True
+        # divorce oneself from actors and acts, from events and instructions
+        self.actions, self.actionable_events = {}, []
+        # TODO, maybe: try to kill child processes (can't in general kill
+        #  threads but sys.exit should handle it)
+        # signal sensors to shut down
+        for k in self.threads.keys():
+            self.signals[k] = 1
+        # goodbye to all that
+        self.instruction_queue, self.actors, self.sensors = [], {}, {}
+        if exception is not None:
+            self.exec.submit(self._send_exit_report, exception)
+            self._log(
+                exc_report(exception, 0), status="crashed", category="exit"
+            )
+        else:
+            self.exec.submit(self._send_exit_report)
+            self._log("exiting", status="graceful", category="exit")
+        self.state = "stopped"
+        if self.__is_process_owner is True:
+            sys.exit()
+
     def _start(self):
         """
         private method to start the node. should only be called by the public
@@ -171,40 +225,12 @@ class Node(bases.BaseNode):
         """
         for name, sensor in self.sensors.items():
             self.threads[name] = self.exec.submit(self._sensor_loop, sensor)
-        exception = None
         try:
-            while True:
-                # TODO: lockouts might be overly strict. we'll see
-                # report actionable events (appended to actionable_events by
-                # Sensors) to Station
-                if len(self.actionable_events) > 0:
-                    self.locked = True
-                    self._send_info()
-                    self.locked = False
-                # act on any Instructions received from Station
-                if len(self.instruction_queue) > 0:
-                    self.locked = True
-                    self._handle_instruction(self.instruction_queue.pop())
-                    self.locked = False
-                # periodically check in with Station
-                if self.update_timer() >= self.update_interval:
-                    if "check_in" not in self.threads:
-                        self._check_in()
-                # clean up and report on completed / crashed actions
-                self._check_actions()
-                # TODO: launch sensors that were dynamically added; relaunch
-                #  failed sensor threads
-                time.sleep(self.poll)
+            self._main_loop()
         except Exception as ex:
-            exception = ex
-        finally:
-            self.locked = True
-            # TODO: other cleanup tasks, like signaling or killing threads --
-            #  not sure exactly how hard we want to do this!
-            if exception is not None:
-                self.exec.submit(self._send_exit_report, exception)
-                self._log(exc_report(exception, 0), category="exit")
-                raise exception
+            return self.shutdown(ex)
+        if not self.state == "stopped":
+            self.shutdown(None)
 
     def _send_exit_report(self, exception=None):
         """
@@ -281,8 +307,10 @@ class Node(bases.BaseNode):
             bases.validate_instruction(instruction)
             if enum(instruction, "type") == "configure":
                 self._configure_from_instruction(instruction)
+            # TODO, maybe: different kill behavior.
+            elif enum(instruction, "type") in ("stop", "kill"):
+                return self.shutdown()
             # config/shutdown etc. behavior is not performed by Actors.
-            # TODO: implement shutdown etc.
             if enum(instruction, "type") != "do":
                 return
             actions = self._match_task_instruction(instruction)
@@ -436,7 +464,8 @@ class Station(bases.BaseNode):
         name: str = "station",
         n_threads: int = 8,
         max_inbox=100,
-        logdir=Path(__file__).parent / ".nodelogs"
+        logdir=Path(__file__).parent / ".nodelogs",
+        _is_process_owner = False
     ):
         super().__init__(
             host=host,
@@ -454,6 +483,7 @@ class Station(bases.BaseNode):
         #   between station and node
         self.logid = f"{str(random.randint(0, 10000)).zfill(5)}"
         self.logfile = Path(logdir, f"{host}_{port}_station_{self.logid}")
+        self.__is_process_owner = _is_process_owner
 
     def set_node_properties(self, node: str, **propvals):
         if len(propvals) == 0:
@@ -469,6 +499,9 @@ class Station(bases.BaseNode):
             paramtype="config_dict", value=pack_obj(config)
         )
         self.outbox[node].append(make_instruction("configure", config=config))
+
+    def shutdown_node(self, node: str, how: Literal['stop', 'kill'] = 'stop'):
+        self.outbox[node].append(make_instruction(how))
 
     # TODO, maybe: signatures on these match-and-execute things are getting
     #  a little weird and specialized. maybe that's ok, but maybe we should
@@ -526,16 +559,43 @@ class Station(bases.BaseNode):
                 # TODO: plausibly some logging
                 pass
 
-    def _start(self):
-        """
-        main loop for Station. should only be executed by the start() method
-        inherited from BaseNode.
-        """
-        while self.signals.get("start") is None:
+    def shutdown(self, exception: Optional[Exception] = None):
+        """shut down the Station."""
+        self._log("beginning shutdown", category="exit")
+        self.signals['main'] = 1
+        self.locked = True
+        # clear outbox etc.
+        for k in self.outbox.keys():
+            self.outbox[k] = []
+        self.actors, self.sensors = {}, {}
+        for node in self.nodes:
+            self.shutdown_node(node, "stop")
+        # TODO: wait to make sure they are received based on state tracking,
+        #  this is a placeholder
+        time.sleep(2)
+        # shut down the server etc.
+        # TODO: this is a little messy because of the discrepancy in thread
+        #  and signal names. maybe unify this somehow.
+        for k in self.signals:
+            self.signals[k] = 1
+        self.server.kill()
+        if exception is not None:
+            self._log(
+                exc_report(exception, 0), status="crashed", category="exit"
+            )
+        else:
+            self._log("exiting", status="graceful", category="exit")
+        self.state = "stopped"
+        if self.__is_process_owner:
+            sys.exit()
+
+    def _main_loop(self):
+        """main loop for Station."""
+        while self.signals.get("main") is None:
             if self.tendtime() > self.poll * 30:
                 crashed_threads = self.server.tend()
                 if len(self.inbox) > self.max_inbox:
-                    self.inbox = self.inbox[-self.max_inbox :]
+                    self.inbox = self.inbox[-self.max_inbox:]
                 self.reset_tend()
                 if len(crashed_threads) > 0:
                     self._log(crashed_threads, category="server_errors")
@@ -617,9 +677,9 @@ def launch_node(
 ):
     """simple hook for launching a node."""
     from hostess.utilities import import_module
-    module = import_module(node_module)
-    cls = getattr(module, node_class)
-    node = cls(station, name)
+    module: ModuleType = import_module(node_module)
+    cls: Type[Node] = getattr(module, node_class)
+    node: Node = cls(station, name, _is_process_owner=True)
     node.start()
     time.sleep(0.1)
     print("launcher: node started")

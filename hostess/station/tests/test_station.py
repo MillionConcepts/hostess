@@ -11,6 +11,7 @@ from hostess.station.proto_utils import enum
 def test_actions_1():
     host, port = "localhost", random.randint(10000, 20000)
     station = Station(host, port)
+    station.nodes = ["writer"]
     station.start()
     writer = Node(
         station=(station.host, station.port),
@@ -47,6 +48,7 @@ def test_actions_1():
         Path("test.txt").unlink(missing_ok=True)
         writer.logfile.unlink()
         station.logfile.unlink()
+        station.shutdown()
 
 
 test_actions_1()
