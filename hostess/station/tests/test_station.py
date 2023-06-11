@@ -1,6 +1,6 @@
+from pathlib import Path
 import random
 import time
-from pathlib import Path
 
 from hostess.station.actors import FileWriter
 from hostess.station.messages import make_action, pack_obj, make_instruction
@@ -45,6 +45,8 @@ def test_actions_1():
     # TODO: shut down nodes
     finally:
         Path("test.txt").unlink(missing_ok=True)
+        writer.logfile.unlink()
+        station.logfile.unlink()
 
 
 test_actions_1()

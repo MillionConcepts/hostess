@@ -85,7 +85,7 @@ class Node(bases.BaseNode):
         # TODO: add local hostname of node
         self.logfile = Path(
             self.logdir,
-            f"{self.name}_{self.station[0]}_{self.station[1]}_"
+            f"{self.station[0]}_{self.station[1]}_{self.name}_"
             f"{self.logid}.log"
         )
 
@@ -243,17 +243,6 @@ class Node(bases.BaseNode):
         # message.MergeFrom(pro.Update(running=action_reports))
         self.talk_to_station(message)
         self.reset_update_timer()
-
-    def _log(self, event, **extra_fields):
-        logdict = valmap(json_sanitize, {"time": logstamp()} | extra_fields)
-        if isinstance(event, (dict, Message)):
-            # TODO, maybe: still want an event key?
-            logdict |= flatten_for_json(event)
-        else:
-            logdict['event'] = json_sanitize(event)
-        with self.logfile.open("a") as stream:
-            json.dump(logdict, stream, indent=2)
-            stream.write(",\n")
 
     def _match_task_instruction(self, event) -> list[bases.Actor]:
         """
@@ -447,6 +436,7 @@ class Station(bases.BaseNode):
         name: str = "station",
         n_threads: int = 8,
         max_inbox=100,
+        logdir=Path(__file__).parent / ".nodelogs"
     ):
         super().__init__(
             host=host,
@@ -460,6 +450,10 @@ class Station(bases.BaseNode):
         self.nodes, self.outbox = [], defaultdict(list)
         self.tendtime, self.reset_tend = timeout_factory(False)
         self.last_handler = None
+        # TODO: share log id -- or another identifier, like init time --
+        #   between station and node
+        self.logid = f"{str(random.randint(0, 10000)).zfill(5)}"
+        self.logfile = Path(logdir, f"{host}_{port}_station_{self.logid}")
 
     def set_node_properties(self, node: str, **propvals):
         if len(propvals) == 0:
@@ -485,9 +479,14 @@ class Station(bases.BaseNode):
         except bases.NoActorForEvent:
             # TODO: _plausibly_ log this?
             return
-        except (AttributeError, KeyError):
-            # TODO: log this
+        except (AttributeError, KeyError) as ex:
+            self._log(exc_report(ex, 0), category=category)
             return
+        self._log(
+            obj,
+            category=category,
+            matches=[a.name for a in actions],
+        )
         for action in actions:
             action.execute(self, obj)
 
@@ -504,9 +503,10 @@ class Station(bases.BaseNode):
     def _handle_report(self, message: Message):
         if not message.HasField("completed"):
             return
-        # TODO: handle instruction tracking / report logging
+        # TODO: handle instruction tracking
         if len(message.completed.steps) > 0:
             raise NotImplementedError
+        self._log(message, category="report")
         if not message.completed.HasField("action"):
             return
         obj = unpack_obj(message.completed.action.result)
@@ -518,6 +518,7 @@ class Station(bases.BaseNode):
         will eventually also deal with node state tracking, logging, etc.
         """
         # TODO: internal state tracking for crashed and shutdown nodes
+        # TODO, maybe: log acknowledgments
         for method in self._handle_info, self._handle_report:
             try:
                 method(message)
@@ -537,7 +538,7 @@ class Station(bases.BaseNode):
                     self.inbox = self.inbox[-self.max_inbox :]
                 self.reset_tend()
                 if len(crashed_threads) > 0:
-                    self.log({"server_errors": crashed_threads})
+                    self._log(crashed_threads, category="server_errors")
             time.sleep(self.poll)
 
     def _ackcheck(self, _conn: socket.socket, comm: dict):
@@ -577,7 +578,10 @@ class Station(bases.BaseNode):
             if len(queue) == 0:
                 return make_comm(b""), "sent ack"
             response = queue.pop()
+            # TODO: doing this here is much less complicated, but has the
+            #  downside that it will occur _before_ we confirm receipt.
             status = f"sent instruction {response.id}"
+            self._log(response, category="comms", direction="send")
             return make_comm(response), status
         # TODO: handle this in some kind of graceful way
         except Exception as ex:
@@ -603,9 +607,6 @@ class Station(bases.BaseNode):
         if len(best) == 0:
             return self.handlers()[0]["name"]
         return best[0]["name"]
-
-    def log(self, *args, **kwargs):
-        pass
 
 
 def launch_node(

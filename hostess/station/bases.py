@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 import os
 import re
 import socket
@@ -12,9 +13,13 @@ from itertools import chain
 from types import MappingProxyType as MPt
 from typing import Any, Callable, Mapping, Union, Optional
 
+from cytoolz import valmap
+from google.protobuf.pyext._message import Message
+
+from hostess.station.handlers import flatten_for_json, json_sanitize
 from hostess.station.proto_utils import enum
 from hostess.station.talkie import TCPTalk
-from hostess.utilities import filestamp, configured, trywrap
+from hostess.utilities import filestamp, configured, trywrap, logstamp
 
 
 def associate_actor(cls, config, params, actors, props, name=None):
@@ -386,6 +391,17 @@ class BaseNode(Matcher, ABC):
 
     def __repr__(self):
         return self.__str__()
+
+    def _log(self, event, **extra_fields):
+        logdict = valmap(json_sanitize, {"time": logstamp()} | extra_fields)
+        if isinstance(event, (dict, Message)):
+            # TODO, maybe: still want an event key?
+            logdict |= flatten_for_json(event)
+        else:
+            logdict['event'] = json_sanitize(event)
+        with self.logfile.open("a") as stream:
+            json.dump(logdict, stream, indent=2)
+            stream.write(",\n")
 
     locked = property(_is_locked, _set_locked)
     __started = False
