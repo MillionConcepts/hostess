@@ -326,7 +326,7 @@ class Node(bases.BaseNode):
                 err=err
             )
 
-    def _trysend(self, message):
+    def _trysend(self, message: Message):
         """
         try to send a message to the Station. Sleep if it doesn't work.
         """
@@ -347,7 +347,8 @@ class Node(bases.BaseNode):
             self._log(
                 "connection established", category="comms", direction="recv"
             )
-        self._log(message, direction="sent")
+        if enum(message, "reason") not in ("scheduled", "wilco"):
+            self._log(message, category="comms", direction="sent")
         # if we locked ourselves due to bad responses, and we weren't already
         # locked for some reason -- like we often will have been if sending
         # a task report or something -- unlock ourselves.
@@ -360,7 +361,6 @@ class Node(bases.BaseNode):
         decoded = read_comm(response)
         if isinstance(decoded, dict):
             decoded = decoded["body"]
-        self._log(decoded, direction="recv")
         if isinstance(decoded, pro.Instruction):
             self.instruction_queue.append(decoded)
 
