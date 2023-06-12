@@ -8,11 +8,13 @@ import re
 import socket
 import threading
 from abc import ABC
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from itertools import chain
 from types import MappingProxyType as MPt
-from typing import Any, Callable, Mapping, Union, Optional
+from typing import Any, Callable, Mapping, Union, Optional, Sequence
 
+import yaml
 from cytoolz import valmap
 from google.protobuf.pyext._message import Message
 
@@ -22,18 +24,20 @@ from hostess.station.talkie import TCPTalk
 from hostess.utilities import filestamp, configured, trywrap, logstamp
 
 
-def associate_actor(cls, config, params, actors, props, name=None):
+def associate_actor(
+    cls, cdict, params, actors: Sequence[Actor], props, name=None
+):
     """utility function for associating an actor with a Sensor."""
-    name = inc_name(cls.name if name is None else name, config)
+    name = inc_name(cls.name if name is None else name, cdict)
     actors[name] = cls()
-    config[name] = actors[name].config
+    cdict[name] = actors[name].config
     params[name] = {
         "match": actors[name].params["match"],
         "exec": actors[name].params["exec"],
     }
     for prop in actors[name].interface:
         props.append((f"{name}_{prop}", getattr(actors[name], prop)))
-    return config, params, actors, props
+    return cdict, params, actors, props
 
 
 class AttrConsumer:
@@ -134,7 +138,7 @@ class Matcher(AttrConsumer, ABC):
         interface properties and making it available for matching or sensor
         looping.
         """
-        name = inc_name(cls.name if name is None else name, self.config)
+        name = inc_name(cls.name if name is None else name, self.cdict)
         element = cls()
         element.name = name
         if issubclass(cls, Actor):
@@ -143,12 +147,11 @@ class Matcher(AttrConsumer, ABC):
             self.sensors[name] = element
         else:
             raise TypeError(f"{cls} is not a valid subelement for this class.")
-        self.config[name], self.params[name] = element.config, element.params
+        self.cdict[name], self.params[name] = element.config, element.params
         for prop in element.interface:
             self.consume_property(element, prop, f"{name}_{prop}")
 
     actors: dict[str, Actor]
-    config: dict[str, Any]
     params: dict[str, Any]
     sensors: dict[str, "Sensor"]
 
@@ -197,7 +200,7 @@ class Sensor(Matcher, ABC):
         for attr in self.interface:
             pstring += f"    {attr}: {getattr(self, attr)}\n"
         pstring += f"actors: {[a for a in self.actors]}\n"
-        pstring += f"config: {self.config}\n"
+        pstring += f"config: {yaml.dump(self.config).replace('null', 'None')}"
         return pstring
 
     def __repr__(self):
@@ -300,7 +303,7 @@ class BaseNode(Matcher, ABC):
         super().__init__()
         self.host, self.port = host, port
         self.params, self.name = {}, name
-        self.config, self.threads, self.actors, self.sensors = {}, {}, {}, {}
+        self.cdict, self.threads, self.actors, self.sensors = {}, {}, {}, {}
         self._lock = threading.Lock()
         # TODO: do this better
         os.makedirs("logs", exist_ok=True)
@@ -379,11 +382,15 @@ class BaseNode(Matcher, ABC):
         private method to start the node. should only be executed by the
         public start() method.
         """
+        for name, sensor in self.sensors.items():
+            self.threads[name] = self.exec.submit(self._sensor_loop, sensor)
+        exception = None
         try:
             self._main_loop()
         except Exception as ex:
-            return self._shutdown(ex)
-        return self._shutdown(None)
+            exception = ex
+        self._shutdown(exception)
+        return exception
 
     def _is_locked(self):
         return self._lock.locked()
@@ -400,12 +407,11 @@ class BaseNode(Matcher, ABC):
     def __str__(self):
         pstring = f"{type(self).__name__} ({self.name})\n"
         pstring += f"threads: {self.threads}\n"
-        pstring += f"interface:\n"
-        for attr in self.interface:
-            pstring += f"    {attr}: {getattr(self, attr)}\n"
         pstring += f"actors: {[a for a in self.actors]}\n"
         pstring += f"sensors: {[s for s in self.sensors]}\n"
-        pstring += f"config: {self.config}"
+        pstring += f"config:\n"
+        clines = yaml.dump(self.config).replace('null', 'None').splitlines()
+        pstring += '\n'.join(map(lambda l: "  " + l, clines))
         return pstring
 
     def __repr__(self):
@@ -422,6 +428,16 @@ class BaseNode(Matcher, ABC):
             json.dump(logdict, stream, indent=2)
             stream.write(",\n")
 
+    def _get_config(self):
+        props, params = {}, defaultdict(dict)
+        for prop in self.interface:
+            props[prop] = getattr(self, prop)
+        for name, actor_cdict in self.params.items():
+            for k, v in filter(lambda kv: kv[1] != (), actor_cdict.items()):
+                params[name][k] = self.cdict[name].get(k)
+        return {'props': props, 'cdict': dict(params)}
+
+    config = property(_get_config)
     locked = property(_is_locked, _set_locked)
     __started = False
     threads = None

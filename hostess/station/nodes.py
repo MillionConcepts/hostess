@@ -200,20 +200,6 @@ class Node(bases.BaseNode):
         if self.__is_process_owner is True:
             sys.exit()
 
-    def _start(self):
-        """
-        private method to start the node. should only be called by the public
-        .start method inherited from BaseNode.
-        """
-        for name, sensor in self.sensors.items():
-            self.threads[name] = self.exec.submit(self._sensor_loop, sensor)
-        try:
-            self._main_loop()
-        except Exception as ex:
-            return self._shutdown(ex)
-        if not self.state == "stopped":
-            self._shutdown(None)
-
     def _send_exit_report(self, exception=None):
         """
         send Update to Station informing it that the node is exiting, and why.
@@ -278,7 +264,7 @@ class Node(bases.BaseNode):
                         f"no property {param.value.name}"
                     )
             elif enum(param, "paramtype") == "config_dict":
-                self.config = rmerge(self.config, unpack_obj(param.value))
+                self.cdict = rmerge(self.cdict, unpack_obj(param.value))
             else:
                 raise bases.DoNotUnderstand("unknown ConfigParamType")
 
