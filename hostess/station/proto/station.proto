@@ -113,7 +113,7 @@ message MessageCount {
 
 enum UpdateReason {
   no_reason = 0;
-  scheduled = 1;
+  heartbeat = 1;
   info = 2;
   requested = 3;
   wilco = 4;

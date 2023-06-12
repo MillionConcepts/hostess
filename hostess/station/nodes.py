@@ -228,7 +228,7 @@ class Node(bases.BaseNode):
     def _check_in(self):
         """send check-in Update to the Station."""
         mdict = self._base_message()
-        mdict["reason"] = "scheduled"
+        mdict["reason"] = "heartbeat"
         # TODO: multi-step case
         # action_reports = []
         # for id_, action in self.actions.items():
@@ -270,7 +270,7 @@ class Node(bases.BaseNode):
 
     def _handle_instruction(self, instruction: Message):
         """interpret, reply to, and execute (if relevant) an Instruction."""
-        status, err = "wilco", ""
+        status, err = "wilco", None
         try:
             bases.validate_instruction(instruction)
             if enum(instruction, "type") == "configure":
@@ -332,7 +332,7 @@ class Node(bases.BaseNode):
             self._log(
                 "connection established", category="comms", direction="recv"
             )
-        if enum(message, "reason") not in ("scheduled", "wilco"):
+        if enum(message, "reason") not in ("heartbeat", "wilco"):
             self._log(message, category="comms", direction="sent")
         # if we locked ourselves due to bad responses, and we weren't already
         # locked for some reason -- like we often will have been if sending
@@ -388,7 +388,7 @@ class Node(bases.BaseNode):
         return message
 
     def _reply_to_instruction(
-        self, instruction, status: str, err: Optional[pro.PythonObject] = None
+        self, instruction, status: str, err: Optional[Any] = None
     ):
         """
         send a reply Update to an Instruction informing the Station that we

@@ -4,18 +4,28 @@ from __future__ import annotations
 
 import json
 import random
-import sys
 import struct
+import sys
+from functools import cached_property
+from itertools import accumulate
+from mailbox import Message
+from operator import add
 from types import MappingProxyType as MPt, NoneType
-from typing import Optional, Any, Collection, Literal, Union
+from typing import Optional, Any, Literal, Mapping, \
+    MutableSequence
 
 import dill
-from dustgoggles.func import gmap
-from more_itertools import split_when, all_equal
 import numpy as np
+from cytoolz import groupby
+from dustgoggles.func import gmap
+from google.protobuf.internal.well_known_types import Duration, Timestamp
+from more_itertools import split_when, all_equal
+from pympler.asizeof import asizeof
 
 from hostess.station.proto import station_pb2 as pro
-from hostess.station.proto_utils import make_timestamp, enum, dict2msg
+from hostess.station.proto_utils import make_timestamp, enum, dict2msg, \
+    proto_formatdict
+from hostess.utilities import mb, yprint
 
 
 def byteorder() -> str:
@@ -192,3 +202,117 @@ def completed_task_msg(actiondict: dict, steps=None) -> pro.TaskReport:
     return pro.TaskReport(instruction_id=actiondict['id'], action=action)
 
 
+class Inbox:
+    """manager class for lists of comms"""
+    def __init__(self, comms: MutableSequence[Mapping]):
+        self.comms = comms
+
+    def _sizer(self):
+        return accumulate(map(asizeof, reversed(self.comms)), add)
+
+    def prune(self, max_mb: float = 256):
+        for i, size in enumerate(self._sizer()):
+            if mb(size) > max_mb:
+                self.comms = self.comms[:i]
+                break
+
+    def __getitem__(self, key):
+        return self.comms[key]
+
+    def __setitem__(self, key, value):
+        self.comms[key] = value
+
+    def append(self, item):
+        self.comms.append(item)
+
+    def sort(self):
+        return groupby(lambda m: enum(m, "reason"), self.messages)
+
+    def _get_messages(self):
+        return gmap(event_body, self.comms)
+
+    def _get_completed(self):
+        return self.sort().get('completion', [])
+
+    def _get_heartbeats(self):
+        return self.sort().get('heartbeat', [])
+
+    def _get_wilco(self):
+        return self.sort().get('wilco', [])
+
+    def _get_info(self):
+        return self.sort().get('info', [])
+
+    messages = property(_get_messages)
+    info = property(_get_info)
+    completed = property(_get_completed)
+    heartbeats = property(_get_heartbeats)
+    wilco = property(_get_wilco)
+
+
+def event_body(event):
+    return event['content']['body']
+
+
+class Msg:
+    """display/exploration helper class for hostess proto Messages."""
+
+    def __init__(self, message):
+        self.message = message
+
+    @cached_property
+    def unpack(self):
+        raise NotImplementedError
+
+    @cached_property
+    def contents(self):
+        raise NotImplementedError
+
+    @cached_property
+    def nodeid(self):
+        raise NotImplementedError
+
+
+def unpack_message(msg: Message):
+    formatted = {}
+    for k, v in proto_formatdict(msg).items():
+        element = getattr(msg, k)
+        if element is None:
+            continue
+        elif v == 'ENUM':
+            formatted[k] = enum(msg, k)
+        elif isinstance(element, pro.PythonObject):
+            formatted[k] = unpack_obj(getattr(msg, k))
+        # they look like lists, but they're not!
+        elif "__len__" in dir(element) and (len(element) == 0):
+            continue
+        elif not isinstance(element, Message):
+            formatted[k] = getattr(msg, k)
+        elif isinstance(element, (Timestamp, Duration)):
+            formatted[k] = element.ToJsonString()
+        elif element.ListFields() == []:
+            continue
+        else:
+            formatted[k] = unpack_message(element)
+    return formatted
+
+
+def print_message(unpacked, maxlen=256):
+    """
+    default string formatter for unpacked message.
+    TODO: more sophisticated behavior.
+    """
+    topline = (
+        f"{unpacked['nodeid']['name']} -- "
+        f"{unpacked['reason']} -- "
+        f"{unpacked['time']} -- "
+        f"PID {unpacked['nodeid']['pid']}"
+    )
+    lines = [topline]
+    if (iid := unpacked.get('instruction_id')) not in (None, 0):
+        lines.append(f" -- instruction id {iid}")
+    for key in ('completed', 'info'):
+        if key in unpacked.keys():
+            lines.append(key)
+            lines.append(yprint(unpacked[key], indent=2))
+    return "\n".join(lines)

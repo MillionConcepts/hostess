@@ -5,12 +5,15 @@ import socket
 import sys
 import time
 from collections import defaultdict
+from itertools import accumulate
+from operator import add
 from pathlib import Path
 from typing import Literal, Mapping, Optional, Any
 
 from dustgoggles.dynamic import exc_report
 from dustgoggles.func import gmap
 from google.protobuf.message import Message
+from pympler.asizeof import asizeof
 
 import hostess.station.proto.station_pb2 as pro
 from hostess.station import bases
@@ -18,6 +21,7 @@ from hostess.station.messages import pack_obj, unpack_obj, make_instruction, \
     update_instruction_timestamp
 from hostess.station.proto_utils import enum
 from hostess.station.talkie import timeout_factory, make_comm
+from hostess.utilities import mb
 
 
 class Station(bases.BaseNode):
@@ -32,7 +36,7 @@ class Station(bases.BaseNode):
         port: int,
         name: str = "station",
         n_threads: int = 8,
-        max_inbox=100,
+        max_inbox_mb: float = 250,
         logdir=Path(__file__).parent / ".nodelogs",
         _is_process_owner = False
     ):
@@ -43,7 +47,7 @@ class Station(bases.BaseNode):
             n_threads=n_threads,
             can_receive=True,
         )
-        self.max_inbox = max_inbox
+        self.max_inbox_mb = max_inbox_mb
         self.events = []
         self.nodes, self.outbox = [], defaultdict(list)
         self.tendtime, self.reset_tend = timeout_factory(False)
@@ -167,8 +171,8 @@ class Station(bases.BaseNode):
         while self.signals.get("main") is None:
             if self.tendtime() > self.poll * 30:
                 crashed_threads = self.server.tend()
-                if len(self.inbox) > self.max_inbox:
-                    self.inbox = self.inbox[-self.max_inbox:]
+                # heuristically manage inbox size
+                self.inbox.prune(self.max_inbox_mb)
                 self.reset_tend()
                 if len(crashed_threads) > 0:
                     self._log(crashed_threads, category="server_errors")

@@ -19,9 +19,10 @@ from cytoolz import valmap
 from google.protobuf.pyext._message import Message
 
 from hostess.station.handlers import flatten_for_json, json_sanitize
+from hostess.station.messages import Inbox
 from hostess.station.proto_utils import enum
 from hostess.station.talkie import TCPTalk
-from hostess.utilities import filestamp, configured, trywrap, logstamp, yprint
+from hostess.utilities import configured, logstamp, yprint
 
 
 def associate_actor(
@@ -337,7 +338,7 @@ class BaseNode(Matcher, ABC):
                 executor=self.exec,
             )
             self.threads |= self.server.threads
-            self.inbox = self.server.data
+            self.inbox = Inbox(self.server.data)
             for ix, sig in self.server.signals.items():
                 self.signals[f"server_{ix}"] = sig
         else:
@@ -445,3 +446,5 @@ class BaseNode(Matcher, ABC):
     inbox = None
     state = "stopped"
     _ackcheck: Optional[Callable] = None
+
+
