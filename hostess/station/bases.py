@@ -21,7 +21,7 @@ from google.protobuf.pyext._message import Message
 from hostess.station.handlers import flatten_for_json, json_sanitize
 from hostess.station.proto_utils import enum
 from hostess.station.talkie import TCPTalk
-from hostess.utilities import filestamp, configured, trywrap, logstamp
+from hostess.utilities import filestamp, configured, trywrap, logstamp, yprint
 
 
 def associate_actor(
@@ -405,13 +405,12 @@ class BaseNode(Matcher, ABC):
             raise TypeError
 
     def __str__(self):
-        pstring = f"{type(self).__name__} ({self.name})\n"
-        pstring += f"threads: {self.threads}\n"
-        pstring += f"actors: {[a for a in self.actors]}\n"
-        pstring += f"sensors: {[s for s in self.sensors]}\n"
-        pstring += f"config:\n"
-        clines = yaml.dump(self.config).replace('null', 'None').splitlines()
-        pstring += '\n'.join(map(lambda l: "  " + l, clines))
+        pstring = f"{type(self).__name__} ({self.name})"
+        pstring += f"\nthreads:\n"
+        pstring += yprint({k: str(t) for k, t in self.threads.items()}, 2)
+        pstring += f"\nactors: {[a for a in self.actors]}"
+        pstring += f"\nsensors: {[s for s in self.sensors]}"
+        pstring += f"\nconfig:\n{yprint(self.config, 2)}"
         return pstring
 
     def __repr__(self):

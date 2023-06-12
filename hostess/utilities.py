@@ -16,6 +16,7 @@ from types import ModuleType
 from typing import Callable, MutableMapping, Optional, Sequence, Any, Hashable
 
 import rich.console
+import yaml
 from cytoolz import first
 from dustgoggles.dynamic import exc_report
 
@@ -358,3 +359,10 @@ def get_module(module_name: str) -> ModuleType:
     spec.loader.exec_module(module)
     sys.modules[Path(module_name).stem] = module
     return module
+
+
+def yprint(obj, indent=0, replace_null=True):
+    text = yaml.dump(obj)
+    if replace_null is True:
+        text = text.replace('null', 'None')
+    return "\n".join(" " * indent + line for line in text.splitlines())
