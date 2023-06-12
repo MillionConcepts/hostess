@@ -367,19 +367,23 @@ class BaseNode(Matcher, ABC):
     def _main_loop(self):
         raise NotImplementedError
 
-    def shutdown(self, exception: Optional[Exception]):
+    def _shutdown(self, exception: Optional[Exception]):
         raise NotImplementedError
+
+    def shutdown(self):
+        self.locked = True
+        self.signals['main'] = 1
 
     def _start(self):
         """
-        private mmethod to start the node. should only be executed by the
+        private method to start the node. should only be executed by the
         public start() method.
         """
         try:
             self._main_loop()
         except Exception as ex:
-            return self.shutdown(ex)
-        return self.shutdown(None)
+            return self._shutdown(ex)
+        return self._shutdown(None)
 
     def _is_locked(self):
         return self._lock.locked()

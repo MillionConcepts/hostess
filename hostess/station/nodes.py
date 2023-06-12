@@ -176,11 +176,9 @@ class Node(bases.BaseNode):
                 self.locked = False
             time.sleep(self.poll)
 
-    def shutdown(self, exception: Optional[Exception] = None):
+    def _shutdown(self, exception: Optional[Exception] = None):
         """shut down the node"""
         self._log("beginning shutdown", category="exit")
-        self.signals["main"] = True
-        self.locked = True
         # divorce oneself from actors and acts, from events and instructions
         self.actions, self.actionable_events = {}, []
         # TODO, maybe: try to kill child processes (can't in general kill
@@ -212,9 +210,9 @@ class Node(bases.BaseNode):
         try:
             self._main_loop()
         except Exception as ex:
-            return self.shutdown(ex)
+            return self._shutdown(ex)
         if not self.state == "stopped":
-            self.shutdown(None)
+            self._shutdown(None)
 
     def _send_exit_report(self, exception=None):
         """

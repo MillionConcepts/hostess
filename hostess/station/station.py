@@ -128,20 +128,24 @@ class Station(bases.BaseNode):
                 # TODO: plausibly some logging
                 pass
 
-    def shutdown(self, exception: Optional[Exception] = None):
+    def _shutdown(self, exception: Optional[Exception] = None):
         """shut down the Station."""
         self._log("beginning shutdown", category="exit")
-        self.signals['main'] = 1
-        self.locked = True
         # clear outbox etc.
         for k in self.outbox.keys():
             self.outbox[k] = []
         self.actors, self.sensors = {}, {}
         for node in self.nodes:
-            self.shutdown_node(node, "stop")
+            self.shutdown_node(node['name'], "stop")
         # TODO: wait to make sure they are received based on state tracking,
         #  this is a placeholder
-        time.sleep(0.5)
+        waiting, _ = timeout_factory(timeout=5)
+        while len(self.outbox) > 0:
+            try:
+                waiting()
+            except TimeoutError:
+                break
+            time.sleep(0.1)
         # shut down the server etc.
         # TODO: this is a little messy because of the discrepancy in thread
         #  and signal names. maybe unify this somehow.
@@ -220,8 +224,10 @@ class Station(bases.BaseNode):
 
     def handlers(self) -> list[dict]:
         """
-        list the nodes we've internally designated as handlers. this probably
-        eventually wants to be more sophisticated.
+        TODO: this wants to be a _lot_ more sophisticated. it should do
+            something dynamic based on our tracking of what actions each node
+            can perform.
+        list the nodes we've internally designated as handlers.
         """
         return [n for n in self.nodes if "handler" in n["roles"]]
 
