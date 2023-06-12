@@ -9,11 +9,12 @@ import datetime as dt
 import random
 import re
 from pathlib import Path
-from typing import Any, Union, Callable, Optional
+from typing import Any, Callable, Optional
 
 from google.protobuf.message import Message
 
 import hostess.station.nodes as nodes
+from hostess.station.station import Station
 import hostess.station.proto.station_pb2 as pro
 from hostess.station.bases import Sensor, Actor, NoMatch
 from hostess.station.handlers import (
@@ -250,7 +251,7 @@ class InstructionFromInfo(Actor):
 
     def execute(
         self,
-        station: "nodes.Station",
+        station: "Station",
         note,
         *,
         instruction_maker: Optional[Callable[[Any], pro.Instruction]] = None,

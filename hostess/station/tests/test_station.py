@@ -1,3 +1,4 @@
+import atexit
 from pathlib import Path
 import random
 import time
@@ -14,7 +15,7 @@ def test_actions_1():
     station.nodes = ["writer"]
     station.start()
     writer = Node(
-        station=(station.host, station.port),
+        station_address=(station.host, station.port),
         name="writer",
         update_interval=0.1
     )
@@ -28,27 +29,27 @@ def test_actions_1():
     action = make_action(
         name="filewrite", localcall=pack_obj("hello")
     )
-    instruction = make_instruction("do", action=action)
-    station.outbox['writer'].append(instruction)
-    time.sleep(0.5)
-    report = [
-        m for m in station.inbox
-        if enum(m['content']['body'], "reason") == 'completion'
-    ][0]
+    for _ in range(20):
+        instruction = make_instruction("do", action=action)
+        station.outbox['writer'].append(instruction)
+    time.sleep(3)
     try:
+        report = [
+            m for m in station.inbox
+            if enum(m['content']['body'], "reason") == 'completion'
+        ][0]
         assert report['content']['body'].completed.action.name == 'filewrite'
         assert (
             enum(report['content']['body'].completed.action, "status")
             == 'success'
         )
         with open("test.txt") as stream:
-            assert stream.read() == "hello"
-    # TODO: shut down nodes
+            assert stream.read() == "hello" * 10
     finally:
-        Path("test.txt").unlink(missing_ok=True)
-        writer.logfile.unlink()
-        station.logfile.unlink()
         station.shutdown()
+        Path("test.txt").unlink(missing_ok=True)
+        writer.logfile.unlink(missing_ok=True)
+        station.logfile.unlink(missing_ok=True)
 
 
 test_actions_1()

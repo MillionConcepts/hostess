@@ -2,39 +2,23 @@ from __future__ import annotations
 
 import json
 import random
-import socket
 import sys
 import time
-from collections import defaultdict
 from itertools import count
 from pathlib import Path
 from types import ModuleType
-from typing import Union, Literal, Mapping, Optional, Any, Type
+from typing import Union, Literal, Optional, Type
 
-from cytoolz import valmap
 from dustgoggles.dynamic import exc_report
-from dustgoggles.func import gmap
 from dustgoggles.structures import rmerge
 from google.protobuf.json_format import MessageToDict, Parse
 from google.protobuf.message import Message
 
 import hostess.station.proto.station_pb2 as pro
 from hostess.station import bases
-from hostess.station.handlers import json_sanitize, flatten_for_json
-from hostess.station.messages import (
-    pack_obj,
-    completed_task_msg,
-    unpack_obj,
-    make_instruction,
-)
+from hostess.station.messages import pack_obj, completed_task_msg, unpack_obj
 from hostess.station.proto_utils import make_timestamp, enum
-from hostess.station.talkie import (
-    stsend,
-    read_comm,
-    timeout_factory,
-    make_comm,
-)
-from hostess.utilities import logstamp
+from hostess.station.talkie import stsend, read_comm, timeout_factory
 
 ConfigParamType = Literal["config_property", "config_dict"]
 
@@ -42,7 +26,7 @@ ConfigParamType = Literal["config_property", "config_dict"]
 class Node(bases.BaseNode):
     def __init__(
         self,
-        station: tuple[str, int],
+        station_address: tuple[str, int],
         name: str,
         elements: tuple[Union[type[bases.Sensor], type[bases.Actor]]] = (),
         n_threads=6,
@@ -52,7 +36,7 @@ class Node(bases.BaseNode):
         start=False,
         # TODO: something better
         logdir=Path(__file__).parent / ".nodelogs",
-        _is_process_owner=False
+        _is_process_owner=False,
     ):
         """
         configurable remote processor for hostess network. can gather data
@@ -76,7 +60,7 @@ class Node(bases.BaseNode):
         )
         self.update_interval = update_interval
         self.actionable_events = []
-        self.station = station
+        self.station = station_address
         self.actions = {}
         self.n_threads = n_threads
         self.instruction_queue = []
@@ -89,7 +73,7 @@ class Node(bases.BaseNode):
         self.logfile = Path(
             self.logdir,
             f"{self.station[0]}_{self.station[1]}_{self.name}_"
-            f"{self.logid}.log"
+            f"{self.logid}.log",
         )
         self.__is_process_owner = _is_process_owner
 
@@ -122,7 +106,7 @@ class Node(bases.BaseNode):
             return None, True
         except Exception as ex:
             # action crashed without setting its status as such
-            self.actions[instruction_id]['status'] = 'crash'
+            self.actions[instruction_id]["status"] = "crash"
             return ex, False
         return result, False
 
@@ -141,10 +125,10 @@ class Node(bases.BaseNode):
             # TODO: accomplish this with a wrapper
             if isinstance(result, Exception):
                 self._log(action | exc_report(result, 0))
-                action['result'] = result
+                action["result"] = result
             else:
                 self._log(action, result=result)
-                action['result'] = result
+                action["result"] = result
             # TODO: determine if we should reset update timer here
             # TODO: error handling
             self._report_on_action(action)
@@ -176,13 +160,13 @@ class Node(bases.BaseNode):
                 self.locked = True
                 self._send_info()
                 self.locked = False
+            # clean up and report on completed / crashed actions
+            if not self.locked:
+                self._check_actions()
             # periodically check in with Station
             if self.update_timer() >= self.update_interval:
                 if ("check_in" not in self.threads) and (not self.locked):
                     self._check_in()
-            # clean up and report on completed / crashed actions
-            if not self.locked:
-                self._check_actions()
             # TODO: launch sensors that were dynamically added; relaunch
             #  failed sensor threads
             # act on any Instructions received from Station
@@ -195,7 +179,7 @@ class Node(bases.BaseNode):
     def shutdown(self, exception: Optional[Exception] = None):
         """shut down the node"""
         self._log("beginning shutdown", category="exit")
-        self.signals['main'] = True
+        self.signals["main"] = True
         self.locked = True
         # divorce oneself from actors and acts, from events and instructions
         self.actions, self.actionable_events = {}, []
@@ -340,7 +324,7 @@ class Node(bases.BaseNode):
                 category="comms",
                 direction="recv",
                 status=status,
-                err=err
+                err=err,
             )
 
     def _trysend(self, message: Message):
@@ -451,224 +435,6 @@ class HeadlessNode(Node):
         self.message_log.append(message)
 
 
-class Station(bases.BaseNode):
-    """
-    central control node for hostess network. can receive Updates from and
-    send Instructions to Nodes.
-    """
-
-    def __init__(
-        self,
-        host: str,
-        port: int,
-        name: str = "station",
-        n_threads: int = 8,
-        max_inbox=100,
-        logdir=Path(__file__).parent / ".nodelogs",
-        _is_process_owner = False
-    ):
-        super().__init__(
-            host=host,
-            port=port,
-            name=name,
-            n_threads=n_threads,
-            can_receive=True,
-        )
-        self.max_inbox = max_inbox
-        self.events = []
-        self.nodes, self.outbox = [], defaultdict(list)
-        self.tendtime, self.reset_tend = timeout_factory(False)
-        self.last_handler = None
-        # TODO: share log id -- or another identifier, like init time --
-        #   between station and node
-        self.logid = f"{str(random.randint(0, 10000)).zfill(5)}"
-        self.logfile = Path(logdir, f"{host}_{port}_station_{self.logid}")
-        self.__is_process_owner = _is_process_owner
-
-    def set_node_properties(self, node: str, **propvals):
-        if len(propvals) == 0:
-            raise TypeError("can't send a no-op config instruction")
-        config = [
-            pro.ConfigParam(paramtype="config_property", value=pack_obj(v, k))
-            for k, v in propvals.items()
-        ]
-        self.outbox[node].append(make_instruction("configure", config=config))
-
-    def set_node_config(self, node: str, config: Mapping):
-        config = pro.ConfigParam(
-            paramtype="config_dict", value=pack_obj(config)
-        )
-        self.outbox[node].append(make_instruction("configure", config=config))
-
-    def shutdown_node(self, node: str, how: Literal['stop', 'kill'] = 'stop'):
-        self.outbox[node].append(make_instruction(how))
-
-    # TODO, maybe: signatures on these match-and-execute things are getting
-    #  a little weird and specialized. maybe that's ok, but maybe we should
-    #  make a more unified interface.
-    def match_and_execute(self, obj: Any, category: str):
-        try:
-            actions = self.match(obj, category)
-        except bases.NoActorForEvent:
-            # TODO: _plausibly_ log this?
-            return
-        except (AttributeError, KeyError) as ex:
-            self._log(exc_report(ex, 0), category=category)
-            return
-        self._log(
-            obj,
-            category=category,
-            matches=[a.name for a in actions],
-        )
-        for action in actions:
-            action.execute(self, obj)
-
-    def _handle_info(self, message: Message):
-        """
-        check info received in a Message against the Station's 'info' Actors,
-        and execute any relevant actions (most likely constructing
-        Instructions).
-        """
-        notes = gmap(unpack_obj, message.info)
-        for note in notes:
-            self.match_and_execute(note, "info")
-
-    def _handle_report(self, message: Message):
-        if not message.HasField("completed"):
-            return
-        # TODO: handle instruction tracking
-        if len(message.completed.steps) > 0:
-            raise NotImplementedError
-        self._log(message, category="report")
-        if not message.completed.HasField("action"):
-            return
-        obj = unpack_obj(message.completed.action.result)
-        self.match_and_execute(obj, "completion")
-
-    def _handle_incoming_message(self, message: pro.Update):
-        """
-        handle an incoming message. right now just wraps _handle_info() but
-        will eventually also deal with node state tracking, logging, etc.
-        """
-        # TODO: internal state tracking for crashed and shutdown nodes
-        # TODO, maybe: log acknowledgments
-        for method in self._handle_info, self._handle_report:
-            try:
-                method(message)
-            except NotImplementedError:
-                # TODO: plausibly some logging
-                pass
-
-    def shutdown(self, exception: Optional[Exception] = None):
-        """shut down the Station."""
-        self._log("beginning shutdown", category="exit")
-        self.signals['main'] = 1
-        self.locked = True
-        # clear outbox etc.
-        for k in self.outbox.keys():
-            self.outbox[k] = []
-        self.actors, self.sensors = {}, {}
-        for node in self.nodes:
-            self.shutdown_node(node, "stop")
-        # TODO: wait to make sure they are received based on state tracking,
-        #  this is a placeholder
-        time.sleep(2)
-        # shut down the server etc.
-        # TODO: this is a little messy because of the discrepancy in thread
-        #  and signal names. maybe unify this somehow.
-        for k in self.signals:
-            self.signals[k] = 1
-        self.server.kill()
-        if exception is not None:
-            self._log(
-                exc_report(exception, 0), status="crashed", category="exit"
-            )
-        else:
-            self._log("exiting", status="graceful", category="exit")
-        self.state = "stopped"
-        if self.__is_process_owner:
-            sys.exit()
-
-    def _main_loop(self):
-        """main loop for Station."""
-        while self.signals.get("main") is None:
-            if self.tendtime() > self.poll * 30:
-                crashed_threads = self.server.tend()
-                if len(self.inbox) > self.max_inbox:
-                    self.inbox = self.inbox[-self.max_inbox:]
-                self.reset_tend()
-                if len(crashed_threads) > 0:
-                    self._log(crashed_threads, category="server_errors")
-            time.sleep(self.poll)
-
-    def _ackcheck(self, _conn: socket.socket, comm: dict):
-        """
-        callback for interpreting comms and responding as appropriate.
-        should only be called inline of the ack() method of the Station's
-        server attribute (a talkie.TCPTalk object).
-        """
-        # TODO: lockout might be too strict
-        self.locked = True
-        try:
-            # TODO: choose whether to log here or to log when we dump the
-            #  inbox + at exit.
-            if comm["err"]:
-                # TODO: send did-not-understand
-                return make_comm(b""), "notified sender of error"
-            message = comm["body"]
-            try:
-                nodename = message.nodeid.name
-            except (AttributeError, ValueError):
-                # TODO: send not-enough-info message
-                return make_comm(b""), "notified sender not enough info"
-            # interpret the comm here in case we want to immediately send a
-            # response based on its contents (e.g., in a gPhoton 2-like
-            # pipeline that's mostly coordinating execution of a big list of
-            # non-serial processes, we would want to immediately send
-            # another task to any Node that tells us it's finished one)
-            self._handle_incoming_message(comm["body"])
-            if enum(message.state, "status") in ("shutdown", "crashed"):
-                return None, "decline to send ack to terminated node"
-            # if we have any Instructions for the Node -- including ones that
-            # might have been added to the outbox in the
-            # _handle_incoming_message() workflow -- send them
-            # TODO, probably: send more than one Instruction when available.
-            #  we might want a special control code for that.
-            queue = self.outbox[nodename]
-            if len(queue) == 0:
-                return make_comm(b""), "sent ack"
-            response = queue.pop()
-            # TODO: doing this here is much less complicated, but has the
-            #  downside that it will occur _before_ we confirm receipt.
-            status = f"sent instruction {response.id}"
-            self._log(response, category="comms", direction="send")
-            return make_comm(response), status
-        # TODO: handle this in some kind of graceful way
-        except Exception as ex:
-            raise
-        finally:
-            self.locked = False
-
-    def handlers(self) -> list[dict]:
-        """
-        list the nodes we've internally designated as handlers. this probably
-        eventually wants to be more sophisticated.
-        """
-        return [n for n in self.nodes if "handler" in n["roles"]]
-
-    def next_handler(self, _note):
-        """
-        pick the 'next' handler node. for distributing tasks between multiple
-        available handler nodes.
-        """
-        if len(self.handlers()) == 0:
-            raise StopIteration("no handler nodes available.")
-        best = [n for n in self.handlers() if n["name"] != self.last_handler]
-        if len(best) == 0:
-            return self.handlers()[0]["name"]
-        return best[0]["name"]
-
-
 def launch_node(
     station: tuple[str, int],
     name: str,
@@ -677,12 +443,13 @@ def launch_node(
 ):
     """simple hook for launching a node."""
     from hostess.utilities import import_module
+
     module: ModuleType = import_module(node_module)
     cls: Type[Node] = getattr(module, node_class)
     node: Node = cls(station, name, _is_process_owner=True)
     node.start()
     time.sleep(0.1)
     print("launcher: node started")
-    while node.threads['main'].running():
+    while node.threads["main"].running():
         time.sleep(5)
     print("launcher: exiting")
