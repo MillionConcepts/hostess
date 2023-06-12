@@ -1,12 +1,12 @@
-import atexit
 from pathlib import Path
 import random
 import time
 
 from hostess.station.actors import FileWriter
 from hostess.station.messages import make_action, pack_obj, make_instruction
-from hostess.station.nodes import Station, Node
+from hostess.station.nodes import Node
 from hostess.station.proto_utils import enum
+from hostess.station.station import Station
 
 
 def test_actions_1():
@@ -29,7 +29,7 @@ def test_actions_1():
     action = make_action(
         name="filewrite", localcall=pack_obj("hello")
     )
-    for _ in range(20):
+    for _ in range(10):
         instruction = make_instruction("do", action=action)
         station.outbox['writer'].append(instruction)
     time.sleep(3)
@@ -44,12 +44,14 @@ def test_actions_1():
             == 'success'
         )
         with open("test.txt") as stream:
+            r = stream.read()
+            stream.seek(0)
             assert stream.read() == "hello" * 10
     finally:
         station.shutdown()
         Path("test.txt").unlink(missing_ok=True)
-        writer.logfile.unlink(missing_ok=True)
-        station.logfile.unlink(missing_ok=True)
+        # writer.logfile.unlink(missing_ok=True)
+        # station.logfile.unlink(missing_ok=True)
 
 
 test_actions_1()

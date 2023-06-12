@@ -134,6 +134,10 @@ def make_function_call_action(
     return make_action(**action_fields, functioncall=call)
 
 
+def update_instruction_timestamp(instruction: pro.Instruction):
+    instruction.MergeFrom(pro.Instruction(time=make_timestamp()))
+
+
 def make_instruction(instructiontype, **kwargs) -> pro.Instruction:
     """make an Instruction Message."""
     if kwargs.get("id") is None:

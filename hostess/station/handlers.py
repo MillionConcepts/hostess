@@ -110,7 +110,7 @@ def watch_dir(
     return current, list(set(current).difference(contents))
 
 
-def json_sanitize(value: Any, maxlen: int = 64):
+def json_sanitize(value: Any, maxlen: int = 128):
     if isinstance(value, (int, float)):
         return value
     if isinstance(value, str):
@@ -121,7 +121,7 @@ def json_sanitize(value: Any, maxlen: int = 64):
 
 
 def flatten_for_json(
-    event: Union[Message, dict], maxlen: int = 64
+    event: Union[Message, dict], maxlen: int = 128
 ) -> dict:
     """very simple, semi-placeholder log-formatting function."""
     # TODO: if this ends up being unperformant with huge messages, do something

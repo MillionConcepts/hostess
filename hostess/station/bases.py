@@ -148,7 +148,7 @@ class Matcher(AttrConsumer, ABC):
             self.consume_property(element, prop, f"{name}_{prop}")
 
     actors: dict[str, Actor]
-    config: dict
+    config: dict[str, Any]
     params: dict[str, Any]
     sensors: dict[str, "Sensor"]
 

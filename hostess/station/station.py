@@ -14,7 +14,8 @@ from google.protobuf.message import Message
 
 import hostess.station.proto.station_pb2 as pro
 from hostess.station import bases
-from hostess.station.messages import pack_obj, unpack_obj, make_instruction
+from hostess.station.messages import pack_obj, unpack_obj, make_instruction, \
+    update_instruction_timestamp
 from hostess.station.proto_utils import enum
 from hostess.station.talkie import timeout_factory, make_comm
 
@@ -205,12 +206,12 @@ class Station(bases.BaseNode):
             queue = self.outbox[nodename]
             if len(queue) == 0:
                 return make_comm(b""), "sent ack"
-            response = queue.pop()
-            # TODO: doing this here is much less complicated, but has the
+            instruction: Message = queue.pop()
+            update_instruction_timestamp(instruction)
+            # TODO: logging this here is much less complicated, but has the
             #  downside that it will occur _before_ we confirm receipt.
-            status = f"sent instruction {response.id}"
-            self._log(response, category="comms", direction="send")
-            return make_comm(response), status
+            self._log(instruction, category="comms", direction="send")
+            return make_comm(instruction), f"sent instruction {instruction.id}"
         # TODO: handle this in some kind of graceful way
         except Exception as ex:
             raise
