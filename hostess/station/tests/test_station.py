@@ -44,14 +44,12 @@ def test_actions_1():
             == 'success'
         )
         with open("test.txt") as stream:
-            r = stream.read()
-            stream.seek(0)
             assert stream.read() == "hello" * 10
     finally:
         station.shutdown()
         Path("test.txt").unlink(missing_ok=True)
-        # writer.logfile.unlink(missing_ok=True)
-        # station.logfile.unlink(missing_ok=True)
+        writer.logfile.unlink(missing_ok=True)
+        station.logfile.unlink(missing_ok=True)
 
 
 test_actions_1()
