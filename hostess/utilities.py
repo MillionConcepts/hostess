@@ -361,8 +361,10 @@ def get_module(module_name: str) -> ModuleType:
     return module
 
 
-def yprint(obj, indent=0, replace_null=True):
+def yprint(obj, indent=0, replace_null=True, maxlen=256):
     text = yaml.dump(obj)
     if replace_null is True:
         text = text.replace('null', 'None')
-    return "\n".join(" " * indent + line for line in text.splitlines())
+    return "\n".join(
+        " " * indent + line[:maxlen] for line in text.splitlines()
+    )

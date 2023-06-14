@@ -2,29 +2,35 @@
 
 from __future__ import annotations
 
+from functools import cached_property, cache
+from itertools import accumulate
 import json
+from operator import add
 import random
 import struct
 import sys
-from functools import cached_property
-from itertools import accumulate
-from mailbox import Message
-from operator import add
 from types import MappingProxyType as MPt, NoneType
-from typing import Optional, Any, Literal, Mapping, \
-    MutableSequence
+from typing import Optional, Any, Literal, Mapping, MutableSequence
 
-import dill
-import numpy as np
 from cytoolz import groupby
+import dill
 from dustgoggles.func import gmap
+from dustgoggles.structures import dig_for_keys, dig_for_values
+from google.protobuf.message import Message
 from google.protobuf.internal.well_known_types import Duration, Timestamp
+from google.protobuf.pyext._message import ScalarMapContainer, \
+    RepeatedCompositeContainer
 from more_itertools import split_when, all_equal
+import numpy as np
 from pympler.asizeof import asizeof
 
 from hostess.station.proto import station_pb2 as pro
-from hostess.station.proto_utils import make_timestamp, enum, dict2msg, \
-    proto_formatdict
+from hostess.station.proto_utils import (
+    dict2msg,
+    enum,
+    make_timestamp,
+    proto_formatdict,
+)
 from hostess.utilities import mb, yprint
 
 
@@ -103,7 +109,7 @@ def pack_obj(obj: Any, name: str = "") -> pro.PythonObject:
     if isinstance(obj, (str, bytes, int, float)):
         scanf, chartype = obj2scanf(obj)
         if isinstance(obj, str):
-            obj = obj.encode('utf-8')
+            obj = obj.encode("utf-8")
         elif isinstance(obj, NoneType):
             obj = b"\x00"
         obj = pro.PythonObject(
@@ -124,7 +130,7 @@ def make_function_call_action(
     module: Optional[str] = None,
     kwargs: list[pro.PythonObject] | Mapping[str, Any] = MPt({}),
     context: Literal["thread", "process", "detached"] = "thread",
-    **action_fields
+    **action_fields,
 ) -> pro.Action:
     """
     make an Action describing a function call task to be inserted into an
@@ -151,11 +157,9 @@ def update_instruction_timestamp(instruction: pro.Instruction):
 def make_instruction(instructiontype, **kwargs) -> pro.Instruction:
     """make an Instruction Message."""
     if kwargs.get("id") is None:
-        kwargs['id'] = random.randint(int(1e7), int(1e8))
+        kwargs["id"] = random.randint(int(1e7), int(1e8))
     instruction = pro.Instruction(
-        time=make_timestamp(),
-        type=instructiontype,
-        **kwargs
+        time=make_timestamp(), type=instructiontype, **kwargs
     )
     if instruction.type == "do" and instruction.task is None:
         raise ValueError("must assign a task for a 'do' action.")
@@ -176,7 +180,7 @@ def unpack_obj(obj: pro.PythonObject) -> Any:
         if any(isinstance(v, bytes) for v in unpacked):
             chartype = enum(obj, "chartype")
             if chartype == "str":
-                unpacked = tuple(map(lambda s: s.decode('utf-8'), unpacked))
+                unpacked = tuple(map(lambda s: s.decode("utf-8"), unpacked))
             elif chartype == "nonetype":
                 unpacked = [None for _ in unpacked]
         value = unpacked if len(unpacked) > 1 else unpacked[0]
@@ -193,17 +197,18 @@ def completed_task_msg(actiondict: dict, steps=None) -> pro.TaskReport:
     if steps is not None:
         raise NotImplementedError
     fields = {}
-    if 'steps' in actiondict.keys():
+    if "steps" in actiondict.keys():
         raise NotImplementedError
-    fields['result'] = pack_obj(actiondict.pop('result'))
-    fields['time'] = dict2msg(actiondict, pro.ActionTime)
+    fields["result"] = pack_obj(actiondict.pop("result"))
+    fields["time"] = dict2msg(actiondict, pro.ActionTime)
     action = dict2msg(actiondict, pro.ActionReport)
     action.MergeFrom(pro.ActionReport(**fields))
-    return pro.TaskReport(instruction_id=actiondict['id'], action=action)
+    return pro.TaskReport(instruction_id=actiondict["id"], action=action)
 
 
 class Inbox:
     """manager class for lists of comms"""
+
     def __init__(self, comms: MutableSequence[Mapping]):
         self.comms = comms
 
@@ -232,16 +237,16 @@ class Inbox:
         return gmap(event_body, self.comms)
 
     def _get_completed(self):
-        return self.sort().get('completion', [])
+        return self.sort().get("completion", [])
 
     def _get_heartbeats(self):
-        return self.sort().get('heartbeat', [])
+        return self.sort().get("heartbeat", [])
 
     def _get_wilco(self):
-        return self.sort().get('wilco', [])
+        return self.sort().get("wilco", [])
 
     def _get_info(self):
-        return self.sort().get('info', [])
+        return self.sort().get("info", [])
 
     messages = property(_get_messages)
     info = property(_get_info)
@@ -251,7 +256,7 @@ class Inbox:
 
 
 def event_body(event):
-    return event['content']['body']
+    return event["content"]["body"]
 
 
 class Msg:
@@ -260,59 +265,122 @@ class Msg:
     def __init__(self, message):
         self.message = message
 
-    @cached_property
-    def unpack(self):
-        raise NotImplementedError
+    @cache
+    def unpack(self, field=None):
+        if field is None:
+            return unpack_message(self.message)
+        try:
+            assert isinstance(
+                element := dig_for_values(self.message, field), Message
+            )
+            return unpack_message(element)
+        except (AttributeError, AssertionError):
+            raise AttributeError(f"{field} not found in message")
 
     @cached_property
-    def contents(self):
-        raise NotImplementedError
+    def body(self):
+        return self.unpack()
 
-    @cached_property
-    def nodeid(self):
-        raise NotImplementedError
+    def __getattr__(self, attr):
+        try:
+            return dig_for_values(self.body, attr)[0]
+        except TypeError:
+            raise AttributeError(f"Msg has no attribute '{attr}'")
+
+    @cache
+    def pprint(self, field=None):
+        if field is None:
+            return format_message(self.body)
+        return format_message(getattr(self, field))
+
+    @cache
+    def display(self, field=None):
+        if field is None:
+            return yprint(self.body, maxlen=256)
+        return yprint(getattr(self, field), maxlen=256)
+
+    @cache
+    def __str__(self):
+        try:
+            return self.pprint()
+        except NotImplementedError:
+            return self.display()
+
+    def __repr__(self):
+        return self.__str__()
 
 
-def unpack_message(msg: Message):
+def unpack_message(msg: Message | RepeatedCompositeContainer):
+    if isinstance(msg, RepeatedCompositeContainer):
+        formatted = []
+        for i in msg:
+            try:
+                formatted.append(unpack_message(i))
+            except AttributeError:
+                formatted.append(i)
+        return formatted
     formatted = {}
     for k, v in proto_formatdict(msg).items():
         element = getattr(msg, k)
+        # noinspection PySimplifyBooleanCheck
         if element is None:
             continue
-        elif v == 'ENUM':
+        elif v == "ENUM":
             formatted[k] = enum(msg, k)
         elif isinstance(element, pro.PythonObject):
-            formatted[k] = unpack_obj(getattr(msg, k))
+            formatted[k] = {'value': unpack_obj(element), 'name': element.name}
         # they look like lists, but they're not!
         elif "__len__" in dir(element) and (len(element) == 0):
             continue
-        elif not isinstance(element, Message):
-            formatted[k] = getattr(msg, k)
+        elif isinstance(element, ScalarMapContainer):
+            formatted[k] = dict(element)
         elif isinstance(element, (Timestamp, Duration)):
             formatted[k] = element.ToJsonString()
-        elif element.ListFields() == []:
+        elif ("ListFields" in dir(element)) and (element.ListFields() == []):
             continue
-        else:
+        elif isinstance(element, Message | RepeatedCompositeContainer):
             formatted[k] = unpack_message(element)
+        else:
+            formatted[k] = element
     return formatted
 
 
-def print_message(unpacked, maxlen=256):
+def _print_update(unpacked, maxlen=256):
+    topline = (
+        f"{unpacked['nodeid']['name']} - "
+        f"PID {unpacked['nodeid']['pid']}"
+    )
+    if (iid := unpacked.get("instruction_id")) not in (None, 0):
+        topline += f" - iid {iid}"
+    lines = [topline, f"{unpacked['reason']}: {unpacked['time']}"]
+    for key in ("completed", "info"):
+        if key in unpacked.keys():
+            lines.append(key)
+            lines.append(yprint(unpacked[key], indent=2, maxlen=maxlen))
+    return lines
+
+
+def _print_state(unpacked, maxlen=256):
+    topline = (
+        f"status {unpacked['status']}"
+    )
+    lines = [topline]
+    for key in ("config", "threads"):
+        if key in unpacked.keys():
+            lines.append(key)
+            lines.append(yprint(unpacked[key], indent=2, maxlen=maxlen))
+    return lines
+
+
+def format_message(unpacked, maxlen=256):
     """
     default string formatter for unpacked message.
     TODO: more sophisticated behavior.
     """
-    topline = (
-        f"{unpacked['nodeid']['name']} -- "
-        f"{unpacked['reason']} -- "
-        f"{unpacked['time']} -- "
-        f"PID {unpacked['nodeid']['pid']}"
-    )
-    lines = [topline]
-    if (iid := unpacked.get('instruction_id')) not in (None, 0):
-        lines.append(f" -- instruction id {iid}")
-    for key in ('completed', 'info'):
-        if key in unpacked.keys():
-            lines.append(key)
-            lines.append(yprint(unpacked[key], indent=2))
+    if 'nodeid' in unpacked.keys():
+        lines = _print_update(unpacked, maxlen)
+    elif 'loc' in unpacked.keys():
+        lines = _print_state(unpacked, maxlen)
+    else:
+        raise NotImplementedError
     return "\n".join(lines)
