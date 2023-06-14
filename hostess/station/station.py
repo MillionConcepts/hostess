@@ -209,12 +209,19 @@ class Station(bases.BaseNode):
             # TODO, probably: send more than one Instruction when available.
             #  we might want a special control code for that.
             box = self.outboxes[nodename]
+            candidates = tuple(
+                filter(lambda pm: pm[1].sent is False, enumerate(box))
+            )
+            if len(candidates) == 0:  # no queued messages
+                return make_comm(b""), "sent ack"
+            # ensure that config Instructions are sent before do Instructions
+            # (the do instructions might need correct config to work!)
             try:
                 pos, msg = filtern(
-                    lambda pm: pm[1].sent is False, enumerate(box)
+                    lambda pm: pm[1].type == 'configure', candidates
                 )
             except StopIteration:
-                return make_comm(b""), "sent ack"
+                pos, msg = candidates[0]
             update_instruction_timestamp(msg.message)
             # make new Msg object w/updated timestamp.
             # this is weird-looking, but, by intent, Msg object cached
