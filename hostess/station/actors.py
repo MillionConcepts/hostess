@@ -16,7 +16,7 @@ from google.protobuf.message import Message
 import hostess.station.nodes as nodes
 from hostess.station.station import Station
 import hostess.station.proto.station_pb2 as pro
-from hostess.station.bases import Sensor, Actor, NoMatch
+from hostess.station.bases import Sensor, Actor, NoMatch, BaseNode
 from hostess.station.handlers import (
     make_function_call,
     actiondict,
@@ -58,6 +58,27 @@ def conclude_execution(result, report):
     report["duration"] = report["end"] - report["start"]
 
 
+def reported(executor: Callable) -> Callable:
+    """
+    decorator for bound execute() methods of Actors that will handle
+    Instructions from a Station
+    """
+    def with_reportage(
+        self,
+        node: BaseNode,
+        instruction: Message,
+        key=None,
+        noid=False,
+        **kwargs
+    ):
+        action, report = init_execution(node, instruction, key, noid)
+        conclude_execution(
+            executor(self, node, instruction, key, **kwargs), report
+        )
+
+    return with_reportage
+
+
 class PipeActorPlaceholder(Actor):
     """
     pipeline execution actor. resubmits individual steps of pipelines as
@@ -82,6 +103,7 @@ class FileWriter(Actor):
             raise NoMatch("Not a properly-formatted local call")
         return True
 
+    @reported
     def execute(
         self,
         node: "nodes.Node",
@@ -90,11 +112,8 @@ class FileWriter(Actor):
         noid=False,
         **_,
     ):
-        action, report = init_execution(node, instruction, key, noid)
-        content = unpack_obj(instruction.action.localcall)
         with open(self.file, self.mode) as stream:
-            stream.write(content)
-        conclude_execution("ok", report)
+            stream.write(unpack_obj(instruction.action.localcall))
 
     def _get_mode(self) -> str:
         return self._mode
@@ -129,6 +148,7 @@ class FunctionCall(Actor):
             raise NoMatch("not a function call instruction")
         return True
 
+    @reported
     def execute(
         self,
         node: "nodes.Node",
@@ -137,40 +157,16 @@ class FunctionCall(Actor):
         noid=False,
         **_,
     ) -> Any:
-        action, report = init_execution(node, instruction, key, noid)
-        caches, call = make_function_call(action.functioncall)
+        caches, call = make_function_call(instruction.action.functioncall)
         node.actions[key] |= caches
         call()
         if len(node.actions[key]['result']) != 0:
-            result = node.actions[key]["result"]
+            return node.actions[key]["result"]
         else:
-            result = None
-        conclude_execution(result, report)
+            return None
 
     name = "functioncall"
     actortype = "action"
-
-#
-# class BaseNodeLog(Actor):
-#     """
-#     default logging actor: log completed actions and incoming/outgoing messages
-#     """
-#
-#     def match(self, event, **_) -> bool:
-#         if isinstance(event, Message):
-#             return True
-#         elif isinstance(event, dict):
-#             if NODE_ACTION_FIELDS.issubset(event.keys()):
-#                 return True
-#         raise NoMatch("Not a running/completed action or a received Message")
-#
-#     def execute(
-#         self, node: "nodes.Node", event: Union[dict, Message], **_
-#     ) -> Any:
-#         node._log_event(flatten_into_json(event, maxsize=64))
-#
-#     name = "base_log_actor"
-#     actortype = "log"
 
 
 class LineLogger(Actor):

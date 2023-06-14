@@ -16,10 +16,10 @@ from typing import Any, Callable, Mapping, Union, Optional, Sequence
 
 import yaml
 from cytoolz import valmap
+# noinspection PyProtectedMember
 from google.protobuf.pyext._message import Message
 
 from hostess.station.handlers import flatten_for_json, json_sanitize
-from hostess.station.messages import Mailbox
 from hostess.station.proto_utils import enum
 from hostess.station.talkie import TCPTalk
 from hostess.utilities import configured, logstamp, yprint
