@@ -338,7 +338,7 @@ class BaseNode(Matcher, ABC):
                 executor=self.exec,
             )
             self.threads |= self.server.threads
-            self.inbox = Mailbox(self.server.data)
+            self.inbox = self.server.data
             for ix, sig in self.server.signals.items():
                 self.signals[f"server_{ix}"] = sig
         else:

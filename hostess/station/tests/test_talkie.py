@@ -5,6 +5,7 @@ from multiprocessing import Pool
 
 import dill
 
+import hostess.station.comm
 import hostess.station.proto.station_pb2 as pro
 import hostess.station.talkie as tk
 from hostess.monitors import Stopwatch
@@ -19,7 +20,7 @@ def send_randbytes(
     send_delay=0,
     chunksize=None,
     header=b"",
-    eom=tk.HOSTESS_EOM,
+    eom=hostess.station.comm.HOSTESS_EOM,
 ):
     """send annoying random bytes."""
     exception = None
@@ -97,8 +98,8 @@ def test_protobuf():
 def test_comm():
     """check offline comm roundtrip"""
     report = test_protobuf()
-    encoded = tk.make_comm(report)
-    decoded = tk.read_comm(encoded)
+    encoded = hostess.station.comm.make_comm(report)
+    decoded = hostess.station.comm.read_comm(encoded)
     assert decoded["header"]["mtype"] == "Update"
     assert decoded["body"].completed.action.name == "imagestats"
     assert decoded["header"]["length"] == len(report.SerializeToString()) + 21
@@ -120,5 +121,5 @@ def test_comm_online():
         message = comm["body"]
         assert message.completed.action.result.value[0] == 128
         assert message.instruction_id == 3
-        assert ack.startswith(tk.HOSTESS_SOH)
+        assert ack.startswith(hostess.station.comm.HOSTESS_SOH)
     server.kill()

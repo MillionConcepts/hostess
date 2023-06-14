@@ -5,23 +5,20 @@ import socket
 import sys
 import time
 from collections import defaultdict
-from itertools import accumulate
-from operator import add
 from pathlib import Path
 from typing import Literal, Mapping, Optional, Any
 
 from dustgoggles.dynamic import exc_report
 from dustgoggles.func import gmap, filtern
 from google.protobuf.message import Message
-from pympler.asizeof import asizeof
 
 import hostess.station.proto.station_pb2 as pro
 from hostess.station import bases
 from hostess.station.messages import pack_obj, unpack_obj, make_instruction, \
     update_instruction_timestamp, Mailbox, Msg
 from hostess.station.proto_utils import enum
-from hostess.station.talkie import timeout_factory, make_comm
-from hostess.utilities import mb
+from hostess.station.talkie import timeout_factory
+from hostess.station.comm import make_comm
 
 
 class Station(bases.BaseNode):

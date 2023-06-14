@@ -31,7 +31,7 @@ from hostess.station.proto_utils import (
     make_timestamp,
     proto_formatdict,
 )
-from hostess.station.talkie import make_comm
+from hostess.station.comm import make_comm
 from hostess.utilities import mb, yprint
 
 
@@ -284,7 +284,7 @@ class Mailbox:
                 break
 
     @staticmethod
-    def maybe_get_body(thing: dict | Message):
+    def maybe_construct_msg(thing: dict | Message):
         # 'outbox' case
         if isinstance(thing, Message):
             return Msg(thing)
@@ -298,10 +298,10 @@ class Mailbox:
         return self.messages[key]
 
     def __setitem__(self, key, value):
-        self.messages[key] = self.maybe_get_body(value)
+        self.messages[key] = self.maybe_construct_msg(value)
 
     def append(self, item):
-        self.messages.append(self.maybe_get_body(item))
+        self.messages.append(self.maybe_construct_msg(item))
 
     def __len__(self):
         return len(self.messages)

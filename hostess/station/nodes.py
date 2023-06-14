@@ -18,7 +18,8 @@ import hostess.station.proto.station_pb2 as pro
 from hostess.station import bases
 from hostess.station.messages import pack_obj, completed_task_msg, unpack_obj
 from hostess.station.proto_utils import make_timestamp, enum
-from hostess.station.talkie import stsend, read_comm, timeout_factory
+from hostess.station.talkie import stsend, timeout_factory
+from hostess.station.comm import read_comm
 
 ConfigParamType = Literal["config_property", "config_dict"]
 
