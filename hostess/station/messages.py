@@ -31,6 +31,7 @@ from hostess.station.proto_utils import (
     make_timestamp,
     proto_formatdict,
 )
+from hostess.station.talkie import make_comm
 from hostess.utilities import mb, yprint
 
 
@@ -206,64 +207,19 @@ def completed_task_msg(actiondict: dict, steps=None) -> pro.TaskReport:
     return pro.TaskReport(instruction_id=actiondict["id"], action=action)
 
 
-class Inbox:
-    """manager class for lists of comms"""
-
-    def __init__(self, comms: MutableSequence[Mapping]):
-        self.comms = comms
-
-    def _sizer(self):
-        return accumulate(map(asizeof, reversed(self.comms)), add)
-
-    def prune(self, max_mb: float = 256):
-        for i, size in enumerate(self._sizer()):
-            if mb(size) > max_mb:
-                self.comms = self.comms[:i]
-                break
-
-    def __getitem__(self, key):
-        return self.comms[key]
-
-    def __setitem__(self, key, value):
-        self.comms[key] = value
-
-    def append(self, item):
-        self.comms.append(item)
-
-    def sort(self):
-        return groupby(lambda m: enum(m, "reason"), self.messages)
-
-    def _get_messages(self):
-        return gmap(event_body, self.comms)
-
-    def _get_completed(self):
-        return self.sort().get("completion", [])
-
-    def _get_heartbeats(self):
-        return self.sort().get("heartbeat", [])
-
-    def _get_wilco(self):
-        return self.sort().get("wilco", [])
-
-    def _get_info(self):
-        return self.sort().get("info", [])
-
-    messages = property(_get_messages)
-    info = property(_get_info)
-    completed = property(_get_completed)
-    heartbeats = property(_get_heartbeats)
-    wilco = property(_get_wilco)
-
-
 def event_body(event):
     return event["content"]["body"]
 
 
 class Msg:
-    """display/exploration helper class for hostess proto Messages."""
+    """helper class for hostess proto Messages."""
 
     def __init__(self, message):
-        self.message = message
+        self.message, self.sent = message, False
+
+    @cached_property
+    def comm(self):
+        return make_comm(self.message)
 
     @cache
     def unpack(self, field=None):
@@ -308,6 +264,74 @@ class Msg:
 
     def __repr__(self):
         return self.__str__()
+
+
+class Mailbox:
+    """manager class for lists of messages"""
+    # TODO: improve efficiency with caching or something
+
+    def __init__(self, messages: MutableSequence[Msg] | None = None):
+        messages = [] if messages is None else messages
+        self.messages = messages
+
+    def _sizer(self):
+        return accumulate(map(asizeof, reversed(self.messages)), add)
+
+    def prune(self, max_mb: float = 256):
+        for i, size in enumerate(self._sizer()):
+            if mb(size) > max_mb:
+                self.messages = self.messages[:i]
+                break
+
+    @staticmethod
+    def maybe_get_body(thing: dict | Message):
+        # 'outbox' case
+        if isinstance(thing, Message):
+            return Msg(thing)
+        # 'edited Msg' case
+        elif isinstance(thing, Msg):
+            return thing
+        # 'inbox' case
+        return Msg(event_body(thing))
+
+    def __getitem__(self, key):
+        return self.messages[key]
+
+    def __setitem__(self, key, value):
+        self.messages[key] = self.maybe_get_body(value)
+
+    def append(self, item):
+        self.messages.append(self.maybe_get_body(item))
+
+    def __len__(self):
+        return len(self.messages)
+
+    def __iter__(self):
+        return iter(self.messages)
+
+    def sort(self) -> dict:
+        try:
+            # noinspection PyTypeChecker
+            return groupby(lambda m: m.reason, self.messages)
+        except AttributeError:
+            raise TypeError("This method is only used for Station inboxes.")
+
+    def _get_completed(self):
+        return self.sort().get("completion", [])
+
+    def _get_heartbeats(self):
+        return self.sort().get("heartbeat", [])
+
+    def _get_wilco(self):
+        return self.sort().get("wilco", [])
+
+    def _get_info(self):
+        return self.sort().get("info", [])
+
+    info = property(_get_info)
+    completed = property(_get_completed)
+    heartbeats = property(_get_heartbeats)
+    wilco = property(_get_wilco)
 
 
 def unpack_message(msg: Message | RepeatedCompositeContainer):

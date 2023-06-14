@@ -262,7 +262,7 @@ class InstructionFromInfo(Actor):
             raise TypeError("Must have an instruction maker.")
         if node_picker is None:
             node_picker = station.next_handler
-        station.outbox[node_picker(note)].append(instruction_maker(note))
+        station.outboxes[node_picker(note)].append(instruction_maker(note))
 
     def _set_criteria(self, criteria):
         self.config['match']["criteria"] = criteria

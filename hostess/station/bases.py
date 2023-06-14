@@ -19,7 +19,7 @@ from cytoolz import valmap
 from google.protobuf.pyext._message import Message
 
 from hostess.station.handlers import flatten_for_json, json_sanitize
-from hostess.station.messages import Inbox
+from hostess.station.messages import Mailbox
 from hostess.station.proto_utils import enum
 from hostess.station.talkie import TCPTalk
 from hostess.utilities import configured, logstamp, yprint
@@ -338,7 +338,7 @@ class BaseNode(Matcher, ABC):
                 executor=self.exec,
             )
             self.threads |= self.server.threads
-            self.inbox = Inbox(self.server.data)
+            self.inbox = Mailbox(self.server.data)
             for ix, sig in self.server.signals.items():
                 self.signals[f"server_{ix}"] = sig
         else:
@@ -437,13 +437,13 @@ class BaseNode(Matcher, ABC):
                 params[name][k] = self.cdict[name].get(k)
         return {'props': props, 'cdict': dict(params)}
 
+    inbox = None
     config = property(_get_config)
     locked = property(_is_locked, _set_locked)
     __started = False
     threads = None
     server = None
     server_events = None
-    inbox = None
     state = "stopped"
     _ackcheck: Optional[Callable] = None
 

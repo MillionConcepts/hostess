@@ -31,7 +31,7 @@ def test_actions_1():
     )
     for _ in range(10):
         instruction = make_instruction("do", action=action)
-        station.outbox['writer'].append(instruction)
+        station.outboxes['writer'].append(instruction)
     time.sleep(3)
     try:
         report = [

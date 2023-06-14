@@ -11,14 +11,14 @@ from pathlib import Path
 from typing import Literal, Mapping, Optional, Any
 
 from dustgoggles.dynamic import exc_report
-from dustgoggles.func import gmap
+from dustgoggles.func import gmap, filtern
 from google.protobuf.message import Message
 from pympler.asizeof import asizeof
 
 import hostess.station.proto.station_pb2 as pro
 from hostess.station import bases
 from hostess.station.messages import pack_obj, unpack_obj, make_instruction, \
-    update_instruction_timestamp
+    update_instruction_timestamp, Mailbox, Msg
 from hostess.station.proto_utils import enum
 from hostess.station.talkie import timeout_factory, make_comm
 from hostess.utilities import mb
@@ -48,8 +48,8 @@ class Station(bases.BaseNode):
             can_receive=True,
         )
         self.max_inbox_mb = max_inbox_mb
-        self.events = []
-        self.nodes, self.outbox = [], defaultdict(list)
+        self.events, self.nodes = [], []
+        self.outboxes = defaultdict(Mailbox)
         self.tendtime, self.reset_tend = timeout_factory(False)
         self.last_handler = None
         # TODO: share log id -- or another identifier, like init time --
@@ -65,16 +65,16 @@ class Station(bases.BaseNode):
             pro.ConfigParam(paramtype="config_property", value=pack_obj(v, k))
             for k, v in propvals.items()
         ]
-        self.outbox[node].append(make_instruction("configure", config=config))
+        self.outboxes[node].append(make_instruction("configure", config=config))
 
     def set_node_config(self, node: str, config: Mapping):
         config = pro.ConfigParam(
             paramtype="config_dict", value=pack_obj(config)
         )
-        self.outbox[node].append(make_instruction("configure", config=config))
+        self.outboxes[node].append(make_instruction("configure", config=config))
 
     def shutdown_node(self, node: str, how: Literal['stop', 'kill'] = 'stop'):
-        self.outbox[node].append(make_instruction(how))
+        self.outboxes[node].append(make_instruction(how))
 
     # TODO, maybe: signatures on these match-and-execute things are getting
     #  a little weird and specialized. maybe that's ok, but maybe we should
@@ -136,15 +136,15 @@ class Station(bases.BaseNode):
         """shut down the Station."""
         self._log("beginning shutdown", category="exit")
         # clear outbox etc.
-        for k in self.outbox.keys():
-            self.outbox[k] = []
+        for k in self.outboxes.keys():
+            self.outboxes[k] = Mailbox([])
         self.actors, self.sensors = {}, {}
         for node in self.nodes:
             self.shutdown_node(node['name'], "stop")
         # TODO: wait to make sure they are received based on state tracking,
         #  this is a placeholder
         waiting, _ = timeout_factory(timeout=5)
-        while len(self.outbox) > 0:
+        while len(self.outboxes) > 0:
             try:
                 waiting()
             except TimeoutError:
@@ -211,18 +211,26 @@ class Station(bases.BaseNode):
             # _handle_incoming_message() workflow -- send them
             # TODO, probably: send more than one Instruction when available.
             #  we might want a special control code for that.
-            queue = self.outbox[nodename]
-            if len(queue) == 0:
+            box = self.outboxes[nodename]
+            try:
+                pos, msg = filtern(
+                    lambda pm: pm[1].sent is False, enumerate(box)
+                )
+            except StopIteration:
                 return make_comm(b""), "sent ack"
-            instruction: Message = queue.pop()
-            update_instruction_timestamp(instruction)
+            update_instruction_timestamp(msg.message)
+            # make new Msg object w/updated timestamp.
+            # this is weird-looking, but, by intent, Msg object cached
+            # properties are essentially immutable wrt the underlying message
+            box[pos] = Msg(msg.message)
             # TODO: logging this here is much less complicated, but has the
             #  downside that it will occur _before_ we confirm receipt.
-            self._log(instruction, category="comms", direction="send")
-            return make_comm(instruction), f"sent instruction {instruction.id}"
+            self._log(box[pos].message, category="comms", direction="send")
+            box[pos].sent = True
+            return box[pos].comm, f"sent instruction {box[pos].id}"
         # TODO: handle this in some kind of graceful way
         except Exception as ex:
-            raise
+            raise ex
         finally:
             self.locked = False
 
