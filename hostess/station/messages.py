@@ -84,7 +84,7 @@ def make_action(description=None, **fields):
     if fields.get("id") is None:
         fields["id"] = random.randint(int(1e7), int(1e8))
     action = pro.Action(description=description, **fields)
-    if (action.WhichOneof("command") is None) and (description is None):
+    if (action.WhichOneof("call") is None) and (description is None):
         raise TypeError("must pass a description or command message.")
     return action
 

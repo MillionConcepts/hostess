@@ -99,7 +99,7 @@ class FileWriter(Actor):
     def match(self, instruction: Any, **_) -> bool:
         if instruction.action.name != "filewrite":
             raise NoMatch("not a file write instruction")
-        if instruction.action.WhichOneof("command") != "localcall":
+        if instruction.action.WhichOneof("call") != "localcall":
             raise NoMatch("Not a properly-formatted local call")
         return True
 
@@ -144,7 +144,7 @@ class FunctionCall(Actor):
     """
 
     def match(self, instruction: Any, **_) -> bool:
-        if instruction.action.WhichOneof("command") != "functioncall":
+        if instruction.action.WhichOneof("call") != "functioncall":
             raise NoMatch("not a function call instruction")
         return True
 

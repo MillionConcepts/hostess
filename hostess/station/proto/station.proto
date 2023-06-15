@@ -202,7 +202,7 @@ message Action{
   in some cases, a node might only require a file path,
   file, an integer representing an orbit number, a url, or a parameter path. */
   map<string, string> description = 3;
-  oneof command {
+  oneof call {
     SystemCall systemcall = 4;
     FunctionCall functioncall = 5;
     ScriptCall scriptcall = 6;
