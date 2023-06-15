@@ -8,8 +8,9 @@ from __future__ import annotations
 import datetime as dt
 import random
 import re
+from io import BytesIO
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Hashable, MutableMapping
 
 from google.protobuf.message import Message
 
@@ -24,34 +25,53 @@ from hostess.station.handlers import (
     watch_dir,
 )
 from hostess.station.messages import unpack_obj
+from hostess.subutils import RunCommand
 
 # keys a dict must have to count as a valid "actiondict" for inclusion in
 # a Node's actions list
 NODE_ACTION_FIELDS = frozenset({"id", "start", "stop", "status", "result"})
 
 
-def init_execution(node, instruction, key, noid):
+def init_execution(
+    node: BaseNode,
+    instruction: Message,
+    key: Hashable,
+    noid: bool
+):
     """'invariant' start of a 'do' execution"""
     if instruction.HasField("action"):
-        action = instruction.action
+        action = instruction.action  # for brevity in execute() methods
     else:
-        action = instruction
+        action = instruction  # pure description cases
     if key is None:
         key = random.randint(0, int(1e7))
     node.actions[key] = actiondict(action)
-    report = node.actions[key]  # just shorthand
     if noid is False:
-        report["instruction_id"] = key
-    return action, report
+        node.actions[key]["instruction_id"] = key
+    return action, node.actions[key], key
 
 
-def conclude_execution(result, report):
-    """'invariant' cleanup for a 'do' execution"""
-    report['result'] = result
+def conclude_execution(
+    result: Any,
+    status: Optional[str] = None,
+    report: Optional[MutableMapping] = None
+):
+    """
+    common cleanup steps for a 'do' execution. individual Actors, even if they
+    use the @reported decorator that includes this function, may also define
+    additional cleanup steps.
+    """
+    report = {} if report is None else report
     if isinstance(result, Exception):
+        # Actors that run commands in subprocesses may insert their own
+        # 'streaming' results, which we do not want to overwrite with the
+        # exception.
         report["status"] = "crash"
+        report['exception'] = result
     else:
-        report["status"] = "success"
+        # individual actors may have unique failure criteria
+        report["status"] = "success" if status is None else status
+        report['result'] = result
     # in some cases could check stderr but would have to be careful
     # due to the many processes that communicate on stderr on purpose
     report["end"] = dt.datetime.utcnow()
@@ -71,10 +91,9 @@ def reported(executor: Callable) -> Callable:
         noid=False,
         **kwargs
     ):
-        action, report = init_execution(node, instruction, key, noid)
-        conclude_execution(
-            executor(self, node, instruction, key, **kwargs), report
-        )
+        action, report, key = init_execution(node, instruction, key, noid)
+        results = executor(self, node, action, key, **kwargs)
+        conclude_execution(*results, report=report)
 
     return with_reportage
 
@@ -136,7 +155,7 @@ class FileWriter(Actor):
     name = "filewrite"
 
 
-class FunctionCall(Actor):
+class FuncCaller(Actor):
     """
     Actor to execute Instructions that ask a Node to call a Python
     function from the node's execution environment. see
@@ -152,12 +171,12 @@ class FunctionCall(Actor):
     def execute(
         self,
         node: "nodes.Node",
-        instruction: Message,
+        action: Message,
         key=None,
         noid=False,
         **_,
     ) -> Any:
-        caches, call = make_function_call(instruction.action.functioncall)
+        caches, call = make_function_call(action.functioncall)
         node.actions[key] |= caches
         call()
         if len(node.actions[key]['result']) != 0:
@@ -165,7 +184,55 @@ class FunctionCall(Actor):
         else:
             return None
 
-    name = "functioncall"
+    name = "funccaller"
+    actortype = "action"
+
+
+class SysCaller(Actor):
+    """
+    Actor to execute Instructions that ask a Node to run a command
+    in an OS-level interpreter.
+    """
+
+    def match(self, instruction: Any, **_) -> bool:
+        if instruction.action.WhichOneof("call") != "systemcall":
+            raise NoMatch("not a system call instruction")
+        return True
+
+    @reported
+    def execute(
+        self,
+        node: "nodes.Node",
+        action: Message,
+        key=None,
+        noid=False,
+        **_,
+    ) -> tuple[dict[str, list[str]], str]:
+        # TODO:
+        #  - handle environment variables. workaround is of course to just
+        #    set them in the command
+        #  - switch interpreter on command
+        #  - handle compression
+        #  - handle fork requests (in 'context' field of SystemCall message)
+        kwargs = {}
+        # feed a binary blob to process stdin if present
+        if action.systemcall.payload is not None:
+            kwargs['_in_stream'] = BytesIO(action.systemcall.payload)
+        viewer = RunCommand(action.systemcall.command, _viewer=True)()
+        # slightly different convention than FunctionCaller because all we have
+        # is out and err
+        node.actions[key] |= {'result': {'out': viewer.out, 'err': viewer.err}}
+        viewer.wait()
+        # we don't want to report the action as failed for having stuff in
+        # stderr because of how many applications randomly print to stderr.
+        # the requesting object will have to handle that, or a subclass
+        # could call this method from super and postfilter the results.
+        # even raising the exception based on exit code is maybe questionable!
+        node.actions[key]['exit_code'] = viewer.returncode()
+        status = 'crash' if viewer.returncode() != 0 else 'success'
+        return {'out': viewer.out, 'err': viewer.err}, status
+
+    name = "syscaller"
     actortype = "action"
 
 

@@ -6,7 +6,7 @@ import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 
 /* compile with: protoc -I hostess --python_out=hostess hostess/station/proto/station.proto */
-/* TODO: autocompiler */
+/* TODO, maybe: autocompiler...or maybe that's an anti-feature */
 
 message PythonSerial {bytes body = 1; string serialization = 2;}
 enum Serialization {unknownserialization = 0; unserialized = 1; json = 2; dill = 3;}
@@ -60,9 +60,10 @@ message ActionReport {
   ActionLevel level = 4;
   ActionTime time = 5;
   PythonObject result = 6;
-  /* things like Python exception type */
-  string return_type = 7;
-  /* intended specifically for process exit codes */
+  /* we may have an exception as well as a result in some cases, e.g.,
+  streaming results from a subprocess that did _some_ stuff before failing */
+  PythonObject exception = 7;
+  /* intended specifically for system process exit codes */
   uint32 exit_code = 8;
 }
 

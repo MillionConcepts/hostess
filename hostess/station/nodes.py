@@ -102,14 +102,14 @@ class Node(bases.BaseNode):
 
     def check_on_action(self, instruction_id: int):
         try:
-            result = self.threads[f"Instruction_{instruction_id}"].result(0)
+            self.threads[f"Instruction_{instruction_id}"].result(0)
         except TimeoutError:
             return None, True
         except Exception as ex:
             # action crashed without setting its status as such
             self.actions[instruction_id]["status"] = "crash"
             return ex, False
-        return result, False
+        return None, False
 
     def _check_actions(self):
         """
@@ -120,16 +120,14 @@ class Node(bases.BaseNode):
         to_clean = []
         for instruction_id, action in self.actions.items():
             # TODO: multistep "pipeline" case
-            result, running = self.check_on_action(instruction_id)
+            exception, running = self.check_on_action(instruction_id)
             if running is True:
                 continue
             # TODO: accomplish this with a wrapper
-            if isinstance(result, Exception):
-                self._log(action | exc_report(result, 0))
-                action["result"] = result
+            if exception is not None:
+                self._log(action | exc_report(exception, 0))
             else:
-                self._log(action, result=result)
-                action["result"] = result
+                self._log(action)
             # TODO: determine if we should reset update timer here
             # TODO: error handling
             self._report_on_action(action)
