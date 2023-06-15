@@ -277,7 +277,7 @@ class RunCommand:
 
     def __call__(
         self, *args, **kwargs
-    ) -> "Processlike":
+    ) -> Optional["Processlike"]:
         rkwargs = keyfilter(lambda k: k.startswith("_"), self.kwargs | kwargs)
         kwargs = keyfilter(
             lambda k: not k.startswith("_"), self.kwargs | kwargs
@@ -316,7 +316,9 @@ class RunCommand:
         else:
             rkwargs = {k[1:]: v for k, v in rkwargs.items()}
             output = self.runclass(self.ctx).run(cstring, **(rkwargs | kwargs))
-
+        # disowned case
+        if output is None:
+            return
         # need the runner/result to actually create a thread to watch the
         # done callback. we also never want to actually return a Promise
         # object because it tends to behave badly.

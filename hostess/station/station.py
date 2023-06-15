@@ -13,12 +13,14 @@ from dustgoggles.func import gmap, filtern
 from google.protobuf.message import Message
 
 import hostess.station.proto.station_pb2 as pro
+from hostess.caller import generic_python_endpoint
 from hostess.station import bases
 from hostess.station.messages import pack_obj, unpack_obj, make_instruction, \
     update_instruction_timestamp, Mailbox, Msg
 from hostess.station.proto_utils import enum
 from hostess.station.talkie import timeout_factory
 from hostess.station.comm import make_comm
+from hostess.subutils import RunCommand
 
 
 class Station(bases.BaseNode):
@@ -258,3 +260,28 @@ class Station(bases.BaseNode):
         if len(best) == 0:
             return self.handlers()[0]["name"]
         return best[0]["name"]
+
+    def launch_node(
+        self,
+        name,
+        elements=(),
+        host="localhost",
+        **kwargs
+    ):
+        kwargs = {
+            'station_address': (self.host, self.port),
+            'name': name,
+            'elements': elements,
+        } | kwargs
+        endpoint = generic_python_endpoint(
+            "hostess.station.nodes",
+            "launch_node",
+            payload=kwargs,
+            argument_unpacking='**',
+            print_result=True
+        )
+        # TODO: option to specify remote host and run this using SSH
+        if host != "localhost":
+            raise NotImplementedError
+        RunCommand(endpoint, _disown=True)()
+        # TODO: tell self about existence of node

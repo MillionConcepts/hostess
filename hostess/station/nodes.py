@@ -16,6 +16,7 @@ from google.protobuf.message import Message
 
 import hostess.station.proto.station_pb2 as pro
 from hostess.station import bases
+from hostess.station.bases import Sensor, Actor
 from hostess.station.messages import pack_obj, completed_task_msg, unpack_obj
 from hostess.station.proto_utils import make_timestamp, enum
 from hostess.station.talkie import stsend, timeout_factory
@@ -419,17 +420,25 @@ class HeadlessNode(Node):
 
 
 def launch_node(
-    station: tuple[str, int],
+    station_address: tuple[str, int],
     name: str,
     node_module: str = "hostess.station.nodes",
     node_class: str = "Node",
+    elements: tuple[tuple[str, str]] = None,
+    **init_kwargs
 ):
     """simple hook for launching a node."""
     from hostess.utilities import import_module
 
     module: ModuleType = import_module(node_module)
     cls: Type[Node] = getattr(module, node_class)
-    node: Node = cls(station, name, _is_process_owner=True)
+    node: Node = cls(
+        station_address, name, _is_process_owner=True, **init_kwargs
+    )
+    for emod_name, ecls_name in elements:
+        emodule: ModuleType = import_module(emod_name)
+        ecls: Type[Actor | Sensor] = getattr(emodule, ecls_name)
+        node.add_element(ecls)
     node.start()
     time.sleep(0.1)
     print("launcher: node started")
