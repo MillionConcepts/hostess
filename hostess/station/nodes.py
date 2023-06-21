@@ -439,6 +439,7 @@ def launch_node(
         emodule: ModuleType = import_module(emod_name)
         ecls: Type[Actor | Sensor] = getattr(emodule, ecls_name)
         node.add_element(ecls)
+    # TODO: config-on-launch
     node.start()
     time.sleep(0.1)
     print("launcher: node started")
