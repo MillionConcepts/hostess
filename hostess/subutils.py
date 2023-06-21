@@ -423,8 +423,8 @@ class Viewer:
         # wait_for_output methods if you want to block.
         base_kwargs = {
             '_bg': True,
-            '_out': cbuffer.make_buffer('out'),
-            '_err': cbuffer.make_buffer('err')
+            '_out': cbuffer.buffers['out'],
+            '_err': cbuffer.buffers['err']
         }
         viewer = object.__new__(cls)
         if "_done" in kwargs:
