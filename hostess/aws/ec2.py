@@ -168,7 +168,19 @@ class Instance:
             raise FileNotFoundError("can't find key file for instance.")
         self.uname, self.key = uname, key
         self.instance_ = instance_
-        self._ssh = SSH.connect(self.ip, self.uname, self.key)
+        self._ssh = None
+        if self.state == 'running':
+            self.connect()
+
+    def connect(self, maxtries=5):
+        for attempt in range(maxtries):
+            try:
+                self._ssh = SSH.connect(self.ip, self.uname, self.key)
+                return
+            except AttributeError:
+                time.sleep(1)
+                self.update()
+        raise ConnectionError("can't connect to instance.")
 
     def _is_unready(self):
         return (self.state not in ("running", "pending")) or any(
