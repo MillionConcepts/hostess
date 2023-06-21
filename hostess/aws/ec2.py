@@ -5,6 +5,7 @@ import pickle
 import re
 import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from functools import cache, partial
 from itertools import chain
 from pathlib import Path
@@ -409,60 +410,49 @@ class Cluster:
         self.instances = tuple(instances)
         self.fleet_request = None
 
-    # def command(
-    #     self, *args, _viewer=True, **kwargs
-    # ) -> tuple[Processlike, ...]:
-    #     return tuple(
-    #         [
-    #             instance.command(*args, _viewer=_viewer, **kwargs)
-    #             for instance in self.instances
-    #         ]
-    #     )
+    def _async_method_call(self, method_name: str, *args, **kwargs):
+        exc = ThreadPoolExecutor(len(self.instances))
+        futures = []
+        for instance in self.instances:
+            futures.append(
+                exc.submit(getattr(instance, method_name), *args, **kwargs)
+            )
+        while not all(f.done() for f in futures):
+            time.sleep(0.01)
+        return [f.result() for f in futures]
 
-    # def commands(
-    #     self, commands: Sequence[Commandlike], _viewer=True, **kwargs
-    # ) -> tuple[Processlike, ...]:
-    #     return tuple(
-    #         (
-    #             instance.commands(commands, _viewer=_viewer, **kwargs)
-    #             for instance in self.instances
-    #         )
-    #     )
+    def command(
+        self, command, *args, _viewer=True, **kwargs
+    ) -> list[Processlike, ...]:
+        return self._async_method_call(
+            "command", command, *args, _viewer=_viewer, **kwargs
+        )
 
-    # def call_python(
-    #     self, module, _viewer=True, **kwargs
-    # ) -> tuple[Processlike, ...]:
-    #     return tuple(
-    #         (
-    #             instance.call_python(module, _viewer=_viewer, **kwargs)
-    #             for instance in self.instances
-    #         )
-    #     )
+    def commands(
+        self, commands: Sequence[str], *args, _viewer=True, **kwargs
+    ) -> list[Processlike, ...]:
+        return self._async_method_call(
+            "commands", commands, *args, _viewer=_viewer, **kwargs
+        )
 
-    # TODO: make these run asynchronously
+    def call_python(
+        self, module, *args, _viewer=True, **kwargs
+    ) -> list[Processlike, ...]:
+        return self._async_method_call(
+            "call_python", module, *args, _viewer=_viewer, **kwargs
+        )
+
     def start(self, return_response=False):
         """Start the instances."""
-        responses = []
-        for instance in self.instances:
-            responses.append(instance.start(return_response))
-        if return_response is True:
-            return responses
+        return self._async_method_call("start", return_response)
 
     def stop(self, return_response=False):
         """Stop the instances."""
-        responses = []
-        for instance in self.instances:
-            responses.append(instance.stop(return_response))
-        if return_response is True:
-            return responses
+        return self._async_method_call("stop", return_response)
 
     def terminate(self, return_response=False):
         """Terminate (aka delete) the instances."""
-        responses = []
-        for instance in self.instances:
-            responses.append(instance.terminate(return_response))
-        if return_response is True:
-            return responses
+        return self._async_method_call("terminate", return_response)
 
     def gather_files(
         self,
