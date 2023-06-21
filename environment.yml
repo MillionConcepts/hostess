@@ -5,17 +5,21 @@ dependencies:
   - python>=3.9
   - boto3
   - cytoolz
+  - dill
   - dustgoggles
+  - fabric
   - fire
   - flask
+  - invoke
   - more-itertools
   - pandas
   - protobuf
+  - psutil
   - pympler
   - python-magic
+  - pyyaml
   - requests
   - rich
-  - sh>=2.0.0
 
 
 
