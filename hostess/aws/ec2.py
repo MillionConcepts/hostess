@@ -5,13 +5,12 @@ import pickle
 import re
 import time
 from collections import defaultdict
-from functools import cache, wraps, partial
+from functools import cache, partial
 from itertools import chain
 from pathlib import Path
 from random import choices
 from string import ascii_lowercase
 from typing import (
-    Union,
     Collection,
     Literal,
     Sequence,
@@ -21,22 +20,19 @@ from typing import (
     Mapping,
 )
 
+import dateutil.parser as dtp
 from botocore.exceptions import ClientError
 from cytoolz.curried import get
-import dateutil.parser as dtp
 from dustgoggles.func import gmap, zero
 from dustgoggles.structures import listify
-import sh
 from invoke import UnexpectedExit
 
+import hostess.shortcuts as ks
 from hostess.aws.pricing import (
     get_on_demand_price,
     get_cpu_credit_price,
     get_ec2_basic_price_list,
 )
-from hostess.caller import generic_python_endpoint
-from hostess.config import EC2_DEFAULTS, GENERAL_DEFAULTS
-import hostess.shortcuts as ks
 from hostess.aws.utilities import (
     init_client,
     init_resource,
@@ -45,8 +41,10 @@ from hostess.aws.utilities import (
     autopage,
     clarify_region,
 )
+from hostess.caller import generic_python_endpoint
+from hostess.config import EC2_DEFAULTS, GENERAL_DEFAULTS
 from hostess.ssh import jupyter_connect, find_ssh_key, SSH, find_conda_env
-from hostess.subutils import Viewer, Processlike
+from hostess.subutils import Processlike
 from hostess.utilities import (
     my_external_ip, filestamp, check_cached_results, clear_cached_results,
 )
