@@ -356,8 +356,8 @@ class FileSystemWatch(Sensor):
     """
 
     def __init__(self, checker=tail_file):
-        self.checker = checker
         super().__init__()
+        self.checker = checker
 
     def _set_target(self, path):
         self._watched = Path(path)

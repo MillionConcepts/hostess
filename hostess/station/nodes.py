@@ -384,7 +384,10 @@ class Node(bases.BaseNode):
         """
         if not message.HasField("state"):
             return
-        message.state.MergeFrom(pro.NodeState(config=pack_obj(self.config)))
+        interface = pack_obj({i: getattr(self, i) for i in self.interface})
+        config = pack_obj(self.config)
+        state = pro.NodeState(config=config, interface=interface)
+        message.state.MergeFrom(state)
         return message
 
     def _reply_to_instruction(
@@ -446,3 +449,4 @@ def launch_node(
     while node.threads["main"].running():
         time.sleep(5)
     print("launcher: exiting")
+    return node

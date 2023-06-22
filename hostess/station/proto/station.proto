@@ -94,8 +94,9 @@ message NodeState {
   bool can_receive = 3;
   bool busy = 4;
   map<string, string> threads = 5;
-  PythonObject config = 6;
-  map<string, MessageCount> messagecount = 7;
+  PythonObject interface = 6;
+  PythonObject config = 7;
+  map<string, MessageCount> messagecount = 8;
 }
 message NodeId {
   string name = 1;
