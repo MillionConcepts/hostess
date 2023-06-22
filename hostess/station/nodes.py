@@ -31,7 +31,7 @@ class Node(bases.BaseNode):
         station_address: tuple[str, int],
         name: str,
         elements: tuple[Union[type[bases.Sensor], type[bases.Actor]]] = (),
-        n_threads=6,
+        n_threads=4,
         poll=0.08,
         timeout=10,
         update_interval=10,
@@ -64,7 +64,6 @@ class Node(bases.BaseNode):
         self.actionable_events = []
         self.station = station_address
         self.actions = {}
-        self.n_threads = n_threads
         self.instruction_queue = []
         self.update_timer, self.reset_update_timer = timeout_factory(False)
         self.logdir = logdir
@@ -189,12 +188,12 @@ class Node(bases.BaseNode):
         # goodbye to all that
         self.instruction_queue, self.actors, self.sensors = [], {}, {}
         if exception is not None:
-            self.exec.submit(self._send_exit_report, exception)
+            self.exc.submit(self._send_exit_report, exception)
             self._log(
                 exc_report(exception, 0), status="crashed", category="exit"
             )
         else:
-            self.exec.submit(self._send_exit_report)
+            self.exc.submit(self._send_exit_report)
             self._log("exiting", status="graceful", category="exit")
         self.state = "stopped"
         if self.__is_process_owner is True:
@@ -294,7 +293,7 @@ class Node(bases.BaseNode):
                 key, noid, noid_infix = instruction.id, False, ""
             threadname = f"Instruction_{noid_infix}{key}"
             # TODO: this could get sticky for the multi-step case
-            self.threads[threadname] = self.exec.submit(
+            self.threads[threadname] = self.exc.submit(
                 self._do_actions, actions, instruction, key, noid
             )
         except bases.DoNotUnderstand:
@@ -428,6 +427,8 @@ def launch_node(
     **init_kwargs
 ):
     """simple hook for launching a node."""
+    # TODO: log initialization failures
+
     from hostess.utilities import import_module
 
     module: ModuleType = import_module(node_module)

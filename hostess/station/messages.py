@@ -200,7 +200,7 @@ def completed_task_msg(actiondict: dict, steps=None) -> pro.TaskReport:
     fields = {}
     if "steps" in actiondict.keys():
         raise NotImplementedError
-    fields["result"] = pack_obj(actiondict.pop("result"))
+    fields["result"] = pack_obj(actiondict.pop("result", None))
     fields["time"] = dict2msg(actiondict, pro.ActionTime)
     action = dict2msg(actiondict, pro.ActionReport)
     action.MergeFrom(pro.ActionReport(**fields))

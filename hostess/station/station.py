@@ -16,6 +16,7 @@ from google.protobuf.message import Message
 import hostess.station.proto.station_pb2 as pro
 from hostess.caller import generic_python_endpoint
 from hostess.station import bases
+from hostess.station.bases import NoMatchingNode, AllBusy
 from hostess.station.messages import pack_obj, unpack_obj, make_instruction, \
     update_instruction_timestamp, Mailbox, Msg, unpack_message
 from hostess.station.proto_utils import enum
@@ -95,7 +96,13 @@ class Station(bases.BaseNode):
             matches=[a.name for a in actions],
         )
         for action in actions:
-            action.execute(self, obj)
+            try:
+                action.execute(self, obj)
+            except NoMatchingNode:
+                self._log("no node for action", action=action)
+            except AllBusy:
+                # TODO: instruction-queuing behavior
+                pass
 
     def _handle_info(self, message: Message):
         """
@@ -125,8 +132,8 @@ class Station(bases.BaseNode):
             'cdict': message['state']['cdict'],
             'reported_status': message['state']['status'],
             'pid': message['nodeid']['pid'],
-            'actors': message['state']['actors'],
-            'sensors': message['state']['sensors'],
+            'actors': message['state'].get('actors', []),
+            'sensors': message['state'].get('sensors', []),
             'busy': message['state']['busy']
         }
 
@@ -147,7 +154,6 @@ class Station(bases.BaseNode):
         handle an incoming message. right now just wraps _handle_info() but
         will eventually also deal with node state tracking, logging, etc.
         """
-        # TODO: internal state tracking for crashed and shutdown nodes
         # TODO, maybe: log acknowledgments
         for method in ("_handle_info", "_handle_report", "_handle_state"):
             try:
@@ -206,15 +212,18 @@ class Station(bases.BaseNode):
     def _check_nodes(self):
         now = dt.datetime.now(tz=dt.timezone.utc)
         for n in self.nodes:
+            if n['reported_status'] in ('shutdown', 'crashed'):
+                n['inferred_status'] = n['reported_status']
+                continue
             if n['reported_status'] == 'initializing':
                 n['wait_time'] = (now - n['init_time']).total_seconds()
             else:
                 n['wait_time'] = (now - n['last_seen']).total_seconds()
-            if n['wait_time'] > 3 * n['update_interval']:
-                n['inferred_status'] = 'delayed'
             # adding 5 seconds here as grace for network lag spikes
-            elif n['wait_time'] > 10 * n['update_interval'] + 5:
+            if n['wait_time'] > 10 * n['update_interval'] + 5:
                 n['inferred_status'] = 'missing'
+            elif n['wait_time'] > 3 * n['update_interval']:
+                n['inferred_status'] = 'delayed'
             else:
                 n['inferred_status'] = n['reported_status']
             # TODO: trigger some behavior
@@ -331,12 +340,12 @@ class Station(bases.BaseNode):
         # TODO: option to specify remote host and run this using SSH
         if host != "localhost":
             raise NotImplementedError
-        RunCommand(endpoint, _disown=True)()
         nodeinfo = blank_nodeinfo() | {
             'name': name,
             'inferred_status': 'initializing',
             'update_interval': update_interval
         }
+        RunCommand(endpoint, _disown=True)()
         self.nodes.append(nodeinfo)
 
 

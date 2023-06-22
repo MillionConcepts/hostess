@@ -311,14 +311,11 @@ class InstructionFromInfo(DispatchActor):
                 return True
         raise NoMatch("note did not match criteria")
 
-    ("criteria", "target_name", "target_actor")
     def execute(self, station: "Station", note, **_,):
         if self.instruction_maker is None:
             raise TypeError("Must have an instruction maker.")
-
-
-
-        station.outboxes[node_picker(note)].append(instruction_maker(note))
+        nodename = self.pick(station, note)
+        station.outboxes[nodename].append(self.instruction_maker(note))
 
     interface = ("instruction_maker", "criteria")
     name: str

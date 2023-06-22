@@ -12,7 +12,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from itertools import chain
 from types import MappingProxyType as MPt
-from typing import Any, Callable, Mapping, Union, Optional, Sequence
+from typing import Any, Callable, Mapping, Union, Optional
 
 import yaml
 from cytoolz import valmap
@@ -26,7 +26,7 @@ from hostess.utilities import configured, logstamp, yprint
 
 
 def associate_actor(
-    cls, cdict, params, actors: Sequence[Actor], props, name=None
+    cls, cdict, params, actors: dict[Actor], props, name=None
 ):
     """utility function for associating an actor with a Sensor."""
     name = inc_name(cls.name if name is None else name, cdict)
@@ -270,8 +270,11 @@ class DispatchActor(Actor, ABC):
         if self.target_picker is not None:
             targets = [n for n in targets if self.target_picker(n, message)]
         not_busy = [n for n in targets if n.get('busy') is False]
-
-
+        if len(targets) == 0:
+            raise NoMatchingNode
+        if len(not_busy) == 0:
+            raise AllBusy
+        return targets[0]['name']
 
     target_name: Optional[str] = None
     target_actor: Optional[str] = None
@@ -300,6 +303,13 @@ class NoInstructionType(DoNotUnderstand):
 
 class NoMatch(Exception):
     """actor does not match instruction. used for control flow."""
+
+class NoMatchingNode(Exception):
+    """no nodes are available that match this action."""
+
+
+class AllBusy(Exception):
+    """all nodes we could dispatch this instruction to are busy."""
 
 
 def inc_name(name, config):
@@ -344,7 +354,8 @@ class BaseNode(Matcher, ABC):
         # self.logfile = f"logs/{self.name}_{filestamp()}.csv"
         for element in elements:
             self.add_element(element)
-        self.exec = ThreadPoolExecutor(n_threads)
+        self.n_threads = n_threads
+        self.exc = ThreadPoolExecutor(n_threads)
         self.can_receive = can_receive
         self.poll, self.timeout, self.signals = poll, timeout, {}
         if start is True:
@@ -368,7 +379,7 @@ class BaseNode(Matcher, ABC):
                 self.host,
                 self.port,
                 ackcheck=self._ackcheck,
-                executor=self.exec,
+                executor=self.exc,
             )
             self.threads |= self.server.threads
             self.inbox = self.server.data
@@ -381,7 +392,7 @@ class BaseNode(Matcher, ABC):
         if self.__started is True:
             raise EnvironmentError("Node already started.")
         self.restart_server()
-        self.threads["main"] = self.exec.submit(self._start)
+        self.threads["main"] = self.exc.submit(self._start)
         self.__started = True
         self.state = "running"
 
@@ -397,7 +408,7 @@ class BaseNode(Matcher, ABC):
         """are we too busy to do new stuff?"""
         # TODO: or maybe explicitly check threads? do we want a free one?
         #  idk
-        if self.exec._work_queue.qsize() > 0:
+        if self.exc._work_queue.qsize() > 0:
             return True
         return False
 
@@ -417,7 +428,7 @@ class BaseNode(Matcher, ABC):
         public start() method.
         """
         for name, sensor in self.sensors.items():
-            self.threads[name] = self.exec.submit(self._sensor_loop, sensor)
+            self.threads[name] = self.exc.submit(self._sensor_loop, sensor)
         exception = None
         try:
             self._main_loop()
@@ -470,6 +481,16 @@ class BaseNode(Matcher, ABC):
                 params[name][k] = self.cdict[name].get(k)
         return {'interface': props, 'cdict': dict(params)}
 
+    def _get_n_threads(self):
+        return self._n_threads
+
+    def _set_n_threads(self, n_threads):
+        self._n_threads = n_threads
+        if self.exc is None:
+            return
+        self.exc._max_workers = n_threads
+
+    exc = None
     inbox = None
     config = property(_get_config)
     locked = property(_is_locked, _set_locked)

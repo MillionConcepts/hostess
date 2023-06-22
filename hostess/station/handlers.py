@@ -44,9 +44,19 @@ def make_function_call(action: pro.Action):
     if action.func is None:
         raise TypeError("Can't actually do this without a function.")
     if action.module is not None:
-        func = getattr(get_module(action.module), action.func)
+        try:
+            module = get_module(action.module)
+        except (AttributeError, ImportError):
+            raise FileNotFoundError("module not found")
+        try:
+            func = getattr(module, action.func)
+        except AttributeError:
+            raise ImportError("function not found in module")
     else:
-        func = getattr("__builtins__", action.func)
+        try:
+            func = getattr("__builtins__", action.func)
+        except AttributeError:
+            raise ImportError("function not found in builtins")
     kwargs = unpack_callargs(action.arguments)
     if (ctx := enum(action, "context")) in ("thread", "unknowncontext", None):
         caches = {"result": [], "pid": [os.getpid()]}

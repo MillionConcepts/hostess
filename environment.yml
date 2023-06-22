@@ -13,6 +13,8 @@ dependencies:
   - invoke
   - more-itertools
   - pandas
+  # only for tests rn
+  - pillow
   - protobuf
   - psutil
   - pympler
