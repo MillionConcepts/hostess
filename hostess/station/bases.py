@@ -435,7 +435,7 @@ class BaseNode(Matcher, ABC):
         for name, actor_cdict in self.params.items():
             for k, v in filter(lambda kv: kv[1] != (), actor_cdict.items()):
                 params[name][k] = self.cdict[name].get(k)
-        return {'props': props, 'cdict': dict(params)}
+        return {'interface': props, 'cdict': dict(params)}
 
     inbox = None
     config = property(_get_config)

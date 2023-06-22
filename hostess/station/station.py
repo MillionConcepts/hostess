@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import random
 import socket
 import sys
@@ -16,7 +17,7 @@ import hostess.station.proto.station_pb2 as pro
 from hostess.caller import generic_python_endpoint
 from hostess.station import bases
 from hostess.station.messages import pack_obj, unpack_obj, make_instruction, \
-    update_instruction_timestamp, Mailbox, Msg
+    update_instruction_timestamp, Mailbox, Msg, unpack_message
 from hostess.station.proto_utils import enum
 from hostess.station.talkie import timeout_factory
 from hostess.station.comm import make_comm
@@ -58,6 +59,7 @@ class Station(bases.BaseNode):
         self.__is_process_owner = _is_process_owner
 
     def set_node_properties(self, node: str, **propvals):
+        # TODO: update node info record if relevant
         if len(propvals) == 0:
             raise TypeError("can't send a no-op config instruction")
         config = [
@@ -105,6 +107,25 @@ class Station(bases.BaseNode):
         for note in notes:
             self.match_and_execute(note, "info")
 
+    def _handle_state(self, message: Message):
+        try:
+            node = [n for n in self.nodes if n.name == message.nodeid.name][0]
+        # TODO: how do we handle mystery-appearing nodes with dupe names
+        except IndexError:
+            node = blank_nodeinfo()
+            self.nodes.append(node)
+        message = unpack_message(message)
+        # TODO: insert info on running actions
+        node |= {
+            'last_seen': dt.datetime.fromisoformat(message['time']),
+            'interface': message['state']['interface'],
+            'cdict': message['state']['cdict'],
+            'status': message['state']['status'],
+            'pid': message['nodeid']['pid'],
+            'actors': message['state']['actors'],
+            'sensors': message['state']['sensors']
+        }
+
     def _handle_report(self, message: Message):
         if not message.HasField("completed"):
             return
@@ -124,9 +145,9 @@ class Station(bases.BaseNode):
         """
         # TODO: internal state tracking for crashed and shutdown nodes
         # TODO, maybe: log acknowledgments
-        for method in self._handle_info, self._handle_report:
+        for method in ("_handle_info", "_handle_report", "_handle_state"):
             try:
-                method(message)
+                getattr(self, method)(message)
             except NotImplementedError:
                 # TODO: plausibly some logging
                 pass
@@ -177,6 +198,9 @@ class Station(bases.BaseNode):
                     self._log(crashed_threads, category="server_errors")
             time.sleep(self.poll)
 
+    def _check_nodes(self):
+        raise NotImplementedError
+
     def _ackcheck(self, _conn: socket.socket, comm: dict):
         """
         callback for interpreting comms and responding as appropriate.
@@ -211,6 +235,7 @@ class Station(bases.BaseNode):
             # TODO, probably: send more than one Instruction when available.
             #  we might want a special control code for that.
             box = self.outboxes[nodename]
+            # TODO, maybe: kind of expensive if these get really big
             candidates = tuple(
                 filter(lambda pm: pm[1].sent is False, enumerate(box))
             )
@@ -266,12 +291,17 @@ class Station(bases.BaseNode):
         name,
         elements=(),
         host="localhost",
+        update_interval=0.1,
         **kwargs
     ):
+        # TODO: some facility for relaunching
+        if any(n['name'] == name for n in self.nodes):
+            raise ValueError("can't launch a node with a duplicate name")
         kwargs = {
             'station_address': (self.host, self.port),
             'name': name,
             'elements': elements,
+            'update_interval': update_interval
         } | kwargs
         endpoint = generic_python_endpoint(
             "hostess.station.nodes",
@@ -283,5 +313,26 @@ class Station(bases.BaseNode):
         # TODO: option to specify remote host and run this using SSH
         if host != "localhost":
             raise NotImplementedError
+        nodeinfo = blank_nodeinfo() | {
+            'name': name,
+            'status': 'initializing',
+            'init_time': dt.datetime.now(),
+            'last_seen': None,
+            'update_interval': update_interval
+        }
+        self.nodes.append(nodeinfo)
         RunCommand(endpoint, _disown=True)()
-        # TODO: tell self about existence of node
+
+
+def blank_nodeinfo():
+    return {
+        'name': None,
+        'last_seen': None,
+        'update_interval': None,
+        'status': None,
+        'init_time': None,
+        'running': [],
+        'interface': {},
+        'actors': [],
+        'pid': None
+    }

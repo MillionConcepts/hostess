@@ -19,7 +19,7 @@ from dustgoggles.structures import dig_for_keys, dig_for_values
 from google.protobuf.message import Message
 from google.protobuf.internal.well_known_types import Duration, Timestamp
 from google.protobuf.pyext._message import ScalarMapContainer, \
-    RepeatedCompositeContainer
+    RepeatedCompositeContainer, RepeatedScalarContainer
 from more_itertools import split_when, all_equal
 import numpy as np
 from pympler.asizeof import asizeof
@@ -352,12 +352,20 @@ def unpack_message(msg: Message | RepeatedCompositeContainer):
         elif v == "ENUM":
             formatted[k] = enum(msg, k)
         elif isinstance(element, pro.PythonObject):
-            formatted[k] = {'value': unpack_obj(element), 'name': element.name}
+            if element.name == '':
+                formatted[k] = unpack_obj(element)
+            else:
+                formatted[k] = {
+                    'value': unpack_obj(element), 'name': element.name
+                }
         # they look like lists, but they're not!
         elif "__len__" in dir(element) and (len(element) == 0):
             continue
         elif isinstance(element, ScalarMapContainer):
             formatted[k] = dict(element)
+        elif isinstance(element, RepeatedScalarContainer):
+            # noinspection PyTypeChecker
+            formatted[k] = list(element)
         elif isinstance(element, (Timestamp, Duration)):
             formatted[k] = element.ToJsonString()
         elif ("ListFields" in dir(element)) and (element.ListFields() == []):

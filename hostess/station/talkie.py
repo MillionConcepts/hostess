@@ -110,7 +110,7 @@ class TCPTalk:
             self.sig(k, 0)
             time.sleep(self.poll * 2)
             self.sig(k, None)
-            crashed_threads.append(self.threads.pop(k).result())
+            crashed_threads.append(self.threads.pop(k).exception())
             if k == "select":
                 self.threads["select"] = trywrap(
                     self.launch_selector, "select"
