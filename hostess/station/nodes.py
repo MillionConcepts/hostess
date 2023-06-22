@@ -380,7 +380,7 @@ class Node(bases.BaseNode):
             return
         state = pro.NodeState(
             interface=pack_obj(self.config['interface']),
-            config=pack_obj(self.config['cdict']),
+            cdict=pack_obj(self.config['cdict']),
             actors=list(self.actors.keys()),
             sensors=list(self.sensors.keys())
         )
