@@ -327,7 +327,7 @@ class Node(bases.BaseNode):
                     self._log(response, category="comms", direction="recv")
                 # TODO, maybe: this could be a separate attribute
                 time.sleep(self.update_interval)
-            response, _ = stsend(self._insert_config(message), *self.station)
+            response, _ = stsend(self._insert_state(message), *self.station)
         if waiting is True:
             self._log(
                 "connection established", category="comms", direction="recv"
@@ -374,19 +374,16 @@ class Node(bases.BaseNode):
             },
         }
 
-    def _insert_config(self, message: Message):
-        """
-        insert the Node's current configuration details into a Message.
-        TODO: this is distinct from _base_message() because it requires some
-            fiddly Message construction that doesn't work well with the
-            protobuf.json_format functions -- we may want to improve our
-            message-to-dict functions to help this kind of case at some point.
-        """
+    def _insert_state(self, message: Message):
+        """insert the Node's current state information into a Message."""
         if not message.HasField("state"):
             return
-        interface = pack_obj({i: getattr(self, i) for i in self.interface})
-        config = pack_obj(self.config)
-        state = pro.NodeState(config=config, interface=interface)
+        state = pro.NodeState(
+            interface=pack_obj(self.config['interface']),
+            config=pack_obj(self.config['cdict']),
+            actors=list(self.actors.keys()),
+            sensors=list(self.sensors.keys())
+        )
         message.state.MergeFrom(state)
         return message
 
