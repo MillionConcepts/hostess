@@ -10,14 +10,15 @@ import random
 import re
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Callable, Optional, Hashable, MutableMapping
+from typing import Any, Callable, Optional, Hashable, MutableMapping, Sequence
 
 from google.protobuf.message import Message
 
 import hostess.station.nodes as nodes
 from hostess.station.station import Station
 import hostess.station.proto.station_pb2 as pro
-from hostess.station.bases import Sensor, Actor, NoMatch, BaseNode
+from hostess.station.bases import Sensor, Actor, NoMatch, BaseNode, \
+    DispatchActor
 from hostess.station.handlers import (
     make_function_call,
     actiondict,
@@ -293,7 +294,7 @@ class ReportStringMatch(Actor):
     actortype = "action"
 
 
-class InstructionFromInfo(Actor):
+class InstructionFromInfo(DispatchActor):
     """
     skeleton info Actor for Stations. check, based on configurable criteria,
     whether a piece of info received in an Update indicates that we should
@@ -302,50 +303,28 @@ class InstructionFromInfo(Actor):
     """
 
     # note: fields doesn't do anything atm
-    def match(
-        self, note, *, fields=None, criteria: list[Callable] = None, **_
-    ) -> bool:
-        if criteria is None:
+    def match(self, note, *, fields=None, **_) -> bool:
+        if self.criteria is None:
             raise NoMatch("no criteria to match against")
-        for criterion in criteria:
+        for criterion in self.criteria:
             if criterion(note):
                 return True
         raise NoMatch("note did not match criteria")
 
-    def execute(
-        self,
-        station: "Station",
-        note,
-        *,
-        instruction_maker: Optional[Callable[[Any], pro.Instruction]] = None,
-        node_picker: Optional[Callable[[Any], str]] = None,
-        **_,
-    ):
-        if instruction_maker is None:
+    ("criteria", "target_name", "target_actor")
+    def execute(self, station: "Station", note, **_,):
+        if self.instruction_maker is None:
             raise TypeError("Must have an instruction maker.")
-        if node_picker is None:
-            node_picker = station.next_handler
+
+
+
         station.outboxes[node_picker(note)].append(instruction_maker(note))
 
-    def _set_criteria(self, criteria):
-        self.config['match']["criteria"] = criteria
-
-    def _get_criteria(self):
-        return self.config['match']['criteria']
-
-    def _set_instruction_maker(self, instruction_maker):
-        self.config['exec']['instruction_maker'] = instruction_maker
-
-    def _get_instruction_maker(self):
-        return self.config['exec']['instruction_maker']
-
+    interface = ("instruction_maker", "criteria")
     name: str
     actortype = "info"
-    interface = ("instruction_maker", "criteria")
-    instruction_maker = property(
-        _get_instruction_maker, _set_instruction_maker
-    )
-    criteria = property(_get_criteria, _set_criteria)
+    instruction_maker: Optional[Callable[[Any], pro.Instruction]] = None
+    criteria: Optional[Sequence[Callable]] = None
 
 
 class FileSystemWatch(Sensor):

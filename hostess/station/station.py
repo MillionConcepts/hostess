@@ -109,7 +109,9 @@ class Station(bases.BaseNode):
 
     def _handle_state(self, message: Message):
         try:
-            node = [n for n in self.nodes if n.name == message.nodeid.name][0]
+            node = [
+                n for n in self.nodes if n['name'] == message.nodeid.name
+            ][0]
         # TODO: how do we handle mystery-appearing nodes with dupe names
         except IndexError:
             node = blank_nodeinfo()
@@ -118,12 +120,14 @@ class Station(bases.BaseNode):
         # TODO: insert info on running actions
         node |= {
             'last_seen': dt.datetime.fromisoformat(message['time']),
+            'wait_time': 0,
             'interface': message['state']['interface'],
             'cdict': message['state']['cdict'],
-            'status': message['state']['status'],
+            'reported_status': message['state']['status'],
             'pid': message['nodeid']['pid'],
             'actors': message['state']['actors'],
-            'sensors': message['state']['sensors']
+            'sensors': message['state']['sensors'],
+            'busy': message['state']['busy']
         }
 
     def _handle_report(self, message: Message):
@@ -189,6 +193,7 @@ class Station(bases.BaseNode):
     def _main_loop(self):
         """main loop for Station."""
         while self.signals.get("main") is None:
+            self._check_nodes()
             if self.tendtime() > self.poll * 30:
                 crashed_threads = self.server.tend()
                 # heuristically manage inbox size
@@ -199,7 +204,20 @@ class Station(bases.BaseNode):
             time.sleep(self.poll)
 
     def _check_nodes(self):
-        raise NotImplementedError
+        now = dt.datetime.now(tz=dt.timezone.utc)
+        for n in self.nodes:
+            if n['reported_status'] == 'initializing':
+                n['wait_time'] = (now - n['init_time']).total_seconds()
+            else:
+                n['wait_time'] = (now - n['last_seen']).total_seconds()
+            if n['wait_time'] > 3 * n['update_interval']:
+                n['inferred_status'] = 'delayed'
+            # adding 5 seconds here as grace for network lag spikes
+            elif n['wait_time'] > 10 * n['update_interval'] + 5:
+                n['inferred_status'] = 'missing'
+            else:
+                n['inferred_status'] = n['reported_status']
+            # TODO: trigger some behavior
 
     def _ackcheck(self, _conn: socket.socket, comm: dict):
         """
@@ -313,26 +331,22 @@ class Station(bases.BaseNode):
         # TODO: option to specify remote host and run this using SSH
         if host != "localhost":
             raise NotImplementedError
+        RunCommand(endpoint, _disown=True)()
         nodeinfo = blank_nodeinfo() | {
             'name': name,
-            'status': 'initializing',
-            'init_time': dt.datetime.now(),
-            'last_seen': None,
+            'inferred_status': 'initializing',
             'update_interval': update_interval
         }
         self.nodes.append(nodeinfo)
-        RunCommand(endpoint, _disown=True)()
 
 
 def blank_nodeinfo():
     return {
-        'name': None,
         'last_seen': None,
-        'update_interval': None,
-        'status': None,
-        'init_time': None,
+        'reported_status': 'initializing',
+        'init_time': dt.datetime.now(dt.timezone.utc),
+        'wait_time': 0,
         'running': [],
         'interface': {},
         'actors': [],
-        'pid': None
     }

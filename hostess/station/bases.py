@@ -245,6 +245,39 @@ class Actor(ABC):
     actortype: str
 
 
+class DispatchActor(Actor, ABC):
+    """
+    abstract subclass for actors intended to dispatch instructions from
+    Stations to Nodes.
+    """
+    def __init__(self):
+        super().__init__()
+        self.interface = self.interface + (
+            "target_name", "target_actor", "target_picker"
+        )
+
+    def pick(self, station: "Station", message: Message, **_):
+        if all(
+            t is None
+            for t in (self.target_name, self.target_actor, self.target_picker)
+        ):
+            raise TypeError("Must have a node name, actor name, or picker")
+        targets = station.nodes
+        if self.target_name is not None:
+            targets = [n for n in targets if n['name'] == self.target_name]
+        if self.target_actor is not None:
+            targets = [n for n in targets if self.target_actor in n['actors']]
+        if self.target_picker is not None:
+            targets = [n for n in targets if self.target_picker(n, message)]
+        not_busy = [n for n in targets if n.get('busy') is False]
+
+
+
+    target_name: Optional[str] = None
+    target_actor: Optional[str] = None
+    target_picker: Optional[Callable[[dict, Message], str]] = None
+
+
 class DoNotUnderstand(ValueError):
     """the node does not know how to interpret this instruction."""
 
