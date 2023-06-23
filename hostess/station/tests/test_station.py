@@ -116,7 +116,7 @@ def test_application_1():
         "watcher", **watcher_launch_spec, update_interval=0.5
     )
     station.launch_node(
-        "thumbnail", **thumbnail_launch_spec, update_interval=0.5
+        "thumbnail", **thumbnail_launch_spec, update_interval=0.5, context="local"
     )
     # configure the watcher node
     station.set_node_properties("watcher", **watcher_config_spec)
@@ -127,6 +127,8 @@ def test_application_1():
     shutil.copyfile(test_file, test_dir / (Path(test_file).stem + "_full.jpg"))
     time.sleep(2)
     try:
+        print(station.tasks)
+        print(station.inbox.completed)
         assert station.inbox.completed[-1]['action']['status'] == 'success'
         assert Path('test_dir/squirrel_thumbnail.jpg').exists()
     finally:

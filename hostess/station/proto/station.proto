@@ -65,6 +65,8 @@ message ActionReport {
   PythonObject exception = 7;
   /* intended specifically for system process exit codes */
   uint32 exit_code = 8;
+  uint32 id = 9;
+
 }
 
 /* TaskReport contains information on the outcome of an external task

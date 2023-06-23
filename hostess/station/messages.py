@@ -202,9 +202,12 @@ def completed_task_msg(actiondict: dict, steps=None) -> pro.TaskReport:
         raise NotImplementedError
     fields["result"] = pack_obj(actiondict.pop("result", None))
     fields["time"] = dict2msg(actiondict, pro.ActionTime)
+    fields['id'] = actiondict['id']
     action = dict2msg(actiondict, pro.ActionReport)
     action.MergeFrom(pro.ActionReport(**fields))
-    return pro.TaskReport(instruction_id=actiondict["id"], action=action)
+    return pro.TaskReport(
+        instruction_id=actiondict["instruction_id"], action=action
+    )
 
 
 def event_body(event):
