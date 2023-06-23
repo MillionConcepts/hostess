@@ -195,10 +195,8 @@ class Station(bases.BaseNode):
         self.actors, self.sensors = {}, {}
         for node in self.nodes:
             self.shutdown_node(node['name'], "stop")
-        # TODO: wait to make sure they are received based on state tracking,
-        #  this is a placeholder
         waiting, unwait = timeout_factory(timeout=30)
-        # TODO: replace with explicit check for nodeness
+        # make sure every node is shut down, timing out at 30s
         self._check_nodes()
         while any(
             n['inferred_status'] not in ('missing', 'shutdown', 'crashed')
@@ -211,6 +209,9 @@ class Station(bases.BaseNode):
             time.sleep(0.1)
             self._check_nodes()
         unwait()
+        # wait another moment to get the exit reports for sure
+        # TODO: make this cleaner
+        time.sleep(5)
         # shut down the server etc.
         # TODO: this is a little messy because of the discrepancy in thread
         #  and signal names. maybe unify this somehow.

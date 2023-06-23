@@ -200,7 +200,7 @@ class Node(bases.BaseNode):
         else:
             self.exc.submit(self._send_exit_report)
         # wait to send exit report; TODO: make this cleaner
-        time.sleep(3)
+        time.sleep(5)
 
     def _send_exit_report(self, exception=None):
         """
