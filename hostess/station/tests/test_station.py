@@ -1,10 +1,13 @@
 import atexit
+import shutil
+import sys
 from pathlib import Path
 import random
 import time
 
-from hostess.station.actors import FileWriter
-from hostess.station.messages import make_action, pack_obj, make_instruction
+from hostess.station.actors import FileWriter, InstructionFromInfo
+from hostess.station.messages import make_action, pack_obj, make_instruction, \
+    make_function_call_action
 from hostess.station.nodes import Node
 from hostess.station.proto_utils import enum
 from hostess.station.station import Station
@@ -50,4 +53,85 @@ def test_actions_1():
         station.logfile.unlink(missing_ok=True)
 
 
-test_actions_1()
+def test_application_1():
+    # simple instruction factory: 'would you please make a thumbnail of this?'
+    def thumbnail_instruction(note):
+        action = make_function_call_action(
+            func="thumbnail",
+            module="hostess.station.tests.target_functions",
+            kwargs={"path": Path(note["content"])},
+            context="process",
+        )
+        return make_instruction("do", action=action)
+
+    # host/port for station
+    host, port = "localhost", random.randint(10000, 20000)
+
+    # launch and config specifications for our nodes
+
+    # directory-watching node
+    watcher_launch_spec = {
+        # add a directory-watching Sensor
+        "elements": [("hostess.station.actors", "DirWatch")],
+    }
+    watcher_config_spec = {
+        # what directory shall we watch?
+        "dirwatch_target": "test_dir",
+        # what filename patterns are we watching for?
+        "dirwatch_patterns": (r".*full.*\.jpg",),
+    }
+    # thumbnail-making node
+    thumbnail_launch_spec = {
+        # add a function-calling Actor
+        "elements": [("hostess.station.actors", "FuncCaller")],
+    }
+    # note that there is nothing special to configure about the thumbnail node
+
+    # make a clean test directory
+    test_dir = Path("test_dir")
+    if test_dir.exists():
+        shutil.rmtree(test_dir)
+    test_dir.mkdir()
+
+    station = Station(host, port)
+
+    # add an Actor to the Station to make thumbnailing instructions when it
+    # hears about a new image file
+    thumbnail_checker = InstructionFromInfo
+    station.add_element(thumbnail_checker, name="thumbnail")
+
+    # the station now inherits the thumbnail checker's properties as attributes
+    # tell it to use the thumbnail instruction function
+    station.thumbnail_instruction_maker = thumbnail_instruction
+    # make sure that it only activates if the string it receives is a real path
+    station.thumbnail_criteria = [lambda n: Path(n["content"]).is_file()]
+    # send this type of instruction to the thumbnail node and no other
+    station.thumbnail_target_name = "thumbnail"
+
+    # start the station
+    station.start()
+
+    # launch the nodes as daemonic processes
+    station.launch_node(
+        "watcher", **watcher_launch_spec, update_interval=0.5
+    )
+    station.launch_node(
+        "thumbnail", **thumbnail_launch_spec, update_interval=0.5
+    )
+    # configure the watcher node
+    station.set_node_properties("watcher", **watcher_config_spec)
+
+    # copy a squirrel picture into the directory as a test (representing some
+    # external change to the system)
+    test_file = "test_data/squirrel.jpg"
+    shutil.copyfile(test_file, test_dir / (Path(test_file).stem + "_full.jpg"))
+    time.sleep(2)
+    try:
+        assert station.inbox.completed[-1]['action']['status'] == 'success'
+        assert Path('test_dir/squirrel_thumbnail.jpg').exists()
+    finally:
+        station.shutdown()
+        shutil.rmtree(test_dir)
+
+
+test_application_1()

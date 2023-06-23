@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 import json
 import random
 import sys
@@ -7,7 +8,7 @@ import time
 from itertools import count
 from pathlib import Path
 from types import ModuleType
-from typing import Union, Literal, Optional, Type
+from typing import Union, Literal, Optional, Type, Any
 
 from dustgoggles.dynamic import exc_report
 from dustgoggles.structures import rmerge
@@ -38,7 +39,7 @@ class Node(bases.BaseNode):
         start=False,
         # TODO: something better
         logdir=Path(__file__).parent / ".nodelogs",
-        _is_process_owner=False,
+        _is_process_owner=False
     ):
         """
         configurable remote processor for hostess network. can gather data
@@ -59,6 +60,7 @@ class Node(bases.BaseNode):
             start=start,
             poll=poll,
             timeout=timeout,
+            _is_process_owner=_is_process_owner
         )
         self.update_interval = update_interval
         self.actionable_events = []
@@ -76,7 +78,6 @@ class Node(bases.BaseNode):
             f"{self.station[0]}_{self.station[1]}_{self.name}_"
             f"{self.logid}.log",
         )
-        self.__is_process_owner = _is_process_owner
 
     def _sensor_loop(self, sensor: bases.Sensor):
         """
@@ -178,7 +179,7 @@ class Node(bases.BaseNode):
     def _shutdown(self, exception: Optional[Exception] = None):
         """shut down the node"""
         self.state = "shutdown" if exception is None else "crashed"
-        self._log("beginning shutdown", category="exit")
+        self._log("beginning shutdown", status=self.state, category="exit")
         # divorce oneself from actors and acts, from events and instructions
         self.actions, self.actionable_events = {}, []
         # TODO, maybe: try to kill child processes (can't in general kill
@@ -189,15 +190,17 @@ class Node(bases.BaseNode):
         # goodbye to all that
         self.instruction_queue, self.actors, self.sensors = [], {}, {}
         if exception is not None:
-            self.exc.submit(self._send_exit_report, exception)
+            try:
+                self.exc.submit(self._send_exit_report, exception)
+            except Exception as ex:
+                self._log("exit report failed", exception=ex)
             self._log(
                 exc_report(exception, 0), status="crashed", category="exit"
             )
         else:
             self.exc.submit(self._send_exit_report)
-            self._log("exiting", status="graceful", category="exit")
-        if self.__is_process_owner is True:
-            sys.exit()
+        # wait to send exit report; TODO: make this cleaner
+        time.sleep(3)
 
     def _send_exit_report(self, exception=None):
         """
@@ -449,4 +452,10 @@ def launch_node(
         node.add_element(ecls)
     # TODO: config-on-launch
     node.start()
-    return node
+    if is_local is True:
+        return node
+    # need to prevent the interpreter from exiting in order to not mess up
+    # threading if running in an unmanaged process
+    while node.is_shut_down is False:
+        time.sleep(1)
+    sys.exit()

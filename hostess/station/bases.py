@@ -1,12 +1,15 @@
 """base classes and helpers for Nodes, Stations, Sensors, and Actors."""
 from __future__ import annotations
 
+import atexit
 import inspect
 import json
 import os
 import re
 import socket
+import sys
 import threading
+import time
 from abc import ABC
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -343,6 +346,7 @@ class BaseNode(Matcher, ABC):
         port: Optional[int] = None,
         poll: float = 0.08,
         timeout: int = 10,
+        _is_process_owner=False
     ):
         super().__init__()
         self.host, self.port = host, port
@@ -358,6 +362,9 @@ class BaseNode(Matcher, ABC):
         self.exc = ThreadPoolExecutor(n_threads)
         self.can_receive = can_receive
         self.poll, self.timeout, self.signals = poll, timeout, {}
+        self.__is_process_owner = _is_process_owner
+        self.is_shut_down = False
+        atexit.register(self.exc.shutdown, wait=False, cancel_futures=True)
         if start is True:
             self.start()
 
@@ -418,11 +425,16 @@ class BaseNode(Matcher, ABC):
     def _shutdown(self, exception: Optional[Exception] = None):
         raise NotImplementedError
 
-    def shutdown(self):
+    def shutdown(self, exception=None):
         self.locked = True
         self.state = 'shutdown'
         self.signals['main'] = 1
-        self._shutdown()
+        try:
+            self._shutdown(exception=exception)
+        except Exception as ex:
+            self._log("shutdown exception", exception=ex)
+        self.is_shut_down = True
+        self._log('shutdown complete')
 
     def _start(self):
         """
@@ -438,7 +450,7 @@ class BaseNode(Matcher, ABC):
             exception = ex
         # don't do a double shutdown during a graceful termination
         if self.state not in ('shutdown', 'crashed'):
-            self._shutdown(exception)
+            self.shutdown(exception)
         return exception
 
     def _is_locked(self):
