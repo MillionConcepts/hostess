@@ -394,7 +394,7 @@ class BaseNode(Matcher, ABC):
         self.restart_server()
         self.threads["main"] = self.exc.submit(self._start)
         self.__started = True
-        self.state = "running"
+        self.state = "nominal"
 
     def nodeid(self):
         """basic identifying information for node."""
@@ -415,12 +415,14 @@ class BaseNode(Matcher, ABC):
     def _main_loop(self):
         raise NotImplementedError
 
-    def _shutdown(self, exception: Optional[Exception]):
+    def _shutdown(self, exception: Optional[Exception] = None):
         raise NotImplementedError
 
     def shutdown(self):
         self.locked = True
+        self.state = 'shutdown'
         self.signals['main'] = 1
+        self._shutdown()
 
     def _start(self):
         """
@@ -434,7 +436,9 @@ class BaseNode(Matcher, ABC):
             self._main_loop()
         except Exception as ex:
             exception = ex
-        self._shutdown(exception)
+        # don't do a double shutdown during a graceful termination
+        if self.state not in ('shutdown', 'crashed'):
+            self._shutdown(exception)
         return exception
 
     def _is_locked(self):

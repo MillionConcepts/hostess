@@ -39,7 +39,7 @@ class Station(bases.BaseNode):
         n_threads: int = 8,
         max_inbox_mb: float = 250,
         logdir=Path(__file__).parent / ".nodelogs",
-        _is_process_owner = False
+        _is_process_owner=False
     ):
         super().__init__(
             host=host,
@@ -49,7 +49,7 @@ class Station(bases.BaseNode):
             can_receive=True,
         )
         self.max_inbox_mb = max_inbox_mb
-        self.events, self.nodes = [], []
+        self.events, self.nodes, self.tasks = [], [], {}
         self.outboxes = defaultdict(Mailbox)
         self.tendtime, self.reset_tend = timeout_factory(False)
         self.last_handler = None
@@ -68,6 +68,29 @@ class Station(bases.BaseNode):
             for k, v in propvals.items()
         ]
         self.outboxes[node].append(make_instruction("configure", config=config))
+
+    def queue_task(self, node: str, instruction: pro.Instruction):
+        """
+        queue an instruction for node, and keep track of its state. this
+        method is intended to be used for task-type instructions rather than
+        config etc. instructions we may not want to track in the same way.
+        """
+        if instruction.HasField("pipe"):
+            raise NotImplementedError(
+                "multi-step pipelines are not yet implemented"
+            )
+        if not enum(instruction, "type") == "do":
+            raise ValueError("task instructions must have type 'do'")
+        self.tasks[instruction.id] = {
+            'init_time': instruction.time.ToDatetime(dt.timezone.utc),
+            'sent_time': None,
+            'wilco_time': None,
+            'status': 'queued',
+            'name': instruction.action.name,
+            'action_id': instruction.action.id,
+            'description': instruction.action.description
+         }
+        self.outboxes[node].append(instruction)
 
     def set_node_config(self, node: str, config: Mapping):
         config = pro.ConfigParam(
@@ -164,6 +187,7 @@ class Station(bases.BaseNode):
 
     def _shutdown(self, exception: Optional[Exception] = None):
         """shut down the Station."""
+        self.state = "shutdown" if exception is None else "crashed"
         self._log("beginning shutdown", category="exit")
         # clear outbox etc.
         for k in self.outboxes.keys():
@@ -173,26 +197,39 @@ class Station(bases.BaseNode):
             self.shutdown_node(node['name'], "stop")
         # TODO: wait to make sure they are received based on state tracking,
         #  this is a placeholder
-        waiting, _ = timeout_factory(timeout=5)
-        while len(self.outboxes) > 0:
+        waiting, unwait = timeout_factory(timeout=30)
+        # TODO: replace with explicit check for nodeness
+        self._check_nodes()
+        while any(
+            n['inferred_status'] not in ('missing', 'shutdown', 'crashed')
+            for n in self.nodes
+        ):
             try:
                 waiting()
             except TimeoutError:
                 break
             time.sleep(0.1)
+            self._check_nodes()
+        unwait()
         # shut down the server etc.
         # TODO: this is a little messy because of the discrepancy in thread
         #  and signal names. maybe unify this somehow.
         for k in self.signals:
             self.signals[k] = 1
         self.server.kill()
+        while any(t.running() for t in self.server.threads.values()):
+            try:
+                waiting()
+            except TimeoutError:
+                break
+            time.sleep(0.1)
         if exception is not None:
             self._log(
                 exc_report(exception, 0), status="crashed", category="exit"
             )
         else:
             self._log("exiting", status="graceful", category="exit")
-        self.state = "stopped"
+
         if self.__is_process_owner:
             sys.exit()
 
@@ -228,6 +265,52 @@ class Station(bases.BaseNode):
                 n['inferred_status'] = n['reported_status']
             # TODO: trigger some behavior
 
+    def _record_message(self, box, msg, pos):
+        """
+        helper function for _ackcheck(). write log entry for sent message and
+        record it as sent.
+        """
+        # make new Msg object w/updated timestamp.
+        # this is weird-looking, but, by intent, Msg object cached
+        # properties are essentially immutable wrt the underlying message
+        update_instruction_timestamp(msg.message)
+        box[pos] = Msg(msg.message)
+        self._log(box[pos].message, category="comms", direction="send")
+        box[pos].sent = True
+
+    def _select_outgoing_message(
+        self, nodename
+    ) -> tuple[Optional[Mailbox], Optional[pro.Instruction], Optional[int]]:
+        """
+        pick outgoing message, if one exists for this node.
+        helper function for _ackcheck().
+        """
+        # TODO, probably: send more than one Instruction when available.
+        #  we might want a special control code for that.
+        box = self.outboxes[nodename]
+        # TODO, maybe: this search will be expensive if outboxes get really big
+        messages = tuple(
+            filter(lambda pm: pm[1].sent is False, enumerate(box))
+        )
+        if len(messages) == 0:
+            return None, None, None  # this will trigger an empty ack message
+        # ensure that we send config Instructions before do Instructions
+        # (the do instructions might need correct config to work!)
+        try:
+            pos, msg = filtern(lambda pm: pm[1].type == 'configure', messages)
+        except StopIteration:
+            pos, msg = messages[0]
+        return box, msg, pos
+
+    def _update_task_record(self, msg):
+        """
+        helper function for _ackcheck(). update task record associated with a
+        'do' instruction so that we know we sent it.
+        """
+        task_record = self.tasks[msg.id]
+        task_record['sent_time'] = dt.datetime.now(tz=dt.timezone.utc)
+        task_record['status'] = 'sent'
+
     def _ackcheck(self, _conn: socket.socket, comm: dict):
         """
         callback for interpreting comms and responding as appropriate.
@@ -237,14 +320,12 @@ class Station(bases.BaseNode):
         # TODO: lockout might be too strict
         self.locked = True
         try:
-            # TODO: choose whether to log here or to log when we dump the
-            #  inbox + at exit.
             if comm["err"]:
-                # TODO: send did-not-understand
+                # TODO: log this and send did-not-understand
                 return make_comm(b""), "notified sender of error"
-            message = comm["body"]
+            incoming = comm["body"]
             try:
-                nodename = message.nodeid.name
+                nodename = incoming.nodeid.name
             except (AttributeError, ValueError):
                 # TODO: send not-enough-info message
                 return make_comm(b""), "notified sender not enough info"
@@ -254,64 +335,50 @@ class Station(bases.BaseNode):
             # non-serial processes, we would want to immediately send
             # another task to any Node that tells us it's finished one)
             self._handle_incoming_message(comm["body"])
-            if enum(message.state, "status") in ("shutdown", "crashed"):
+            if enum(incoming.state, "status") in ("shutdown", "crashed"):
                 return None, "decline to send ack to terminated node"
             # if we have any Instructions for the Node -- including ones that
             # might have been added to the outbox in the
-            # _handle_incoming_message() workflow -- send them
-            # TODO, probably: send more than one Instruction when available.
-            #  we might want a special control code for that.
-            box = self.outboxes[nodename]
-            # TODO, maybe: kind of expensive if these get really big
-            candidates = tuple(
-                filter(lambda pm: pm[1].sent is False, enumerate(box))
-            )
-            if len(candidates) == 0:  # no queued messages
+            # _handle_incoming_message() workflow -- pick one to send
+            box, msg, pos = self._select_outgoing_message(nodename)
+            # ...and if we don't have any, send empty ack comm
+            if msg is None:
                 return make_comm(b""), "sent ack"
-            # ensure that config Instructions are sent before do Instructions
-            # (the do instructions might need correct config to work!)
-            try:
-                pos, msg = filtern(
-                    lambda pm: pm[1].type == 'configure', candidates
-                )
-            except StopIteration:
-                pos, msg = candidates[0]
-            update_instruction_timestamp(msg.message)
-            # make new Msg object w/updated timestamp.
-            # this is weird-looking, but, by intent, Msg object cached
-            # properties are essentially immutable wrt the underlying message
-            box[pos] = Msg(msg.message)
-            # TODO: logging this here is much less complicated, but has the
-            #  downside that it will occur _before_ we confirm receipt.
-            self._log(box[pos].message, category="comms", direction="send")
-            box[pos].sent = True
+            # log message and, if relevant, update task queue
+            # TODO, maybe: logging and updating task queue here is much less
+            #  complicated, but has the downside that it will occur _before_
+            #  we confirm receipt.
+            # this type should have been validated earlier in queue_task
+            if msg['type'] == 'do':
+                self._update_task_record(msg)
+            self._record_message(box, msg, pos)
             return box[pos].comm, f"sent instruction {box[pos].id}"
-        # TODO: handle this in some kind of graceful way
+        # TODO: log and handle errors in some kind of graceful way
         except Exception as ex:
             raise ex
         finally:
             self.locked = False
 
-    def handlers(self) -> list[dict]:
-        """
-        TODO: this wants to be a _lot_ more sophisticated. it should do
-            something dynamic based on our tracking of what actions each node
-            can perform.
-        list the nodes we've internally designated as handlers.
-        """
-        return [n for n in self.nodes if "handler" in n["roles"]]
-
-    def next_handler(self, _note):
-        """
-        pick the 'next' handler node. for distributing tasks between multiple
-        available handler nodes.
-        """
-        if len(self.handlers()) == 0:
-            raise StopIteration("no handler nodes available.")
-        best = [n for n in self.handlers() if n["name"] != self.last_handler]
-        if len(best) == 0:
-            return self.handlers()[0]["name"]
-        return best[0]["name"]
+    @staticmethod
+    def _launch_node_in_subprocess(context, kwargs):
+        """component function for launch_node"""
+        endpoint = generic_python_endpoint(
+            "hostess.station.nodes",
+            "launch_node",
+            payload=kwargs,
+            argument_unpacking='**',
+            print_result=True
+        )
+        if context == 'daemon':
+            output = RunCommand(endpoint, _disown=True)()
+        elif context == 'subprocess':
+            output = RunCommand(endpoint, _asynchronous=True)()
+        else:
+            raise ValueError(
+                f"unsupported context {context}. Supported contexts are "
+                f"'daemon', 'subprocess', and 'local'."
+            )
+        return output
 
     def launch_node(
         self,
@@ -319,8 +386,16 @@ class Station(bases.BaseNode):
         elements=(),
         host="localhost",
         update_interval=0.1,
+        context='daemon',
         **kwargs
     ):
+        """
+        launch a node, by default daemonized, and add it to the nodelist.
+        may also launch locally or in a non-daemonized subprocess.
+        """
+        # TODO: option to specify remote host and run this using SSH
+        if host != "localhost":
+            raise NotImplementedError
         # TODO: some facility for relaunching
         if any(n['name'] == name for n in self.nodes):
             raise ValueError("can't launch a node with a duplicate name")
@@ -330,23 +405,20 @@ class Station(bases.BaseNode):
             'elements': elements,
             'update_interval': update_interval
         } | kwargs
-        endpoint = generic_python_endpoint(
-            "hostess.station.nodes",
-            "launch_node",
-            payload=kwargs,
-            argument_unpacking='**',
-            print_result=True
-        )
-        # TODO: option to specify remote host and run this using SSH
-        if host != "localhost":
-            raise NotImplementedError
         nodeinfo = blank_nodeinfo() | {
             'name': name,
             'inferred_status': 'initializing',
             'update_interval': update_interval
         }
-        RunCommand(endpoint, _disown=True)()
+        if context == 'local':
+            # mostly for debugging / dev purposes
+            from hostess.station.nodes import launch_node
+
+            output = launch_node(is_local=True, **kwargs)
+        else:
+            output = self._launch_node_in_subprocess(context, kwargs)
         self.nodes.append(nodeinfo)
+        return output
 
 
 def blank_nodeinfo():

@@ -177,6 +177,7 @@ class Node(bases.BaseNode):
 
     def _shutdown(self, exception: Optional[Exception] = None):
         """shut down the node"""
+        self.state = "shutdown" if exception is None else "crashed"
         self._log("beginning shutdown", category="exit")
         # divorce oneself from actors and acts, from events and instructions
         self.actions, self.actionable_events = {}, []
@@ -195,7 +196,6 @@ class Node(bases.BaseNode):
         else:
             self.exc.submit(self._send_exit_report)
             self._log("exiting", status="graceful", category="exit")
-        self.state = "stopped"
         if self.__is_process_owner is True:
             sys.exit()
 
@@ -205,8 +205,8 @@ class Node(bases.BaseNode):
         """
         mdict = self._base_message()
         mdict["reason"] = "exiting"
-        status = "crashed" if exception is not None else "shutdown"
-        mdict["state"]["status"] = status
+        self.state = "crashed" if exception is not None else "shutdown"
+        mdict["state"]["status"] = self.state
         message = Parse(json.dumps(mdict), pro.Update())
         if exception is not None:
             info = pro.Update(
@@ -312,7 +312,8 @@ class Node(bases.BaseNode):
 
     def _trysend(self, message: Message):
         """
-        try to send a message to the Station. Sleep if it doesn't work.
+        try to send a message to the Station. Sleep if it doesn't work --
+        or if we're shut down, just assume the Station is dead and leave.
         """
         response, was_locked, timeout_counter = None, self.locked, count()
         waiting = False
@@ -323,6 +324,12 @@ class Node(bases.BaseNode):
             if response in ("timeout", "connection refused"):
                 self.locked, waiting = True, True
                 if next(timeout_counter) % 10 == 0:
+                    if self.state == "stopped":
+                        self._log(
+                            "no response from station, completing termination",
+                            category='comms'
+                        )
+                        return 'timeout'
                     self._log(response, category="comms", direction="recv")
                 # TODO, maybe: this could be a separate attribute
                 time.sleep(self.update_interval)
@@ -363,8 +370,7 @@ class Node(bases.BaseNode):
             "nodeid": self.nodeid(),
             "time": MessageToDict(make_timestamp()),
             "state": {
-                # TODO: check state
-                "status": "nominal",
+                "status": self.state,
                 # TODO: loc assignment
                 "loc": "primary",
                 "can_receive": False,
@@ -424,6 +430,7 @@ def launch_node(
     node_module: str = "hostess.station.nodes",
     node_class: str = "Node",
     elements: tuple[tuple[str, str]] = None,
+    is_local: bool = False,
     **init_kwargs
 ):
     """simple hook for launching a node."""
@@ -433,18 +440,13 @@ def launch_node(
 
     module: ModuleType = import_module(node_module)
     cls: Type[Node] = getattr(module, node_class)
-    node: Node = cls(
-        station_address, name, _is_process_owner=True, **init_kwargs
-    )
+    if is_local is False:
+        init_kwargs['_is_process_owner'] = True
+    node: Node = cls(station_address, name, **init_kwargs)
     for emod_name, ecls_name in elements:
         emodule: ModuleType = import_module(emod_name)
         ecls: Type[Actor | Sensor] = getattr(emodule, ecls_name)
         node.add_element(ecls)
     # TODO: config-on-launch
     node.start()
-    time.sleep(0.1)
-    print("launcher: node started")
-    while node.threads["main"].running():
-        time.sleep(5)
-    print("launcher: exiting")
     return node

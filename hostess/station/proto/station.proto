@@ -201,10 +201,10 @@ message Action{
   uint32 id = 1;
   string name = 2;
   /* reserved for application-specific contexts, including full
-  action definitions in cases when
-  more complex runtime pipeline configuration is not required --
-  in some cases, a node might only require a file path,
-  file, an integer representing an orbit number, a url, or a parameter path. */
+  action definitions in cases when more complex runtime pipeline configuration
+  is not required -- in some cases, a node might only require a file path,
+  file, an integer representing an orbit number, a url, or a parameter path.
+  may also be used for metadata or comments. */
   map<string, string> description = 3;
   oneof call {
     SystemCall systemcall = 4;
@@ -214,7 +214,7 @@ message Action{
     /* actions that should be executed using a locally-instantiated callable */
     PythonObject localcall = 8;
   }
-  /* this action blocks new actions from execution */
+  /* this action blocks new actions from execution. TODO: implement */
   bool wait = 9;
 }
 

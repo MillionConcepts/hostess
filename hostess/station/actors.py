@@ -12,6 +12,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable, Optional, Hashable, MutableMapping, Sequence
 
+from dustgoggles.structures import listify
 from google.protobuf.message import Message
 
 import hostess.station.nodes as nodes
@@ -93,8 +94,11 @@ def reported(executor: Callable) -> Callable:
         **kwargs
     ):
         action, report, key = init_execution(node, instruction, key, noid)
-        results = executor(self, node, action, key, **kwargs)
-        conclude_execution(*results, report=report)
+        try:
+            results = executor(self, node, action, key, **kwargs)
+        except Exception as ex:
+            results = (ex,)
+        conclude_execution(*listify(results), report=report)
 
     return with_reportage
 
@@ -127,13 +131,13 @@ class FileWriter(Actor):
     def execute(
         self,
         node: "nodes.Node",
-        instruction: Message,
+        action: Message,
         key=None,
         noid=False,
         **_,
     ):
         with open(self.file, self.mode) as stream:
-            stream.write(unpack_obj(instruction.action.localcall))
+            stream.write(unpack_obj(action.localcall))
 
     def _get_mode(self) -> str:
         return self._mode
@@ -315,7 +319,7 @@ class InstructionFromInfo(DispatchActor):
         if self.instruction_maker is None:
             raise TypeError("Must have an instruction maker.")
         nodename = self.pick(station, note)
-        station.outboxes[nodename].append(self.instruction_maker(note))
+        station.queue_task(nodename, self.instruction_maker(note))
 
     interface = ("instruction_maker", "criteria")
     name: str

@@ -212,7 +212,10 @@ def event_body(event):
 
 
 class Msg:
-    """helper class for hostess proto Messages."""
+    """
+    helper class for hostess proto Messages. designed to be 'immutable';
+    users should construct a new Msg rather than modifying one inplace.
+    """
 
     def __init__(self, message):
         self.message, self.sent = message, False
@@ -237,9 +240,14 @@ class Msg:
     def body(self):
         return self.unpack()
 
+    # TODO, maybe: too expensive?
+    @cache
     def __getattr__(self, attr):
         try:
-            return dig_for_values(self.body, attr)[0]
+            try:
+                return self.unpack(attr)
+            except AttributeError:
+                return dig_for_values(self.body, attr)[0]
         except TypeError:
             raise AttributeError(f"Msg has no attribute '{attr}'")
 
@@ -261,6 +269,9 @@ class Msg:
             return self.pprint()
         except NotImplementedError:
             return self.display()
+
+    def __getitem__(self, key):
+        return self.__getattr__(key)
 
     def __repr__(self):
         return self.__str__()
