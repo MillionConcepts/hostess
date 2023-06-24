@@ -141,4 +141,33 @@ def test_application_1():
         shutil.rmtree(test_dir)
 
 
-test_application_1()
+def test_missing():
+    # host/port for station
+    host, port = "localhost", random.randint(10000, 20000)
+
+    # make a station
+    station = Station(host, port)
+    station.start()
+
+    # create a normal and fine node
+    station.launch_node(
+        'normal_node',
+        elements=[('hostess.station.tests.testing_actors', 'NormalActor')],
+        update_interval=0.05
+    )
+    time.sleep(0.55)
+    try:
+        # make sure it is normal and fine
+        assert station.nodes[0]['reported_status'] == 'nominal'
+        # send it a normal and fine instruction
+        normal_action = make_action(description={'something': 'normal'})
+        normal_instruction = make_instruction('do', action=normal_action)
+        station.queue_task('normal_node', normal_instruction)
+        time.sleep(6)
+        # make sure it has mysteriously vanished
+        assert station.nodes[0]['inferred_status'] == 'missing'
+    finally:
+        station.shutdown()
+
+
+test_missing()
