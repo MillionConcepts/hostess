@@ -87,7 +87,8 @@ def test_protobuf():
         'start': dt.datetime.utcnow(),
         'end': dt.datetime.utcnow(),
         'status': 'success',
-        'id': 3
+        'instruction_id': 3,
+        'id': 2
     }
     report = completed_task_msg(actiondict)
     message = pro.Update(completed=report, instruction_id=3)
@@ -112,10 +113,10 @@ def test_comm_online():
     server = tk.TCPTalk(host, port)
     for _ in range(1):
         ack, _ = tk.stsend(report, host, port, timeout=100)
-        response = server.data[-1]
+        response = server.events[-2]
         # Timestamp is variable-length depending on nanoseconds
-        assert response["event"] in ("decoded 94", "decoded 95", "decoded 96")
-        comm = response["content"]
+        assert response["event"] in ("decoded 96", "decoded 97", "decoded 98")
+        comm = hostess.station.talkie.read_comm(server.data[-1].comm)
         assert comm["err"] == ""
         assert comm["header"]["length"] == int(response['event'][-2:])
         message = comm["body"]
@@ -123,3 +124,9 @@ def test_comm_online():
         assert message.instruction_id == 3
         assert ack.startswith(hostess.station.comm.HOSTESS_SOH)
     server.kill()
+
+
+test_protobuf()
+test_comm()
+test_comm_online()
+test_tcp_server()
