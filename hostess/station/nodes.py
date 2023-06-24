@@ -163,6 +163,9 @@ class Node(bases.BaseNode):
             # clean up and report on completed / crashed actions
             if not self.locked:
                 self._check_actions()
+            # clean up finished futures
+            if not self.locked:
+                self._clean_up_threads()
             # periodically check in with Station
             if self.update_timer() >= self.update_interval:
                 if ("check_in" not in self.threads) and (not self.locked):
@@ -175,6 +178,14 @@ class Node(bases.BaseNode):
                 self._handle_instruction(self.instruction_queue.pop())
                 self.locked = False
             time.sleep(self.poll)
+
+    def _clean_up_threads(self):
+        to_clean = []
+        for k, v in self.threads.items():
+            if not v.running():
+                to_clean.append(k)
+        for k in to_clean:
+            self.threads.pop(k)
 
     def _shutdown(self, exception: Optional[Exception] = None):
         """shut down the node"""
@@ -198,9 +209,12 @@ class Node(bases.BaseNode):
                 exc_report(exception, 0), status="crashed", category="exit"
             )
         else:
-            self.exc.submit(self._send_exit_report)
-        # wait to send exit report; TODO: make this cleaner
-        time.sleep(5)
+            self.threads['exit_report'] = self.exc.submit(
+                self._send_exit_report
+            )
+        # wait to send exit report
+        while self.threads['exit_report'].running():
+            time.sleep(0.1)
 
     def _send_exit_report(self, exception=None):
         """
@@ -217,6 +231,7 @@ class Node(bases.BaseNode):
             )
             message.MergeFrom(info)
         self.talk_to_station(message)
+        a = 1
 
     def _report_on_action(self, action: dict):
         """report to Station on completed/failed action."""
@@ -279,39 +294,48 @@ class Node(bases.BaseNode):
                 self._configure_from_instruction(instruction)
             # TODO, maybe: different kill behavior.
             elif enum(instruction, "type") in ("stop", "kill"):
-                return self.shutdown()
-            # config/shutdown etc. behavior is not performed by Actors.
-            if enum(instruction, "type") != "do":
-                return
-            actions = self._match_task_instruction(instruction)
-            if actions is None:
-                return
-            if instruction.id is None:
-                key, noid, noid_infix = (
-                    random.randint(0, int(1e7)),
-                    True,
-                    "noid_",
-                )
+                # this occurs synchronously so move it to the finally block
+                pass
+            elif enum(instruction, "type") == "do":
+                self.execute_do_instruction(instruction)
             else:
-                key, noid, noid_infix = instruction.id, False, ""
-            threadname = f"Instruction_{noid_infix}{key}"
-            # TODO: this could get sticky for the multi-step case
-            self.threads[threadname] = self.exc.submit(
-                self._do_actions, actions, instruction, key, noid
-            )
-        except bases.DoNotUnderstand:
+                raise bases.DoNotUnderstand(
+                    f"unknown instruction type {enum(instruction, 'type')}"
+                )
+        except bases.DoNotUnderstand as dne:
             status = "bad_request"
-            err = self.explain_match(instruction, "action")
+            if enum(instruction, "type") == 'do':
+                err = self.explain_match(instruction, "action")
+            else:
+                err = dne
         finally:
+            self._log(instruction, category='comms', direction='recv')
+            # don't duplicate exit report behavior
+            if enum(instruction, "type") in ("stop", "kill"):
+                return self.shutdown()
+            # otherwise send wilco or bad_request reply
             # noinspection PyTypeChecker
             self._reply_to_instruction(instruction, status, err)
-            self._log(
-                instruction,
-                category="comms",
-                direction="recv",
-                status=status,
-                err=err,
+
+    def execute_do_instruction(self, instruction):
+        actions = self._match_task_instruction(instruction)
+        if actions is None:
+            # return
+            pass
+        if instruction.id is None:
+            # this should really never happen, but...
+            key, noid, noid_infix = (
+                random.randint(0, int(1e7)),
+                True,
+                "noid_",
             )
+        else:
+            key, noid, noid_infix = instruction.id, False, ""
+        threadname = f"Instruction_{noid_infix}{key}"
+        # TODO: this could get sticky for the multi-step case
+        self.threads[threadname] = self.exc.submit(
+            self._do_actions, actions, instruction, key, noid
+        )
 
     def _trysend(self, message: Message):
         """

@@ -425,7 +425,7 @@ class BaseNode(Matcher, ABC):
     def _shutdown(self, exception: Optional[Exception] = None):
         raise NotImplementedError
 
-    def shutdown(self, exception=None):
+    def shutdown(self, exception=None, instruction=None):
         self.locked = True
         self.state = 'shutdown'
         self.signals['main'] = 1

@@ -15,6 +15,7 @@ from hostess.station.messages import (
 from hostess.station.nodes import Node
 from hostess.station.proto_utils import enum
 from hostess.station.station import Station
+from hostess.utilities import timeout_factory
 
 
 def test_shutdown():
@@ -30,34 +31,48 @@ def test_shutdown():
 
 def test_actions_1():
     host, port = "localhost", random.randint(10000, 20000)
-    station = Station(host, port)
+    station = Station(host, port, name='test_actions_1_station', poll=0.02)
     writer = station.launch_node(
-        "writer",
+        "test_actions_1_writer",
         elements=[("hostess.station.actors", "FileWriter")],
+        n_threads=15,
         context="local",
         update_interval=0.05,
     )
     station.start()
-    station.set_node_properties("writer", filewrite_file="test.txt")
-    action = make_action(name="filewrite", localcall=pack_obj("hello"))
-    for _ in range(10):
+    station.set_node_properties(
+        "test_actions_1_writer", filewrite_file="test.txt"
+    )
+    # queue 25 instructions to write 'xyzzy' to a file
+    action = make_action(name="filewrite", localcall=pack_obj("xyzzy"))
+    for _ in range(25):
         instruction = make_instruction("do", action=action)
-        station.queue_task("writer", instruction)
-    # while True:
-    #     time.sleep(0.2)
-    #     print(station.tasks)
-    time.sleep(2)
+        station.queue_task("test_actions_1_writer", instruction)
+    waiting, _ = timeout_factory(timeout=20)
     try:
-        report = station.inbox.completed[0]
-        assert report["action"]["name"] == "filewrite"
-        assert report["action"]["status"] == "success"
-        with open("test.txt") as stream:
-            assert stream.read() == "hello" * 10
+        while len(station.inbox.completed) < 25:
+            waiting()
+            time.sleep(0.05)
+        time.sleep(0.01)  # let info propagate station-internally
+        for report in station.inbox.completed:
+            # do the instruction ids on the
+            # station-tracked tasks and the node-sent task reports match?
+            status = station.tasks[
+                report['completed']['instruction_id']
+            ]['status']
+            # does everyone agree the tasks succeeded?
+            assert status == 'success'
+            assert report['action']['status'] == 'success'
+            # do we have the expected content in the file?
+            with open("test.txt") as stream:
+                assert stream.read() == "xyzzy" * 25
+            # leave logs if the test failed, delete otherwise
+            writer.logfile.unlink(missing_ok=True)
+            station.logfile.unlink(missing_ok=True)
     finally:
+        # clean up
         station.shutdown()
         Path("test.txt").unlink(missing_ok=True)
-        writer.logfile.unlink(missing_ok=True)
-        station.logfile.unlink(missing_ok=True)
 
 
 def test_application_1():
@@ -135,8 +150,6 @@ def test_application_1():
     shutil.copyfile(test_file, test_dir / (Path(test_file).stem + "_full.jpg"))
     time.sleep(2)
     try:
-        print(station.tasks)
-        print(station.inbox.completed)
         assert station.inbox.completed[-1]["action"]["status"] == "success"
         assert Path("test_dir/squirrel_thumbnail.jpg").exists()
     finally:
@@ -174,4 +187,6 @@ def test_missing():
         station.shutdown()
 
 
-test_actions_1()
+# test_actions_1()
+# test_missing()
+# test_application_1()

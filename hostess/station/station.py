@@ -39,7 +39,8 @@ class Station(bases.BaseNode):
         n_threads: int = 8,
         max_inbox_mb: float = 250,
         logdir=Path(__file__).parent / ".nodelogs",
-        _is_process_owner=False
+        _is_process_owner=False,
+        **kwargs
     ):
         super().__init__(
             host=host,
@@ -47,6 +48,7 @@ class Station(bases.BaseNode):
             name=name,
             n_threads=n_threads,
             can_receive=True,
+            **kwargs
         )
         self.max_inbox_mb = max_inbox_mb
         self.events, self.nodes, self.tasks = [], [], {}
@@ -86,9 +88,10 @@ class Station(bases.BaseNode):
             'sent_time': None,
             'ack_time': None,
             'status': 'queued',
+            'node': node,
             'name': instruction.action.name,
             'action_id': instruction.action.id,
-            'description': instruction.action.description
+            'description': instruction.action.description,
          }
         self.outboxes[node].append(instruction)
 
@@ -147,7 +150,6 @@ class Station(bases.BaseNode):
             node = blank_nodeinfo()
             self.nodes.append(node)
         message = unpack_message(message)
-        # TODO: insert info on running actions
         node |= {
             'last_seen': dt.datetime.fromisoformat(message['time']),
             'wait_time': 0,
@@ -159,16 +161,37 @@ class Station(bases.BaseNode):
             'sensors': message['state'].get('sensors', []),
             'busy': message['state']['busy']
         }
+        for name, state in message['state']['threads'].items():
+            try:
+                instruction_id = int(name.replace("Instruction_", ""))
+                # print(self.tasks[instruction_id]['status'], state.lower())
+                if self.tasks[instruction_id]['status'] not in (
+                    'success', 'failure', 'crash', 'timeout'
+                ):
+                    # don't override formally reported status
+                    self.tasks[instruction_id]['status'] = state.lower()
+            except (ValueError, KeyError):  # main thread, sensors, etc.
+                continue
 
     def _handle_report(self, message: Message):
         if not message.HasField("completed"):
             return
-        # TODO: handle instruction tracking
         if len(message.completed.steps) > 0:
             raise NotImplementedError
         self._log(message, category="report")
         if not message.completed.HasField("action"):
+            # TODO: an unusual case. maybe log
             return
+        completed = unpack_message(message.completed)
+        try:
+            task = self.tasks[completed['instruction_id']]
+            task['status'] = completed['action']['status']
+            task['start_time'] = completed['action']['time']['start']
+            task['end_time'] = completed['action']['time']['end']
+            task['duration'] = completed['action']['time']['duration']
+        except KeyError:
+            # TODO: an undesirable case, log
+            pass
         obj = unpack_obj(message.completed.action.result)
         self.match_and_execute(obj, "completion")
 
@@ -195,6 +218,8 @@ class Station(bases.BaseNode):
             except NotImplementedError:
                 # TODO: plausibly some logging
                 pass
+            except Exception as ex:
+                print(op, ex)
 
     def _shutdown(self, exception: Optional[Exception] = None):
         """shut down the Station."""
@@ -207,7 +232,9 @@ class Station(bases.BaseNode):
         for node in self.nodes:
             self.shutdown_node(node['name'], "stop")
         waiting, unwait = timeout_factory(timeout=30)
-        # make sure every node is shut down, timing out at 30s
+        # make sure every node is shut down, timing out at 30s --
+        # this will also ensure we get all exit reports from newly-shutdown
+        # nodes
         self._check_nodes()
         while any(
             n['inferred_status'] not in ('missing', 'shutdown', 'crashed')
@@ -220,9 +247,15 @@ class Station(bases.BaseNode):
             time.sleep(0.1)
             self._check_nodes()
         unwait()
-        # wait another moment to get the exit reports for sure
-        # TODO: make this cleaner
-        time.sleep(5)
+        # ensure local node threads are totally shut down
+        still_running = None
+        while still_running is not False:
+            still_running = False
+            for n in filter(lambda x: 'obj' in x, self.nodes):
+                if any(map(lambda t: t.running(), n['obj'].threads.values())):
+                    still_running = True
+            time.sleep(0.1)
+            waiting()
         # shut down the server etc.
         # TODO: this is a little messy because of the discrepancy in thread
         #  and signal names. maybe unify this somehow.
@@ -301,6 +334,7 @@ class Station(bases.BaseNode):
         #  we might want a special control code for that.
         box = self.outboxes[nodename]
         # TODO, maybe: this search will be expensive if outboxes get really big
+        #  -- might want some kind of hashing
         messages = tuple(
             filter(lambda pm: pm[1].sent is False, enumerate(box))
         )
@@ -348,7 +382,7 @@ class Station(bases.BaseNode):
             # another task to any Node that tells us it's finished one)
             self._handle_incoming_message(comm["body"])
             if enum(incoming.state, "status") in ("shutdown", "crashed"):
-                return None, "decline to send ack to terminated node"
+                return make_comm(b""), "send ack to terminating node"
             # if we have any Instructions for the Node -- including ones that
             # might have been added to the outbox in the
             # _handle_incoming_message() workflow -- pick one to send
@@ -427,6 +461,7 @@ class Station(bases.BaseNode):
             from hostess.station.nodes import launch_node
 
             output = launch_node(is_local=True, **kwargs)
+            nodeinfo['obj'] = output
         else:
             output = self._launch_node_in_subprocess(context, kwargs)
         self.nodes.append(nodeinfo)
