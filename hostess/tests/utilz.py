@@ -11,3 +11,9 @@ def defwrap(defline: str, source: str) -> str:
 
 def pointlessly_nest(obj: Any, func: Callable = identity) -> Any:
     return func(obj)
+
+
+def segfault():
+    from hostess.profilers import di
+
+    di(id([]))

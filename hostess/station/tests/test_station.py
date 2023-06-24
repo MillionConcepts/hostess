@@ -6,8 +6,12 @@ import random
 import time
 
 from hostess.station.actors import FileWriter, InstructionFromInfo
-from hostess.station.messages import make_action, pack_obj, make_instruction, \
-    make_function_call_action
+from hostess.station.messages import (
+    make_action,
+    pack_obj,
+    make_instruction,
+    make_function_call_action,
+)
 from hostess.station.nodes import Node
 from hostess.station.proto_utils import enum
 from hostess.station.station import Station
@@ -16,7 +20,7 @@ from hostess.station.station import Station
 def test_shutdown():
     host, port = "localhost", random.randint(10000, 20000)
     station = Station(host, port)
-    writer = station.launch_node('null', context='local', update_interval=0.1)
+    writer = station.launch_node("null", context="local", update_interval=0.1)
     station.start()
     station.shutdown()
     assert all(thread.done() for thread in writer.threads.values())
@@ -28,22 +32,22 @@ def test_actions_1():
     host, port = "localhost", random.randint(10000, 20000)
     station = Station(host, port)
     writer = station.launch_node(
-        'writer',
-        elements=[('hostess.station.actors', 'FileWriter')],
-        context='local',
-        update_interval=0.05
+        "writer",
+        elements=[("hostess.station.actors", "FileWriter")],
+        context="local",
+        update_interval=0.05,
     )
     station.start()
     station.set_node_properties("writer", filewrite_file="test.txt")
     action = make_action(name="filewrite", localcall=pack_obj("hello"))
     for _ in range(10):
         instruction = make_instruction("do", action=action)
-        station.queue_task('writer', instruction)
+        station.queue_task("writer", instruction)
     time.sleep(1.9)
     try:
         report = station.inbox.completed[0]
-        assert report['action']['name'] == 'filewrite'
-        assert report['action']['status'] == 'success'
+        assert report["action"]["name"] == "filewrite"
+        assert report["action"]["status"] == "success"
         with open("test.txt") as stream:
             assert stream.read() == "hello" * 10
     finally:
@@ -112,11 +116,12 @@ def test_application_1():
     station.start()
 
     # launch the nodes as daemonic processes
+    station.launch_node("watcher", **watcher_launch_spec, update_interval=0.5)
     station.launch_node(
-        "watcher", **watcher_launch_spec, update_interval=0.5
-    )
-    station.launch_node(
-        "thumbnail", **thumbnail_launch_spec, update_interval=0.5, context="local"
+        "thumbnail",
+        **thumbnail_launch_spec,
+        update_interval=0.5,
+        context="local"
     )
     # configure the watcher node
     station.set_node_properties("watcher", **watcher_config_spec)
@@ -129,8 +134,8 @@ def test_application_1():
     try:
         print(station.tasks)
         print(station.inbox.completed)
-        assert station.inbox.completed[-1]['action']['status'] == 'success'
-        assert Path('test_dir/squirrel_thumbnail.jpg').exists()
+        assert station.inbox.completed[-1]["action"]["status"] == "success"
+        assert Path("test_dir/squirrel_thumbnail.jpg").exists()
     finally:
         station.shutdown()
         shutil.rmtree(test_dir)
