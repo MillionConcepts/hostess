@@ -20,7 +20,7 @@ def test_function_call():
     node = FakeNode()
     FuncCaller().match(instruction)
     FuncCaller().execute(node, instruction, key=1)
-    result = node.actions[1]['result'][0]
+    result = node.actions[1]['result']
     assert result == np.array([1])
 
 
