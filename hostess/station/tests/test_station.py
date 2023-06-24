@@ -43,7 +43,10 @@ def test_actions_1():
     for _ in range(10):
         instruction = make_instruction("do", action=action)
         station.queue_task("writer", instruction)
-    time.sleep(1.9)
+    # while True:
+    #     time.sleep(0.2)
+    #     print(station.tasks)
+    time.sleep(2)
     try:
         report = station.inbox.completed[0]
         assert report["action"]["name"] == "filewrite"
@@ -142,6 +145,7 @@ def test_application_1():
 
 
 def test_missing():
+    """test of missing-node tracking"""
     # host/port for station
     host, port = "localhost", random.randint(10000, 20000)
 
@@ -170,4 +174,4 @@ def test_missing():
         station.shutdown()
 
 
-test_missing()
+test_actions_1()

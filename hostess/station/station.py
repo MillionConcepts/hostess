@@ -84,7 +84,7 @@ class Station(bases.BaseNode):
         self.tasks[instruction.id] = {
             'init_time': instruction.time.ToDatetime(dt.timezone.utc),
             'sent_time': None,
-            'wilco_time': None,
+            'ack_time': None,
             'status': 'queued',
             'name': instruction.action.name,
             'action_id': instruction.action.id,
@@ -172,15 +172,26 @@ class Station(bases.BaseNode):
         obj = unpack_obj(message.completed.action.result)
         self.match_and_execute(obj, "completion")
 
+    def _handle_wilco(self, message: pro.Update):
+        # TODO: handle do not understand messages
+        if not enum(message, 'reason') in ('wilco', 'bad_request'):
+            return
+        # TODO: handle config acks
+        if message.instruction_id not in self.tasks.keys():
+            return
+        task = self.tasks[message.instruction_id]
+        task['ack_time'] = message.time.ToDatetime(dt.timezone.utc)
+        task['status'] = enum(message, 'reason')
+        # TODO: behavior in response to bad_request notifications
+
     def _handle_incoming_message(self, message: pro.Update):
         """
         handle an incoming message. right now just wraps _handle_info() but
         will eventually also deal with node state tracking, logging, etc.
         """
-        # TODO, maybe: log acknowledgments
-        for method in ("_handle_info", "_handle_report", "_handle_state"):
+        for op in ('wilco', 'state', 'info', 'report'):
             try:
-                getattr(self, method)(message)
+                getattr(self, f"_handle_{op}")(message)
             except NotImplementedError:
                 # TODO: plausibly some logging
                 pass
