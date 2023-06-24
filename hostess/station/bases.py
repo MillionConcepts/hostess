@@ -427,7 +427,7 @@ class BaseNode(Matcher, ABC):
 
     def shutdown(self, exception=None, instruction=None):
         self.locked = True
-        self.state = 'shutdown'
+        self.state = 'shutdown' if exception is None else 'crashed'
         self.signals['main'] = 1
         try:
             self._shutdown(exception=exception)

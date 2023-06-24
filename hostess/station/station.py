@@ -340,11 +340,19 @@ class Station(bases.BaseNode):
         )
         if len(messages) == 0:
             return None, None, None  # this will trigger an empty ack message
-        # ensure that we send config Instructions before do Instructions
+        # ensure that we send shudown Instructions before config instructions,
+        # and config Instructions before do Instructions
         # (the do instructions might need correct config to work!)
-        try:
-            pos, msg = filtern(lambda pm: pm[1].type == 'configure', messages)
-        except StopIteration:
+        priorities, pos, msg = ('kill', 'stop', 'configure'), None, None
+        for priority in priorities:
+            try:
+                pos, msg = filtern(
+                    lambda pm: pm[1].type == 'configure', messages
+                )
+                break
+            except StopIteration:
+                continue
+        if msg is None:
             pos, msg = messages[0]
         return box, msg, pos
 

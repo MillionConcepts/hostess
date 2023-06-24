@@ -1,19 +1,17 @@
-import atexit
 import shutil
-import sys
 from pathlib import Path
 import random
+import shutil
 import time
+from pathlib import Path
 
-from hostess.station.actors import FileWriter, InstructionFromInfo
+from hostess.station.actors import InstructionFromInfo
 from hostess.station.messages import (
     make_action,
     pack_obj,
     make_instruction,
     make_function_call_action,
 )
-from hostess.station.nodes import Node
-from hostess.station.proto_utils import enum
 from hostess.station.station import Station
 from hostess.utilities import timeout_factory
 

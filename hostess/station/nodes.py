@@ -189,7 +189,6 @@ class Node(bases.BaseNode):
 
     def _shutdown(self, exception: Optional[Exception] = None):
         """shut down the node"""
-        self.state = "shutdown" if exception is None else "crashed"
         self._log("beginning shutdown", status=self.state, category="exit")
         # divorce oneself from actors and acts, from events and instructions
         self.actions, self.actionable_events = {}, []
