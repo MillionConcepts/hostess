@@ -19,7 +19,7 @@ from hostess.utilities import timeout_factory
 def test_shutdown():
     host, port = "localhost", random.randint(10000, 20000)
     station = Station(host, port)
-    writer = station.launch_node("null", context="local", update_interval=0.1)
+    writer = station.launch_delgate("null", context="local", update_interval=0.1)
     station.start()
     station.shutdown()
     assert all(thread.done() for thread in writer.threads.values())
@@ -30,7 +30,7 @@ def test_shutdown():
 def test_actions_1():
     host, port = "localhost", random.randint(10000, 20000)
     station = Station(host, port, name='test_actions_1_station', poll=0.02)
-    writer = station.launch_node(
+    writer = station.launch_delegate(
         "test_actions_1_writer",
         elements=[("hostess.station.actors", "FileWriter")],
         n_threads=15,
@@ -132,8 +132,8 @@ def test_application_1():
     station.start()
 
     # launch the nodes as daemonic processes
-    station.launch_node("watcher", **watcher_launch_spec, update_interval=0.5)
-    station.launch_node(
+    station.launch_delegate("watcher", **watcher_launch_spec, update_interval=0.5)
+    station.launch_delegate(
         "thumbnail",
         **thumbnail_launch_spec,
         update_interval=0.5,
@@ -165,7 +165,7 @@ def test_missing():
     station.start()
 
     # create a normal and fine node
-    station.launch_node(
+    station.launch_delegate(
         'normal_node',
         elements=[('hostess.station.tests.testing_actors', 'NormalActor')],
         update_interval=0.05
@@ -173,6 +173,7 @@ def test_missing():
     time.sleep(0.55)
     try:
         # make sure it is normal and fine
+        print(station.nodes[0])
         assert station.nodes[0]['reported_status'] == 'nominal'
         # send it a normal and fine instruction
         normal_action = make_action(description={'something': 'normal'})
@@ -186,5 +187,5 @@ def test_missing():
 
 
 # test_actions_1()
-# test_missing()
+test_missing()
 # test_application_1()

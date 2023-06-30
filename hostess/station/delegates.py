@@ -26,7 +26,7 @@ from hostess.station.comm import read_comm
 ConfigParamType = Literal["config_property", "config_dict"]
 
 
-class Node(bases.BaseNode):
+class Delegate(bases.Node):
     def __init__(
         self,
         station_address: tuple[str, int],
@@ -435,7 +435,7 @@ class Node(bases.BaseNode):
         self.talk_to_station(msg)
 
 
-class HeadlessNode(Node):
+class HeadlessDelegate(Delegate):
     """
     simple Node implementation that just does stuff on its own. right now
     mostly for testing/prototyping but could easily be useful.
@@ -450,35 +450,35 @@ class HeadlessNode(Node):
         self.message_log.append(message)
 
 
-def launch_node(
+def launch_delegate(
     station_address: tuple[str, int],
     name: str,
-    node_module: str = "hostess.station.nodes",
-    node_class: str = "Node",
+    node_module: str = "hostess.station.delegates",
+    node_class: str = "Delegate",
     elements: tuple[tuple[str, str]] = None,
     is_local: bool = False,
     **init_kwargs
 ):
-    """simple hook for launching a node."""
+    """simple hook for launching a delegate."""
     # TODO: log initialization failures
 
     from hostess.utilities import import_module
 
     module: ModuleType = import_module(node_module)
-    cls: Type[Node] = getattr(module, node_class)
+    cls: Type[Delegate] = getattr(module, node_class)
     if is_local is False:
         init_kwargs['_is_process_owner'] = True
-    node: Node = cls(station_address, name, **init_kwargs)
+    delegate: Delegate = cls(station_address, name, **init_kwargs)
     for emod_name, ecls_name in elements:
         emodule: ModuleType = import_module(emod_name)
         ecls: Type[Actor | Sensor] = getattr(emodule, ecls_name)
-        node.add_element(ecls)
+        delegate.add_element(ecls)
     # TODO: config-on-launch
-    node.start()
+    delegate.start()
     if is_local is True:
-        return node
+        return delegate
     # need to prevent the interpreter from exiting in order to not mess up
     # threading if running in an unmanaged process
-    while node.is_shut_down is False:
+    while delegate.is_shut_down is False:
         time.sleep(1)
     sys.exit()

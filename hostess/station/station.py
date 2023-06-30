@@ -25,7 +25,7 @@ from hostess.station.comm import make_comm
 from hostess.subutils import RunCommand
 
 
-class Station(bases.BaseNode):
+class Station(bases.Node):
     """
     central control node for hostess network. can receive Updates from and
     send Instructions to Nodes.
@@ -414,10 +414,10 @@ class Station(bases.BaseNode):
             self.locked = False
 
     @staticmethod
-    def _launch_node_in_subprocess(context, kwargs):
-        """component function for launch_node"""
+    def _launch_delegate_in_subprocess(context, kwargs):
+        """component function for launch_delegate"""
         endpoint = generic_python_endpoint(
-            "hostess.station.nodes",
+            "hostess.station.delegates",
             "launch_node",
             payload=kwargs,
             argument_unpacking='**',
@@ -434,7 +434,7 @@ class Station(bases.BaseNode):
             )
         return output
 
-    def launch_node(
+    def launch_delegate(
         self,
         name,
         elements=(),
@@ -466,12 +466,12 @@ class Station(bases.BaseNode):
         }
         if context == 'local':
             # mostly for debugging / dev purposes
-            from hostess.station.nodes import launch_node
+            from hostess.station.delegates import launch_delegate
 
-            output = launch_node(is_local=True, **kwargs)
+            output = launch_delegate(is_local=True, **kwargs)
             nodeinfo['obj'] = output
         else:
-            output = self._launch_node_in_subprocess(context, kwargs)
+            output = self._launch_delegate_in_subprocess(context, kwargs)
         self.nodes.append(nodeinfo)
         return output
 

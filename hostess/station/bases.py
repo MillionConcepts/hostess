@@ -1,4 +1,4 @@
-"""base classes and helpers for Nodes, Stations, Sensors, and Actors."""
+"""base classes and helpers for Delegates, Stations, Sensors, and Actors."""
 from __future__ import annotations
 
 import atexit
@@ -239,7 +239,7 @@ class Actor(ABC):
         """
         raise NotImplementedError
 
-    def execute(self, node: BaseNode, event: Any, **kwargs) -> Any:
+    def execute(self, node: Node, event: Any, **kwargs) -> Any:
         raise NotImplementedError
 
     name: str
@@ -265,7 +265,7 @@ class DispatchActor(Actor, ABC):
             for t in (self.target_name, self.target_actor, self.target_picker)
         ):
             raise TypeError("Must have a node name, actor name, or picker")
-        targets = station.nodes
+        targets = station.delegates
         if self.target_name is not None:
             targets = [n for n in targets if n['name'] == self.target_name]
         if self.target_actor is not None:
@@ -332,8 +332,8 @@ def validate_instruction(instruction):
         raise NoTaskError
 
 
-class BaseNode(Matcher, ABC):
-    """base class for Nodes and Stations."""
+class Node(Matcher, ABC):
+    """base class for Delegates and Stations."""
 
     def __init__(
         self,
@@ -420,9 +420,11 @@ class BaseNode(Matcher, ABC):
         return False
 
     def _main_loop(self):
+        """you need to define a main loop when you use this base class"""
         raise NotImplementedError
 
     def _shutdown(self, exception: Optional[Exception] = None):
+        """subclasses must define a way to shut down"""
         raise NotImplementedError
 
     def shutdown(self, exception=None, instruction=None):

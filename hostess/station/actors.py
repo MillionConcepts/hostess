@@ -15,10 +15,10 @@ from typing import Any, Callable, Optional, Hashable, MutableMapping, Sequence
 from dustgoggles.structures import listify
 from google.protobuf.message import Message
 
-import hostess.station.nodes as nodes
+import hostess.station.delegates as delegates
 from hostess.station.station import Station
 import hostess.station.proto.station_pb2 as pro
-from hostess.station.bases import Sensor, Actor, NoMatch, BaseNode, \
+from hostess.station.bases import Sensor, Actor, NoMatch, Node, \
     DispatchActor
 from hostess.station.handlers import (
     make_function_call,
@@ -35,7 +35,7 @@ NODE_ACTION_FIELDS = frozenset({"id", "start", "stop", "status", "result"})
 
 
 def init_execution(
-    node: BaseNode,
+    node: Node,
     instruction: Message,
     key: Hashable,
     noid: bool
@@ -130,7 +130,7 @@ class FileWriter(Actor):
     @reported
     def execute(
         self,
-        node: "nodes.Node",
+        node: "nodes.Delegate",
         action: Message,
         key=None,
         noid=False,
@@ -175,7 +175,7 @@ class FuncCaller(Actor):
     @reported
     def execute(
         self,
-        node: "nodes.Node",
+        node: "nodes.Delegate",
         action: Message,
         key=None,
         noid=False,
@@ -207,7 +207,7 @@ class SysCaller(Actor):
     @reported
     def execute(
         self,
-        node: "nodes.Node",
+        node: "nodes.Delegate",
         action: Message,
         key=None,
         noid=False,
@@ -252,7 +252,7 @@ class LineLogger(Actor):
             return True
         raise NoMatch("not a string.")
 
-    def execute(self, node: "nodes.Node", line: str, *, path=None, **_):
+    def execute(self, node: "nodes.Delegate", line: str, *, path=None, **_):
         if path is None:
             return
         with path.open("a") as stream:
@@ -280,7 +280,7 @@ class ReportStringMatch(Actor):
 
     def execute(
         self,
-        node: "nodes.Node",
+        node: "nodes.Delegate",
         line: str,
         patterns=(),
         *,
