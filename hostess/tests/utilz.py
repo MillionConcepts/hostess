@@ -14,6 +14,10 @@ def pointlessly_nest(obj: Any, func: Callable = identity) -> Any:
 
 
 def segfault():
+    import gc
     from hostess.profilers import di
-
-    di(id([]))
+    a_id = id([])
+    gc.collect()
+    import time
+    time.sleep(0.1)
+    di(a_id)

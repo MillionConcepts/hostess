@@ -168,12 +168,11 @@ def test_missing():
     station.launch_delegate(
         'normal_node',
         elements=[('hostess.station.tests.testing_actors', 'NormalActor')],
-        update_interval=0.05
+        update_interval=0.05,
     )
     time.sleep(0.55)
     try:
         # make sure it is normal and fine
-        print(station.nodes[0])
         assert station.nodes[0]['reported_status'] == 'nominal'
         # send it a normal and fine instruction
         normal_action = make_action(description={'something': 'normal'})
@@ -187,5 +186,5 @@ def test_missing():
 
 
 # test_actions_1()
-test_missing()
+# test_missing()
 # test_application_1()

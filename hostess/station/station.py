@@ -418,7 +418,7 @@ class Station(bases.Node):
         """component function for launch_delegate"""
         endpoint = generic_python_endpoint(
             "hostess.station.delegates",
-            "launch_node",
+            "launch_delegate",
             payload=kwargs,
             argument_unpacking='**',
             print_result=True
