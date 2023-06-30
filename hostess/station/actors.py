@@ -87,7 +87,7 @@ def reported(executor: Callable) -> Callable:
     """
     def with_reportage(
         self,
-        node: BaseNode,
+        node: Node,
         instruction: Message,
         key=None,
         noid=False,
@@ -130,7 +130,7 @@ class FileWriter(Actor):
     @reported
     def execute(
         self,
-        node: "nodes.Delegate",
+        node: "Node",
         action: Message,
         key=None,
         noid=False,
@@ -175,7 +175,7 @@ class FuncCaller(Actor):
     @reported
     def execute(
         self,
-        node: "nodes.Delegate",
+        node: "Node",
         action: Message,
         key=None,
         noid=False,
@@ -207,7 +207,7 @@ class SysCaller(Actor):
     @reported
     def execute(
         self,
-        node: "nodes.Delegate",
+        node: "Node",
         action: Message,
         key=None,
         noid=False,
@@ -244,7 +244,7 @@ class SysCaller(Actor):
 class LineLogger(Actor):
     """
     logs all strings passed to it. intended to be attached to a Sensor as a
-    supplement to a Node's primary logging.
+    supplement to a Delegate's primary logging.
     """
 
     def match(self, line, **_):
@@ -252,7 +252,7 @@ class LineLogger(Actor):
             return True
         raise NoMatch("not a string.")
 
-    def execute(self, node: "nodes.Delegate", line: str, *, path=None, **_):
+    def execute(self, node: "delegates.Delegate", line: str, *, path=None, **_):
         if path is None:
             return
         with path.open("a") as stream:
@@ -280,7 +280,7 @@ class ReportStringMatch(Actor):
 
     def execute(
         self,
-        node: "nodes.Delegate",
+        node: "delegates.Delegate",
         line: str,
         patterns=(),
         *,
@@ -302,7 +302,7 @@ class InstructionFromInfo(DispatchActor):
     """
     skeleton info Actor for Stations. check, based on configurable criteria,
     whether a piece of info received in an Update indicates that we should
-    assign a task to some handler Node, and if it does, create an Instruction
+    assign a task to some handler Delegate, and if it does, create an Instruction
     from that info based on an instruction-making function.
     """
 
@@ -315,11 +315,11 @@ class InstructionFromInfo(DispatchActor):
                 return True
         raise NoMatch("note did not match criteria")
 
-    def execute(self, station: "Station", note, **_,):
+    def execute(self, node: "Station", note, **_,):
         if self.instruction_maker is None:
             raise TypeError("Must have an instruction maker.")
-        nodename = self.pick(station, note)
-        station.queue_task(nodename, self.instruction_maker(note))
+        delegatename = self.pick(node, note)
+        node.queue_task(delegatename, self.instruction_maker(note))
 
     interface = ("instruction_maker", "criteria")
     name: str

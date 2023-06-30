@@ -26,17 +26,17 @@ message PythonObject {
 }
 
 /* pipe is the entirety of a multi-action task. note that a task may simply consist
-    of a single action, in which case the node should not report anything pipe-level. */
+    of a single action, in which case the delegate should not report anything pipe-level. */
 /* TODO: once available / compatible, get protobuf >= 4.22.0 so this silly
     placeholder thing doesn't have to happen with not-actually-closed enums */
 enum ActionLevel {unknownactionlevel = 0; pipe = 1; action = 2;}
 /* 'failure' means that a program specifically reported it was unable to fully
     complete, but still may have exited gracefully. 'crash' means a program did
     not exit gracefully (returned an exception message or an unwanted exit code,
-    or the node found evidence on the system that the process terminated
+    or the delegate found evidence on the system that the process terminated
     prematurely, etc.). i.e., 'failure' is a handled but fatal exception,
     'crash' is an unhandled exception. Note that this does _not_ refer to the
-    node's status; a node may execute many failed tasks but still be fine. */
+    delegate's status; a delegate may execute many failed tasks but still be fine. */
 enum Status {
   unknownstatus = 0;
   running = 1;
@@ -79,7 +79,7 @@ message TaskReport {
   ActionReport action = 3;
 }
 
-enum NodeStatus {
+enum DelegateStatus {
   unknown_status = 0;
   idle = 1;
   nominal = 2;
@@ -89,10 +89,10 @@ enum NodeStatus {
   /* crashing but managed to tell the Station about it */
   crashed = 5;
 }
-enum NodeLoC {unknown_loc = 0; primary = 1; secondary = 2; sleeping = 3;}
-message NodeState {
-  NodeStatus status = 1;
-  NodeLoC loc = 2;
+enum DelegateLoC {unknown_loc = 0; primary = 1; secondary = 2; sleeping = 3;}
+message DelegateState {
+  DelegateStatus status = 1;
+  DelegateLoC loc = 2;
   bool can_receive = 3;
   bool busy = 4;
   map<string, string> threads = 5;
@@ -129,13 +129,13 @@ enum UpdateReason {
 }
 
 message Update {
-  NodeId nodeid = 1;
-  NodeState state = 2;
+  NodeId delegateid = 1;
+  DelegateState state = 2;
   google.protobuf.Timestamp time = 3;
   UpdateReason reason = 4;
   repeated ActionReport running = 5;
   TaskReport completed = 6;
-  /* structured / serialized data the node believes the Station needs */
+  /* structured / serialized data the delegate believes the Station needs */
   repeated PythonObject info = 7;
   /* if this update is in response / reference to an instruction */
   uint32 instruction_id = 8;
@@ -204,7 +204,7 @@ message Action{
   string name = 2;
   /* reserved for application-specific contexts, including full
   action definitions in cases when more complex runtime pipeline configuration
-  is not required -- in some cases, a node might only require a file path,
+  is not required -- in some cases, a delegate might only require a file path,
   file, an integer representing an orbit number, a url, or a parameter path.
   may also be used for metadata or comments. */
   map<string, string> description = 3;

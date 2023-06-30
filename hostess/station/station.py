@@ -16,7 +16,7 @@ from google.protobuf.message import Message
 import hostess.station.proto.station_pb2 as pro
 from hostess.caller import generic_python_endpoint
 from hostess.station import bases
-from hostess.station.bases import NoMatchingNode, AllBusy
+from hostess.station.bases import NoMatchingDelegate, AllBusy
 from hostess.station.messages import pack_obj, unpack_obj, make_instruction, \
     update_instruction_timestamp, Mailbox, Msg, unpack_message
 from hostess.station.proto_utils import enum
@@ -28,7 +28,7 @@ from hostess.subutils import RunCommand
 class Station(bases.Node):
     """
     central control node for hostess network. can receive Updates from and
-    send Instructions to Nodes.
+    send Instructions to Delegates.
     """
 
     def __init__(
@@ -51,29 +51,29 @@ class Station(bases.Node):
             **kwargs
         )
         self.max_inbox_mb = max_inbox_mb
-        self.events, self.nodes, self.tasks = [], [], {}
+        self.events, self.delegates, self.tasks = [], [], {}
         self.outboxes = defaultdict(Mailbox)
         self.tendtime, self.reset_tend = timeout_factory(False)
         self.last_handler = None
         # TODO: share log id -- or another identifier, like init time --
-        #   between station and node
+        #   between station and delegate
         self.logid = f"{str(random.randint(0, 10000)).zfill(5)}"
         self.logfile = Path(logdir, f"{host}_{port}_station_{self.logid}")
         self.__is_process_owner = _is_process_owner
 
-    def set_node_properties(self, node: str, **propvals):
-        # TODO: update node info record if relevant
+    def set_delegate_properties(self, delegate: str, **propvals):
+        # TODO: update delegate info record if relevant
         if len(propvals) == 0:
             raise TypeError("can't send a no-op config instruction")
         config = [
             pro.ConfigParam(paramtype="config_property", value=pack_obj(v, k))
             for k, v in propvals.items()
         ]
-        self.outboxes[node].append(make_instruction("configure", config=config))
+        self.outboxes[delegate].append(make_instruction("configure", config=config))
 
-    def queue_task(self, node: str, instruction: pro.Instruction):
+    def queue_task(self, delegate: str, instruction: pro.Instruction):
         """
-        queue an instruction for node, and keep track of its state. this
+        queue an instruction for delegate, and keep track of its state. this
         method is intended to be used for task-type instructions rather than
         config etc. instructions we may not want to track in the same way.
         """
@@ -88,21 +88,21 @@ class Station(bases.Node):
             'sent_time': None,
             'ack_time': None,
             'status': 'queued',
-            'node': node,
+            'delegate': delegate,
             'name': instruction.action.name,
             'action_id': instruction.action.id,
             'description': instruction.action.description,
          }
-        self.outboxes[node].append(instruction)
+        self.outboxes[delegate].append(instruction)
 
-    def set_node_config(self, node: str, config: Mapping):
+    def set_delegate_config(self, delegate: str, config: Mapping):
         config = pro.ConfigParam(
             paramtype="config_dict", value=pack_obj(config)
         )
-        self.outboxes[node].append(make_instruction("configure", config=config))
+        self.outboxes[delegate].append(make_instruction("configure", config=config))
 
-    def shutdown_node(self, node: str, how: Literal['stop', 'kill'] = 'stop'):
-        self.outboxes[node].append(make_instruction(how))
+    def shutdown_delegate(self, delegate: str, how: Literal['stop', 'kill'] = 'stop'):
+        self.outboxes[delegate].append(make_instruction(how))
 
     # TODO, maybe: signatures on these match-and-execute things are getting
     #  a little weird and specialized. maybe that's ok, but maybe we should
@@ -124,8 +124,8 @@ class Station(bases.Node):
         for action in actions:
             try:
                 action.execute(self, obj)
-            except NoMatchingNode:
-                self._log("no node for action", action=action)
+            except NoMatchingDelegate:
+                self._log("no delegate for action", action=action)
             except AllBusy:
                 # TODO: instruction-queuing behavior
                 pass
@@ -142,21 +142,21 @@ class Station(bases.Node):
 
     def _handle_state(self, message: Message):
         try:
-            node = [
-                n for n in self.nodes if n['name'] == message.nodeid.name
+            delegate = [
+                n for n in self.delegates if n['name'] == message.delegateid.name
             ][0]
-        # TODO: how do we handle mystery-appearing nodes with dupe names
+        # TODO: how do we handle mystery-appearing delegates with dupe names
         except IndexError:
-            node = blank_nodeinfo()
-            self.nodes.append(node)
+            delegate = blank_delegateinfo()
+            self.delegates.append(delegate)
         message = unpack_message(message)
-        node |= {
+        delegate |= {
             'last_seen': dt.datetime.fromisoformat(message['time']),
             'wait_time': 0,
             'interface': message['state']['interface'],
             'cdict': message['state']['cdict'],
             'reported_status': message['state']['status'],
-            'pid': message['nodeid']['pid'],
+            'pid': message['delegateid']['pid'],
             'actors': message['state'].get('actors', []),
             'sensors': message['state'].get('sensors', []),
             'busy': message['state']['busy']
@@ -210,7 +210,7 @@ class Station(bases.Node):
     def _handle_incoming_message(self, message: pro.Update):
         """
         handle an incoming message. right now just wraps _handle_info() but
-        will eventually also deal with node state tracking, logging, etc.
+        will eventually also deal with delegate state tracking, logging, etc.
         """
         for op in ('wilco', 'state', 'info', 'report'):
             try:
@@ -229,29 +229,29 @@ class Station(bases.Node):
         for k in self.outboxes.keys():
             self.outboxes[k] = Mailbox([])
         self.actors, self.sensors = {}, {}
-        for node in self.nodes:
-            self.shutdown_node(node['name'], "stop")
+        for delegate in self.delegates:
+            self.shutdown_delegate(delegate['name'], "stop")
         waiting, unwait = timeout_factory(timeout=30)
-        # make sure every node is shut down, timing out at 30s --
+        # make sure every delegate is shut down, timing out at 30s --
         # this will also ensure we get all exit reports from newly-shutdown
-        # nodes
-        self._check_nodes()
+        # delegates
+        self._check_delegates()
         while any(
             n['inferred_status'] not in ('missing', 'shutdown', 'crashed')
-            for n in self.nodes
+            for n in self.delegates
         ):
             try:
                 waiting()
             except TimeoutError:
                 break
             time.sleep(0.1)
-            self._check_nodes()
+            self._check_delegates()
         unwait()
-        # ensure local node threads are totally shut down
+        # ensure local delegate threads are totally shut down
         still_running = None
         while still_running is not False:
             still_running = False
-            for n in filter(lambda x: 'obj' in x, self.nodes):
+            for n in filter(lambda x: 'obj' in x, self.delegates):
                 if any(map(lambda t: t.running(), n['obj'].threads.values())):
                     still_running = True
             time.sleep(0.1)
@@ -281,7 +281,7 @@ class Station(bases.Node):
     def _main_loop(self):
         """main loop for Station."""
         while self.signals.get("main") is None:
-            self._check_nodes()
+            self._check_delegates()
             if self.tendtime() > self.poll * 30:
                 crashed_threads = self.server.tend()
                 # heuristically manage inbox size
@@ -291,9 +291,9 @@ class Station(bases.Node):
                     self._log(crashed_threads, category="server_errors")
             time.sleep(self.poll)
 
-    def _check_nodes(self):
+    def _check_delegates(self):
         now = dt.datetime.now(tz=dt.timezone.utc)
-        for n in self.nodes:
+        for n in self.delegates:
             if n['reported_status'] in ('shutdown', 'crashed'):
                 n['inferred_status'] = n['reported_status']
                 continue
@@ -324,15 +324,15 @@ class Station(bases.Node):
         box[pos].sent = True
 
     def _select_outgoing_message(
-        self, nodename
+        self, delegatename
     ) -> tuple[Optional[Mailbox], Optional[pro.Instruction], Optional[int]]:
         """
-        pick outgoing message, if one exists for this node.
+        pick outgoing message, if one exists for this delegate.
         helper function for _ackcheck().
         """
         # TODO, probably: send more than one Instruction when available.
         #  we might want a special control code for that.
-        box = self.outboxes[nodename]
+        box = self.outboxes[delegatename]
         # TODO, maybe: this search will be expensive if outboxes get really big
         #  -- might want some kind of hashing
         messages = tuple(
@@ -379,7 +379,7 @@ class Station(bases.Node):
                 return make_comm(b""), "notified sender of error"
             incoming = comm["body"]
             try:
-                nodename = incoming.nodeid.name
+                delegatename = incoming.delegateid.name
             except (AttributeError, ValueError):
                 # TODO: send not-enough-info message
                 return make_comm(b""), "notified sender not enough info"
@@ -387,14 +387,14 @@ class Station(bases.Node):
             # response based on its contents (e.g., in a gPhoton 2-like
             # pipeline that's mostly coordinating execution of a big list of
             # non-serial processes, we would want to immediately send
-            # another task to any Node that tells us it's finished one)
+            # another task to any Delegate that tells us it's finished one)
             self._handle_incoming_message(comm["body"])
             if enum(incoming.state, "status") in ("shutdown", "crashed"):
-                return make_comm(b""), "send ack to terminating node"
-            # if we have any Instructions for the Node -- including ones that
+                return make_comm(b""), "send ack to terminating delegate"
+            # if we have any Instructions for the Delegate -- including ones that
             # might have been added to the outbox in the
             # _handle_incoming_message() workflow -- pick one to send
-            box, msg, pos = self._select_outgoing_message(nodename)
+            box, msg, pos = self._select_outgoing_message(delegatename)
             # ...and if we don't have any, send empty ack comm
             if msg is None:
                 return make_comm(b""), "sent ack"
@@ -444,22 +444,22 @@ class Station(bases.Node):
         **kwargs
     ):
         """
-        launch a node, by default daemonized, and add it to the nodelist.
+        launch a delegate, by default daemonized, and add it to the delegatelist.
         may also launch locally or in a non-daemonized subprocess.
         """
         # TODO: option to specify remote host and run this using SSH
         if host != "localhost":
             raise NotImplementedError
         # TODO: some facility for relaunching
-        if any(n['name'] == name for n in self.nodes):
-            raise ValueError("can't launch a node with a duplicate name")
+        if any(n['name'] == name for n in self.delegates):
+            raise ValueError("can't launch a delegate with a duplicate name")
         kwargs = {
             'station_address': (self.host, self.port),
             'name': name,
             'elements': elements,
             'update_interval': update_interval
         } | kwargs
-        nodeinfo = blank_nodeinfo() | {
+        delegateinfo = blank_delegateinfo() | {
             'name': name,
             'inferred_status': 'initializing',
             'update_interval': update_interval
@@ -469,14 +469,14 @@ class Station(bases.Node):
             from hostess.station.delegates import launch_delegate
 
             output = launch_delegate(is_local=True, **kwargs)
-            nodeinfo['obj'] = output
+            delegateinfo['obj'] = output
         else:
             output = self._launch_delegate_in_subprocess(context, kwargs)
-        self.nodes.append(nodeinfo)
+        self.delegates.append(delegateinfo)
         return output
 
 
-def blank_nodeinfo():
+def blank_delegateinfo():
     return {
         'last_seen': None,
         'reported_status': 'initializing',

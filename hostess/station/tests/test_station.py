@@ -38,7 +38,7 @@ def test_actions_1():
         update_interval=0.05,
     )
     station.start()
-    station.set_node_properties(
+    station.set_delegate_properties(
         "test_actions_1_writer", filewrite_file="test.txt"
     )
     # queue 25 instructions to write 'xyzzy' to a file
@@ -139,8 +139,8 @@ def test_application_1():
         update_interval=0.5,
         context="local"
     )
-    # configure the watcher node
-    station.set_node_properties("watcher", **watcher_config_spec)
+    # configure the watcher delegate
+    station.set_delegate_properties("watcher", **watcher_config_spec)
 
     # copy a squirrel picture into the directory as a test (representing some
     # external change to the system)
@@ -173,18 +173,18 @@ def test_missing():
     time.sleep(0.55)
     try:
         # make sure it is normal and fine
-        assert station.nodes[0]['reported_status'] == 'nominal'
+        assert station.delegates[0]['reported_status'] == 'nominal'
         # send it a normal and fine instruction
         normal_action = make_action(description={'something': 'normal'})
         normal_instruction = make_instruction('do', action=normal_action)
         station.queue_task('normal_node', normal_instruction)
         time.sleep(6)
         # make sure it has mysteriously vanished
-        assert station.nodes[0]['inferred_status'] == 'missing'
+        assert station.delegates[0]['inferred_status'] == 'missing'
     finally:
         station.shutdown()
 
 
-# test_actions_1()
-# test_missing()
-# test_application_1()
+test_actions_1()
+test_missing()
+test_application_1()

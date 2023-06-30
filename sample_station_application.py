@@ -73,7 +73,7 @@ station.start()
 # launch and configure the nodes
 station.launch_node("watcher", **watcher_launch_spec, update_interval=0.1)
 station.launch_node("thumbnail", **thumbnail_launch_spec, update_interval=0.1)
-station.set_node_properties("watcher", **watcher_config_spec)
+station.set_delegate_properties("watcher", **watcher_config_spec)
 
 # copy a squirrel picture into the directory as a test (representing some
 # external change to the system)

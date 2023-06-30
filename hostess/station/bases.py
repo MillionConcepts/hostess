@@ -264,7 +264,7 @@ class DispatchActor(Actor, ABC):
             t is None
             for t in (self.target_name, self.target_actor, self.target_picker)
         ):
-            raise TypeError("Must have a node name, actor name, or picker")
+            raise TypeError("Must have a delegate name, actor name, or picker")
         targets = station.delegates
         if self.target_name is not None:
             targets = [n for n in targets if n['name'] == self.target_name]
@@ -274,7 +274,7 @@ class DispatchActor(Actor, ABC):
             targets = [n for n in targets if self.target_picker(n, message)]
         not_busy = [n for n in targets if n.get('busy') is False]
         if len(targets) == 0:
-            raise NoMatchingNode
+            raise NoMatchingDelegate
         if len(not_busy) == 0:
             raise AllBusy
         return targets[0]['name']
@@ -307,7 +307,7 @@ class NoInstructionType(DoNotUnderstand):
 class NoMatch(Exception):
     """actor does not match instruction. used for control flow."""
 
-class NoMatchingNode(Exception):
+class NoMatchingDelegate(Exception):
     """no nodes are available that match this action."""
 
 

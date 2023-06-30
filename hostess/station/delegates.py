@@ -46,9 +46,9 @@ class Delegate(bases.Node):
         and/or execute actions based on the elements attached to it.
 
         station: (hostname, port) of supervising Station
-        name: identifying name for node
+        name: identifying name for delegate
         n_threads: max threads in executor
-        elements: Sensors or Actors to add to node at creation.
+        elements: Sensors or Actors to add to delegate at creation.
         poll: delay, in seconds, for polling loops
         timeout: timeout, in s, for intra-hostess communications
         update: interval, in s, for check-in Updates to supervising Station
@@ -72,7 +72,7 @@ class Delegate(bases.Node):
         self.logdir.mkdir(exist_ok=True)
         # TODO: hacky temp log thing, do it better
         self.logid = f"{str(random.randint(0, 10000)).zfill(5)}"
-        # TODO: add local hostname of node
+        # TODO: add local hostname of delegate
         self.logfile = Path(
             self.logdir,
             f"{self.station[0]}_{self.station[1]}_{self.name}_"
@@ -188,7 +188,7 @@ class Delegate(bases.Node):
             self.threads.pop(k)
 
     def _shutdown(self, exception: Optional[Exception] = None):
-        """shut down the node"""
+        """shut down the delegate"""
         self._log("beginning shutdown", status=self.state, category="exit")
         # divorce oneself from actors and acts, from events and instructions
         self.actions, self.actionable_events = {}, []
@@ -217,7 +217,7 @@ class Delegate(bases.Node):
 
     def _send_exit_report(self, exception=None):
         """
-        send Update to Station informing it that the node is exiting, and why.
+        send Update to Station informing it that the delegate is exiting, and why.
         """
         mdict = self._base_message()
         mdict["reason"] = "exiting"
@@ -389,11 +389,11 @@ class Delegate(bases.Node):
     def _base_message(self):
         """
         construct a dict with the basic components of an Update message --
-        time, the node's ID, etc.
+        time, the delegate's ID, etc.
         """
         # noinspection PyProtectedMember
         return {
-            "nodeid": self.nodeid(),
+            "delegateid": self.nodeid(),
             "time": MessageToDict(make_timestamp()),
             "state": {
                 "status": self.state,
@@ -406,10 +406,10 @@ class Delegate(bases.Node):
         }
 
     def _insert_state(self, message: Message):
-        """insert the Node's current state information into a Message."""
+        """insert the Delegate's current state information into a Message."""
         if not message.HasField("state"):
             return
-        state = pro.NodeState(
+        state = pro.DelegateState(
             interface=pack_obj(self.config['interface']),
             cdict=pack_obj(self.config['cdict']),
             actors=list(self.actors.keys()),
@@ -437,7 +437,7 @@ class Delegate(bases.Node):
 
 class HeadlessDelegate(Delegate):
     """
-    simple Node implementation that just does stuff on its own. right now
+    simple Delegate implementation that just does stuff on its own. right now
     mostly for testing/prototyping but could easily be useful.
     """
 
@@ -453,8 +453,8 @@ class HeadlessDelegate(Delegate):
 def launch_delegate(
     station_address: tuple[str, int],
     name: str,
-    node_module: str = "hostess.station.delegates",
-    node_class: str = "Delegate",
+    delegate_module: str = "hostess.station.delegates",
+    delegate_class: str = "Delegate",
     elements: tuple[tuple[str, str]] = None,
     is_local: bool = False,
     **init_kwargs
@@ -464,8 +464,8 @@ def launch_delegate(
 
     from hostess.utilities import import_module
 
-    module: ModuleType = import_module(node_module)
-    cls: Type[Delegate] = getattr(module, node_class)
+    module: ModuleType = import_module(delegate_module)
+    cls: Type[Delegate] = getattr(module, delegate_class)
     if is_local is False:
         init_kwargs['_is_process_owner'] = True
     delegate: Delegate = cls(station_address, name, **init_kwargs)
