@@ -19,7 +19,7 @@ from hostess.utilities import timeout_factory
 def test_shutdown():
     host, port = "localhost", random.randint(10000, 20000)
     station = Station(host, port)
-    writer = station.launch_delgate("null", context="local", update_interval=0.1)
+    writer = station.launch_delegate("null", context="local", update_interval=0.1)
     station.start()
     station.shutdown()
     assert all(thread.done() for thread in writer.threads.values())
@@ -185,6 +185,7 @@ def test_missing():
         station.shutdown()
 
 
-test_actions_1()
-test_missing()
-test_application_1()
+# test_shutdown()
+# test_actions_1()
+# test_missing()
+# test_application_1()
