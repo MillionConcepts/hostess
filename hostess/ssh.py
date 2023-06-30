@@ -189,10 +189,12 @@ def jupyter_connect(
         _bg=True,
         **command_kwargs,
     )
-    jupyter_url = f"http://localhost:{local_port}"
+    jupyter_url_base = f"http://localhost:{local_port}"
     if get_token:
         token = get_jupyter_token(ssh, jupyter, remote_port)
-        jupyter_url += f"{jupyter_url}/?token={token}"
+        jupyter_url = f"{jupyter_url_base}/?token={token}"
+    else:
+        jupyter_url = jupyter_url_base
     ssh.tunnel(local_port, remote_port)
     return jupyter_url, ssh.tunnels[-1], jupyter_launch
 
