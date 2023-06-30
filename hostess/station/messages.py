@@ -15,7 +15,7 @@ from typing import Optional, Any, Literal, Mapping, MutableSequence
 from cytoolz import groupby
 import dill
 from dustgoggles.func import gmap
-from dustgoggles.structures import dig_for_keys, dig_for_values
+from dustgoggles.structures import dig_for_values
 from google.protobuf.message import Message
 from google.protobuf.internal.well_known_types import Duration, Timestamp
 from google.protobuf.pyext._message import ScalarMapContainer, \
