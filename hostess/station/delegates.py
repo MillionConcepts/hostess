@@ -127,6 +127,7 @@ class Delegate(bases.Node):
             # TODO: accomplish this with a wrapper
             if exception is not None:
                 self._log(action | exc_report(exception, 0))
+                action['exception'] = exception
             else:
                 self._log(action)
             # TODO: determine if we should reset update timer here
@@ -230,7 +231,6 @@ class Delegate(bases.Node):
             )
             message.MergeFrom(info)
         self.talk_to_station(message)
-        a = 1
 
     def _report_on_action(self, action: dict):
         """report to Station on completed/failed action."""

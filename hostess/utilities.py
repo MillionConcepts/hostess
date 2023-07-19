@@ -362,7 +362,10 @@ def get_module(module_name: str) -> ModuleType:
 
 
 def yprint(obj, indent=0, replace_null=True, maxlen=256):
-    text = yaml.dump(obj)
+    try:
+        text = yaml.dump(obj)
+    except TypeError:
+        text = f'***pretty-print failed*** {obj}'
     if replace_null is True:
         text = text.replace('null', 'None')
     return "\n".join(

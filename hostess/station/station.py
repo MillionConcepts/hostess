@@ -140,11 +140,12 @@ class Station(bases.Node):
         for note in notes:
             self.match_and_execute(note, "info")
 
+    def get_delegate(self, name: str):
+        return [n for n in self.delegates if n['name'] == name][0]
+
     def _handle_state(self, message: Message):
         try:
-            delegate = [
-                n for n in self.delegates if n['name'] == message.delegateid.name
-            ][0]
+            delegate = self.get_delegate(message.delegateid.name)
         # TODO: how do we handle mystery-appearing delegates with dupe names
         except IndexError:
             delegate = blank_delegateinfo()

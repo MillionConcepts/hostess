@@ -201,6 +201,7 @@ def completed_task_msg(actiondict: dict, steps=None) -> pro.TaskReport:
     if "steps" in actiondict.keys():
         raise NotImplementedError
     fields["result"] = pack_obj(actiondict.pop("result", None))
+    actiondict["exception"] = pack_obj(actiondict.get("exception"))
     fields["time"] = dict2msg(actiondict, pro.ActionTime)
     fields['id'] = actiondict['id']
     action = dict2msg(actiondict, pro.ActionReport)
