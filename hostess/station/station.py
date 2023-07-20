@@ -58,7 +58,7 @@ class Station(bases.Node):
         # TODO: share log id -- or another identifier, like init time --
         #   between station and delegate
         self.logid = f"{str(random.randint(0, 10000)).zfill(5)}"
-        self.logfile = Path(logdir, f"{host}_{port}_station_{self.logid}")
+        self.logfile = Path(logdir, f"{host}_{port}_station_{self.logid}.log")
         self.__is_process_owner = _is_process_owner
 
     def set_delegate_properties(self, delegate: str, **propvals):
@@ -348,7 +348,7 @@ class Station(bases.Node):
         for priority in priorities:
             try:
                 pos, msg = filtern(
-                    lambda pm: pm[1].type == 'configure', messages
+                    lambda pm: pm[1].type == priority, messages
                 )
                 break
             except StopIteration:

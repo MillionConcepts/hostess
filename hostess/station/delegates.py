@@ -342,34 +342,30 @@ class Delegate(bases.Node):
         or if we're shut down, just assume the Station is dead and leave.
         """
         response, was_locked, timeout_counter = None, self.locked, count()
-        waiting = False
+        self.locked = True
         while response in (None, "timeout", "connection refused"):
             # if we couldn't get to the Station, log that fact, wait, and
             # retry. lock self while this is happening to ensure we don't do
             # this in big pulses.
             if response in ("timeout", "connection refused"):
-                self.locked, waiting = True, True
                 if next(timeout_counter) % 10 == 0:
                     if self.state == "stopped":
                         self._log(
                             "no response from station, completing termination",
                             category='comms'
                         )
+                        self.locked = False
                         return 'timeout'
                     self._log(response, category="comms", direction="recv")
                 # TODO, maybe: this could be a separate attribute
                 time.sleep(self.update_interval)
             response, _ = stsend(self._insert_state(message), *self.station)
-        if waiting is True:
-            self._log(
-                "connection established", category="comms", direction="recv"
-            )
         if enum(message, "reason") not in ("heartbeat", "wilco"):
             self._log(message, category="comms", direction="sent")
         # if we locked ourselves due to bad responses, and we weren't already
         # locked for some reason -- like we often will have been if sending
         # a task report or something -- unlock ourselves.
-        if was_locked is True:
+        if was_locked is False:
             self.locked = False
         return response
 
