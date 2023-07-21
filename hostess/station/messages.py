@@ -292,11 +292,17 @@ class Mailbox:
     def _sizer(self):
         return accumulate(map(asizeof, reversed(self.messages)), add)
 
-    def prune(self, max_mb: float = 256):
-        for i, size in enumerate(self._sizer()):
-            if mb(size) > max_mb:
-                self.messages = self.messages[:i]
-                break
+    def prune(self, max_mb: float = 256, fallback_max_messages=1000):
+        # TODO: see if there's a better fallback -- asizeof has a weird
+        #  specific problem with certain classes, see
+        #  https://github.com/pympler/pympler/issues/146
+        try:
+            for i, size in enumerate(self._sizer()):
+                if mb(size) > max_mb:
+                    self.messages = self.messages[:i]
+                    break
+        except TypeError:
+            self.messages = self.messages[:fallback_max_messages]
 
     @staticmethod
     def maybe_construct_msg(thing: dict | Message):

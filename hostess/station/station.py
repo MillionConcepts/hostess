@@ -165,7 +165,6 @@ class Station(bases.Node):
         for name, state in message['state']['threads'].items():
             try:
                 instruction_id = int(name.replace("Instruction_", ""))
-                # print(self.tasks[instruction_id]['status'], state.lower())
                 if self.tasks[instruction_id]['status'] not in (
                     'success', 'failure', 'crash', 'timeout'
                 ):
@@ -355,6 +354,7 @@ class Station(bases.Node):
                 continue
         if msg is None:
             pos, msg = messages[0]
+        msg.sent = True
         return box, msg, pos
 
     def _update_task_record(self, msg):
@@ -373,10 +373,11 @@ class Station(bases.Node):
         server attribute (a talkie.TCPTalk object).
         """
         # TODO: lockout might be too strict
-        self.locked = True
+        msg, self.locked = None, True
         try:
             if comm["err"]:
                 # TODO: log this and send did-not-understand
+                self._log("failed to decode", type="comms", conn=_conn)
                 return make_comm(b""), "notified sender of error"
             incoming = comm["body"]
             try:

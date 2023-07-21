@@ -373,6 +373,8 @@ class Delegate(bases.Node):
         """interpret a response from the Station."""
         decoded = read_comm(response)
         if isinstance(decoded, dict):
+            if decoded.get('err') != "":
+                print(decoded['err'])
             decoded = decoded["body"]
         if isinstance(decoded, pro.Instruction):
             self.instruction_queue.append(decoded)

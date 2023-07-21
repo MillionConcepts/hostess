@@ -253,7 +253,7 @@ class TCPTalk:
             waiting, unwait = timeout_factory(timeout=self.timeout)
             stream, length = conn.recv(self.chunksize), None
             length = read_header(stream)['length']
-            while waiting() >= 0:  # syntactic handwaving.. breaks w/exception.
+            while waiting() >= 0:  # syntactic handwaving. breaks w/exception.
                 if (length is not None) and (len(stream) >= length):
                     break
                 data, status = self._tryread(conn)
@@ -303,11 +303,27 @@ class TCPTalk:
                 response, status = self.ackcheck(conn, data)
             if response is None:
                 return None, status, ""
-            conn.sendall(response)
+            waiting, unwait = timeout_factory(timeout=self.timeout)
+            while len(response) > 0:
+                try:
+                    # attempt to send chunk of designated size...
+                    payload = response[:self.chunksize]
+                    sent = conn.send(payload)
+                    unwait()
+                    # ...but only truncate by amount we successfullly sent
+                    response = response[sent:]
+                except OSError:
+                    waiting()
+                    time.sleep(self.delay)
+            time.sleep(0.1)
             return None, status, "ok"
         except (KeyError, ValueError) as kve:
-            # someone else got here first
-            return None, "ack attempt", f"{kve}"
+            if "is not registered" in str(kve):
+                # someone else got here firs
+                return None, "ack attempt", f"{kve}"
+            raise
+        except Exception as ex:
+            print(ex)
 
     def _trydecode(self, stream):
         """inner stream-decode handler function for `read`"""
@@ -364,26 +380,25 @@ def read_from_socket(headerread, sock, timeout):
     waiting, unwait = timeout_factory(timeout=timeout)
     data = sock.recv(16384)
     response, length = data, None
-    try:
-        if headerread is not None:
-            try:
-                length = headerread(response)['length']
-            except (IOError, KeyError):
-                pass
-        while True:
-            if (length is not None) and (len(response) >= length):
+    if headerread is not None:
+        try:
+            length = headerread(response)['length']
+        except (IOError, KeyError):
+            pass
+    while True:
+        if (length is not None) and (len(response) >= length):
+            break
+        data = sock.recv(16384)
+        if len(data) == 0:
+            if length is None:
                 break
-            data = sock.recv(16384)
-            if len(data) == 0:
-                if length is None:
-                    break
-                waiting()
-                time.sleep(0.01)
-                continue
+            waiting()
+            time.sleep(0.01)
+        else:
             response += data
             unwait()
-    finally:
-        sock.close()
+        continue
+    sock.close()
     return response
 
 
