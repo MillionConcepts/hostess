@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import atexit
 import json
 import random
 import sys
@@ -119,7 +118,9 @@ class Delegate(bases.Node):
         them to the Station, then remove them from the thread cache.
         """
         to_clean = []
-        for instruction_id, action in self.actions.items():
+        # this runs asynchronously so iterating over bare .items() is unstable
+        items = tuple(self.actions.items())
+        for instruction_id, action in items:
             # TODO: multistep "pipeline" case
             exception, running = self.check_on_action(instruction_id)
             if running is True:
