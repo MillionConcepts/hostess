@@ -126,9 +126,6 @@ class Station(bases.Node):
                 action.execute(self, obj)
             except NoMatchingDelegate:
                 self._log("no delegate for action", action=action)
-            except AllBusy:
-                # TODO: instruction-queuing behavior
-                pass
 
     def _handle_info(self, message: Message):
         """
@@ -382,8 +379,9 @@ class Station(bases.Node):
             incoming = comm["body"]
             try:
                 delegatename = incoming.delegateid.name
-            except (AttributeError, ValueError):
+            except (AttributeError, ValueError) as err:
                 # TODO: send not-enough-info message
+                self.log("name error", error=str(err), category="comms")
                 return make_comm(b""), "notified sender not enough info"
             # interpret the comm here in case we want to immediately send a
             # response based on its contents (e.g., in a gPhoton 2-like
@@ -409,9 +407,9 @@ class Station(bases.Node):
                 self._update_task_record(msg)
             self._record_message(box, msg, pos)
             return box[pos].comm, f"sent instruction {box[pos].id}"
-        # TODO: log and handle errors in some kind of graceful way
+        # TODO: handle errors in some kind of graceful way
         except Exception as ex:
-            raise ex
+            self._log(exc_report(ex, 0), category="comms")
         finally:
             self.locked = False
 

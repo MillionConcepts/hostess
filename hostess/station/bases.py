@@ -12,6 +12,7 @@ from abc import ABC
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from itertools import chain
+from random import shuffle
 from types import MappingProxyType as MPt
 from typing import Any, Callable, Mapping, Union, Optional
 
@@ -274,8 +275,9 @@ class DispatchActor(Actor, ABC):
         if len(targets) == 0:
             raise NoMatchingDelegate
         if len(not_busy) == 0:
-            raise AllBusy
-        return targets[0]['name']
+            shuffle(targets)
+            return targets[0]['name']
+        return not_busy[0]['name']
 
     target_name: Optional[str] = None
     target_actor: Optional[str] = None

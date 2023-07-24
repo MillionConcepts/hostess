@@ -117,7 +117,7 @@ class Delegate(bases.Node):
         instruction). if any have crashed or completed, log them and report
         them to the Station, then remove them from the thread cache.
         """
-        to_clean = []
+        acts_to_clean, threads_to_clean = [], []
         # this runs asynchronously so iterating over bare .items() is unstable
         items = tuple(self.actions.items())
         for instruction_id, action in items:
@@ -135,9 +135,13 @@ class Delegate(bases.Node):
             # TODO: error handling
             self._report_on_action(action)
             # TODO: if report was successful, record the response
-            to_clean.append(instruction_id)
-        for target in to_clean:
+            acts_to_clean.append(instruction_id)
+            threads_to_clean.append(f"Instruction_{instruction_id}")
+        for target in acts_to_clean:
             self.actions.pop(target)
+        for target in threads_to_clean:
+            self.threads.pop(target)
+
 
     def _send_info(self):
         """
@@ -148,11 +152,19 @@ class Delegate(bases.Node):
         mdict["reason"] = "info"
         message = Parse(json.dumps(mdict), pro.Update())
         # TODO: this might want to be more sophisticated
-        info = pro.Update(info=[pack_obj(e) for e in self.actionable_events])
-        message.MergeFrom(info)
+        # TODO: arbitrary max number
+        max_notes, info = 5, []
+        for i in range(len(self.actionable_events)):
+            info.append(self.actionable_events.pop())
+            if i == max_notes - 1:
+                break
+        message.MergeFrom(pro.Update(info=[pack_obj(i) for i in info]))
         response = self.talk_to_station(message)
-        if response not in ("err", "connection refused", "timeout"):
-            self.actionable_events[:] = []
+        # TODO: perhaps there's a better way to track this outboxing...
+        #  I'd rather not do it with a mailbox object, I want it to be
+        #  quicker/more ephemeral
+        if response in ("err", "connection refused", "timeout"):
+            self.actionable_events += info
 
     def _main_loop(self):
         while self.signals.get("main") is None:
@@ -166,9 +178,6 @@ class Delegate(bases.Node):
             # clean up and report on completed / crashed actions
             if not self.locked:
                 self._check_actions()
-            # clean up finished futures
-            if not self.locked:
-                self._clean_up_threads()
             # periodically check in with Station
             if self.update_timer() >= self.update_interval:
                 if ("check_in" not in self.threads) and (not self.locked):
