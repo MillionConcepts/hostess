@@ -150,8 +150,9 @@ class Delegate(bases.Node):
         # TODO: this might want to be more sophisticated
         info = pro.Update(info=[pack_obj(e) for e in self.actionable_events])
         message.MergeFrom(info)
-        self.talk_to_station(message)
-        self.actionable_events[:] = []
+        response = self.talk_to_station(message)
+        if response not in ("err", "connection refused", "timeout"):
+            self.actionable_events[:] = []
 
     def _main_loop(self):
         while self.signals.get("main") is None:
@@ -180,14 +181,6 @@ class Delegate(bases.Node):
                 self._handle_instruction(self.instruction_queue.pop())
                 self.locked = False
             time.sleep(self.poll)
-
-    def _clean_up_threads(self):
-        to_clean = []
-        for k, v in self.threads.items():
-            if not v.running():
-                to_clean.append(k)
-        for k in to_clean:
-            self.threads.pop(k)
 
     def _shutdown(self, exception: Optional[Exception] = None):
         """shut down the delegate"""
@@ -374,14 +367,21 @@ class Delegate(bases.Node):
         """interpret a response from the Station."""
         decoded = read_comm(response)
         if isinstance(decoded, dict):
+            if decoded['err']:
+                # TODO: log
+                return "err"
             decoded = decoded["body"]
         if isinstance(decoded, pro.Instruction):
             self.instruction_queue.append(decoded)
+            return "instruction"
 
     def talk_to_station(self, message):
         """send a Message to the Station and queue any returned Instruction."""
         response = self._trysend(message)
-        self._interpret_response(response)
+        # TODO: log
+        if response in ('timeout', 'connection refused'):
+            return response
+        return self._interpret_response(response)
 
     def _base_message(self):
         """
