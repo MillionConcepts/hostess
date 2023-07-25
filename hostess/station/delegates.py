@@ -6,6 +6,7 @@ import sys
 import time
 from itertools import count
 from pathlib import Path
+from pickle import PicklingError
 from types import ModuleType
 from typing import Union, Literal, Optional, Type, Any
 
@@ -108,7 +109,13 @@ class Delegate(bases.Node):
         except Exception as ex:
             # action crashed without setting its status as such
             self.actions[instruction_id]["status"] = "crash"
+            self.actions[instruction_id]['exception'] = ex
             return ex, False
+        # an action wrapped in @reported will catch exceptions and do this
+        # politely instead of crashing as above
+        if self.actions[instruction_id].get('exception') is not None:
+            self.actions[instruction_id]['status'] = 'crash'
+            return self.actions[instruction_id]['exception'], False
         return None, False
 
     def _check_actions(self):
@@ -127,16 +134,24 @@ class Delegate(bases.Node):
                 continue
             # TODO: accomplish this with a wrapper
             if exception is not None:
-                self._log(action | exc_report(exception, 0))
-                action['exception'] = exception
+                try:
+                    self._log(action | exc_report(exception, 0))
+                except Exception as ex:
+                    # TODO: not sure what is causing this sometimes
+                    self._log(
+                        action | exc_report(ex, 0),
+                        underlying_exception=exception,
+                        status="exc_report failure"
+                    )
             else:
                 self._log(action)
             # TODO: determine if we should reset update timer here
+            response = self._report_on_action(action)
             # TODO: error handling
-            self._report_on_action(action)
-            # TODO: if report was successful, record the response
-            acts_to_clean.append(instruction_id)
-            threads_to_clean.append(f"Instruction_{instruction_id}")
+            if response not in ("connection refused", "err", "timeout"):
+                # i.e., try again later
+                acts_to_clean.append(instruction_id)
+                threads_to_clean.append(f"Instruction_{instruction_id}")
         for target in acts_to_clean:
             self.actions.pop(target)
         for target in threads_to_clean:
@@ -203,21 +218,19 @@ class Delegate(bases.Node):
             self.signals[k] = 1
         # goodbye to all that
         self.instruction_queue, self.actors, self.sensors = [], {}, {}
-        if exception is not None:
-            try:
-                self.exc.submit(self._send_exit_report, exception)
-            except Exception as ex:
-                self._log("exit report failed", exception=ex)
-            self._log(
-                exc_report(exception, 0), status="crashed", category="exit"
-            )
-        else:
+        try:
             self.threads['exit_report'] = self.exc.submit(
-                self._send_exit_report
+                self._send_exit_report, exception
             )
+        except Exception as ex:
+            self._log("exit report failed", exception=ex)
+        self._log(
+            exc_report(exception, 0), status="crashed", category="exit"
+        )
         # wait to send exit report
-        while self.threads['exit_report'].running():
-            time.sleep(0.1)
+        if 'exit_report' in self.threads:
+            while self.threads['exit_report'].running():
+                time.sleep(0.1)
 
     def _send_exit_report(self, exception=None):
         """
@@ -229,9 +242,14 @@ class Delegate(bases.Node):
         mdict["state"]["status"] = self.state
         message = Parse(json.dumps(mdict), pro.Update())
         if exception is not None:
-            info = pro.Update(
-                info=[pack_obj(exc_report(exception, 0), "exception")]
-            )
+            try:
+                info = pro.Update(
+                    info=[pack_obj(exc_report(exception, 0), "exception")]
+                )
+            except Exception as ex:
+                info = pro.Update(
+                    info=[pack_obj(exc_report(ex, 0)), "exception"]
+                )
             message.MergeFrom(info)
         self.talk_to_station(message)
 
@@ -240,20 +258,23 @@ class Delegate(bases.Node):
         mdict = self._base_message()
         # TODO; multi-step case
         message = Parse(json.dumps(mdict), pro.Update())
-        report = completed_task_msg(action)
+        try:
+            report = completed_task_msg(action)
+        except PicklingError as pe:
+            # TODO: need better behavior for this and/or handling for
+            #  info as well
+            self._log("serialization failure", obj=action)
+            action['result'] = pack_obj(pe)
+            action['status'] = 'crashed'
+            report = completed_task_msg(action)
         message.MergeFrom(pro.Update(completed=report, reason="completion"))
-        self.talk_to_station(message)
+        return self.talk_to_station(message)
 
     def _check_in(self):
         """send check-in Update to the Station."""
         mdict = self._base_message()
         mdict["reason"] = "heartbeat"
-        # TODO: multi-step case
-        # action_reports = []
-        # for id_, action in self.actions.items():
-        #     action_reports.append(dict2msg(action, pro.ActionReport))
         message = Parse(json.dumps(mdict), pro.Update())
-        # message.MergeFrom(pro.Update(running=action_reports))
         self.talk_to_station(message)
         self.reset_update_timer()
 
@@ -357,14 +378,12 @@ class Delegate(bases.Node):
                             "no response from station, completing termination",
                             category='comms'
                         )
-                        self.locked = False
+                        self.locked = False  # TODO: sure about this?
                         return 'timeout'
                     self._log(response, category="comms", direction="recv")
                 # TODO, maybe: this could be a separate attribute
                 time.sleep(self.update_interval)
             response, _ = stsend(self._insert_state(message), *self.station)
-        if enum(message, "reason") not in ("heartbeat", "wilco"):
-            self._log(message, category="comms", direction="sent")
         # if we locked ourselves due to bad responses, and we weren't already
         # locked for some reason -- like we often will have been if sending
         # a task report or something -- unlock ourselves.
@@ -383,14 +402,21 @@ class Delegate(bases.Node):
         if isinstance(decoded, pro.Instruction):
             self.instruction_queue.append(decoded)
             return "instruction"
+        return "ok"
 
     def talk_to_station(self, message):
         """send a Message to the Station and queue any returned Instruction."""
         response = self._trysend(message)
         # TODO: log
         if response in ('timeout', 'connection refused'):
+            self._log(message, status=response, category="comms", direction="recv")
             return response
-        return self._interpret_response(response)
+        status = self._interpret_response(response)
+        if status == "err":
+            self._log(
+                message, status=status, category="comms", direction="recv"
+            )
+        return status
 
     def _base_message(self):
         """

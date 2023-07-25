@@ -16,12 +16,19 @@ from google.protobuf.message import Message
 import hostess.station.proto.station_pb2 as pro
 from hostess.caller import generic_python_endpoint
 from hostess.station import bases
-from hostess.station.bases import NoMatchingDelegate, AllBusy
-from hostess.station.messages import pack_obj, unpack_obj, make_instruction, \
-    update_instruction_timestamp, Mailbox, Msg, unpack_message
+from hostess.station.bases import NoMatchingDelegate
+from hostess.station.comm import make_comm
+from hostess.station.messages import (
+    pack_obj,
+    unpack_obj,
+    make_instruction,
+    update_instruction_timestamp,
+    Mailbox,
+    Msg,
+    unpack_message,
+)
 from hostess.station.proto_utils import enum
 from hostess.station.talkie import timeout_factory
-from hostess.station.comm import make_comm
 from hostess.subutils import RunCommand
 
 
@@ -40,7 +47,7 @@ class Station(bases.Node):
         max_inbox_mb: float = 250,
         logdir=Path(__file__).parent / ".nodelogs",
         _is_process_owner=False,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(
             host=host,
@@ -48,7 +55,7 @@ class Station(bases.Node):
             name=name,
             n_threads=n_threads,
             can_receive=True,
-            **kwargs
+            **kwargs,
         )
         self.max_inbox_mb = max_inbox_mb
         self.events, self.delegates, self.tasks = [], [], {}
@@ -69,7 +76,9 @@ class Station(bases.Node):
             pro.ConfigParam(paramtype="config_property", value=pack_obj(v, k))
             for k, v in propvals.items()
         ]
-        self.outboxes[delegate].append(make_instruction("configure", config=config))
+        self.outboxes[delegate].append(
+            make_instruction("configure", config=config)
+        )
 
     def queue_task(self, delegate: str, instruction: pro.Instruction):
         """
@@ -84,24 +93,28 @@ class Station(bases.Node):
         if not enum(instruction, "type") == "do":
             raise ValueError("task instructions must have type 'do'")
         self.tasks[instruction.id] = {
-            'init_time': instruction.time.ToDatetime(dt.timezone.utc),
-            'sent_time': None,
-            'ack_time': None,
-            'status': 'queued',
-            'delegate': delegate,
-            'name': instruction.action.name,
-            'action_id': instruction.action.id,
-            'description': instruction.action.description,
-         }
+            "init_time": instruction.time.ToDatetime(dt.timezone.utc),
+            "sent_time": None,
+            "ack_time": None,
+            "status": "queued",
+            "delegate": delegate,
+            "name": instruction.action.name,
+            "action_id": instruction.action.id,
+            "description": instruction.action.description,
+        }
         self.outboxes[delegate].append(instruction)
 
     def set_delegate_config(self, delegate: str, config: Mapping):
         config = pro.ConfigParam(
             paramtype="config_dict", value=pack_obj(config)
         )
-        self.outboxes[delegate].append(make_instruction("configure", config=config))
+        self.outboxes[delegate].append(
+            make_instruction("configure", config=config)
+        )
 
-    def shutdown_delegate(self, delegate: str, how: Literal['stop', 'kill'] = 'stop'):
+    def shutdown_delegate(
+        self, delegate: str, how: Literal["stop", "kill"] = "stop"
+    ):
         self.outboxes[delegate].append(make_instruction(how))
 
     # TODO, maybe: signatures on these match-and-execute things are getting
@@ -138,7 +151,7 @@ class Station(bases.Node):
             self.match_and_execute(note, "info")
 
     def get_delegate(self, name: str):
-        return [n for n in self.delegates if n['name'] == name][0]
+        return [n for n in self.delegates if n["name"] == name][0]
 
     def _handle_state(self, message: Message):
         try:
@@ -149,24 +162,27 @@ class Station(bases.Node):
             self.delegates.append(delegate)
         message = unpack_message(message)
         delegate |= {
-            'last_seen': dt.datetime.fromisoformat(message['time']),
-            'wait_time': 0,
-            'interface': message['state']['interface'],
-            'cdict': message['state']['cdict'],
-            'reported_status': message['state']['status'],
-            'pid': message['delegateid']['pid'],
-            'actors': message['state'].get('actors', []),
-            'sensors': message['state'].get('sensors', []),
-            'busy': message['state']['busy']
+            "last_seen": dt.datetime.fromisoformat(message["time"]),
+            "wait_time": 0,
+            "interface": message["state"]["interface"],
+            "cdict": message["state"]["cdict"],
+            "reported_status": message["state"]["status"],
+            "pid": message["delegateid"]["pid"],
+            "actors": message["state"].get("actors", []),
+            "sensors": message["state"].get("sensors", []),
+            "busy": message["state"]["busy"],
         }
-        for name, state in message['state']['threads'].items():
+        for name, state in message["state"]["threads"].items():
             try:
                 instruction_id = int(name.replace("Instruction_", ""))
-                if self.tasks[instruction_id]['status'] not in (
-                    'success', 'failure', 'crash', 'timeout'
+                if self.tasks[instruction_id]["status"] not in (
+                    "success",
+                    "failure",
+                    "crash",
+                    "timeout",
                 ):
                     # don't override formally reported status
-                    self.tasks[instruction_id]['status'] = state.lower()
+                    self.tasks[instruction_id]["status"] = state.lower()
             except (ValueError, KeyError):  # main thread, sensors, etc.
                 continue
 
@@ -181,11 +197,11 @@ class Station(bases.Node):
             return
         completed = unpack_message(message.completed)
         try:
-            task = self.tasks[completed['instruction_id']]
-            task['status'] = completed['action']['status']
-            task['start_time'] = completed['action']['time']['start']
-            task['end_time'] = completed['action']['time']['end']
-            task['duration'] = completed['action']['time']['duration']
+            task = self.tasks[completed["instruction_id"]]
+            task["status"] = completed["action"]["status"]
+            task["start_time"] = completed["action"]["time"]["start"]
+            task["end_time"] = completed["action"]["time"]["end"]
+            task["duration"] = completed["action"]["time"]["duration"]
         except KeyError:
             # TODO: an undesirable case, log
             pass
@@ -194,14 +210,14 @@ class Station(bases.Node):
 
     def _handle_wilco(self, message: pro.Update):
         # TODO: handle do not understand messages
-        if not enum(message, 'reason') in ('wilco', 'bad_request'):
+        if not enum(message, "reason") in ("wilco", "bad_request"):
             return
         # TODO: handle config acks
         if message.instruction_id not in self.tasks.keys():
             return
         task = self.tasks[message.instruction_id]
-        task['ack_time'] = message.time.ToDatetime(dt.timezone.utc)
-        task['status'] = enum(message, 'reason')
+        task["ack_time"] = message.time.ToDatetime(dt.timezone.utc)
+        task["status"] = enum(message, "reason")
         # TODO: behavior in response to bad_request notifications
 
     def _handle_incoming_message(self, message: pro.Update):
@@ -209,7 +225,7 @@ class Station(bases.Node):
         handle an incoming message. right now just wraps _handle_info() but
         will eventually also deal with delegate state tracking, logging, etc.
         """
-        for op in ('wilco', 'state', 'info', 'report'):
+        for op in ("wilco", "state", "info", "report"):
             try:
                 getattr(self, f"_handle_{op}")(message)
             except NotImplementedError:
@@ -227,14 +243,14 @@ class Station(bases.Node):
             self.outboxes[k] = Mailbox([])
         self.actors, self.sensors = {}, {}
         for delegate in self.delegates:
-            self.shutdown_delegate(delegate['name'], "stop")
+            self.shutdown_delegate(delegate["name"], "stop")
         waiting, unwait = timeout_factory(timeout=30)
         # make sure every delegate is shut down, timing out at 30s --
         # this will also ensure we get all exit reports from newly-shutdown
         # delegates
         self._check_delegates()
         while any(
-            n['inferred_status'] not in ('missing', 'shutdown', 'crashed')
+            n["inferred_status"] not in ("missing", "shutdown", "crashed")
             for n in self.delegates
         ):
             try:
@@ -248,8 +264,8 @@ class Station(bases.Node):
         still_running = None
         while still_running is not False:
             still_running = False
-            for n in filter(lambda x: 'obj' in x, self.delegates):
-                if any(map(lambda t: t.running(), n['obj'].threads.values())):
+            for n in filter(lambda x: "obj" in x, self.delegates):
+                if any(map(lambda t: t.running(), n["obj"].threads.values())):
                     still_running = True
             time.sleep(0.1)
             waiting()
@@ -291,20 +307,20 @@ class Station(bases.Node):
     def _check_delegates(self):
         now = dt.datetime.now(tz=dt.timezone.utc)
         for n in self.delegates:
-            if n['reported_status'] in ('shutdown', 'crashed'):
-                n['inferred_status'] = n['reported_status']
+            if n["reported_status"] in ("shutdown", "crashed"):
+                n["inferred_status"] = n["reported_status"]
                 continue
-            if n['reported_status'] == 'initializing':
-                n['wait_time'] = (now - n['init_time']).total_seconds()
+            if n["reported_status"] == "initializing":
+                n["wait_time"] = (now - n["init_time"]).total_seconds()
             else:
-                n['wait_time'] = (now - n['last_seen']).total_seconds()
+                n["wait_time"] = (now - n["last_seen"]).total_seconds()
             # adding 5 seconds here as grace for network lag spikes
-            if n['wait_time'] > 10 * n['update_interval'] + 5:
-                n['inferred_status'] = 'missing'
-            elif n['wait_time'] > 3 * n['update_interval']:
-                n['inferred_status'] = 'delayed'
+            if n["wait_time"] > 10 * n["update_interval"] + 5:
+                n["inferred_status"] = "missing"
+            elif n["wait_time"] > 3 * n["update_interval"]:
+                n["inferred_status"] = "delayed"
             else:
-                n['inferred_status'] = n['reported_status']
+                n["inferred_status"] = n["reported_status"]
             # TODO: trigger some behavior
 
     def _record_message(self, box, msg, pos):
@@ -340,12 +356,10 @@ class Station(bases.Node):
         # ensure that we send shudown Instructions before config instructions,
         # and config Instructions before do Instructions
         # (the do instructions might need correct config to work!)
-        priorities, pos, msg = ('kill', 'stop', 'configure'), None, None
+        priorities, pos, msg = ("kill", "stop", "configure"), None, None
         for priority in priorities:
             try:
-                pos, msg = filtern(
-                    lambda pm: pm[1].type == priority, messages
-                )
+                pos, msg = filtern(lambda pm: pm[1].type == priority, messages)
                 break
             except StopIteration:
                 continue
@@ -360,8 +374,8 @@ class Station(bases.Node):
         'do' instruction so that we know we sent it.
         """
         task_record = self.tasks[msg.id]
-        task_record['sent_time'] = dt.datetime.now(tz=dt.timezone.utc)
-        task_record['status'] = 'sent'
+        task_record["sent_time"] = dt.datetime.now(tz=dt.timezone.utc)
+        task_record["status"] = "sent"
 
     def _ackcheck(self, _conn: socket.socket, comm: dict):
         """
@@ -375,6 +389,7 @@ class Station(bases.Node):
             if comm["err"]:
                 # TODO: log this and send did-not-understand
                 self._log("failed to decode", type="comms", conn=_conn)
+                print('bad')
                 return make_comm(b""), "notified sender of error"
             incoming = comm["body"]
             try:
@@ -403,13 +418,14 @@ class Station(bases.Node):
             #  complicated, but has the downside that it will occur _before_
             #  we confirm receipt.
             # this type should have been validated earlier in queue_task
-            if msg['type'] == 'do':
+            if msg["type"] == "do":
                 self._update_task_record(msg)
             self._record_message(box, msg, pos)
             return box[pos].comm, f"sent instruction {box[pos].id}"
         # TODO: handle errors in some kind of graceful way
         except Exception as ex:
             self._log(exc_report(ex, 0), category="comms")
+            print('bad')
         finally:
             self.locked = False
 
@@ -420,12 +436,12 @@ class Station(bases.Node):
             "hostess.station.delegates",
             "launch_delegate",
             payload=kwargs,
-            argument_unpacking='**',
-            print_result=True
+            argument_unpacking="**",
+            print_result=True,
         )
-        if context == 'daemon':
+        if context == "daemon":
             output = RunCommand(endpoint, _disown=True)()
-        elif context == 'subprocess':
+        elif context == "subprocess":
             output = RunCommand(endpoint, _asynchronous=True)()
         else:
             raise ValueError(
@@ -440,8 +456,8 @@ class Station(bases.Node):
         elements=(),
         host="localhost",
         update_interval=0.1,
-        context='daemon',
-        **kwargs
+        context="daemon",
+        **kwargs,
     ):
         """
         launch a delegate, by default daemonized, and add it to the delegatelist.
@@ -451,25 +467,25 @@ class Station(bases.Node):
         if host != "localhost":
             raise NotImplementedError
         # TODO: some facility for relaunching
-        if any(n['name'] == name for n in self.delegates):
+        if any(n["name"] == name for n in self.delegates):
             raise ValueError("can't launch a delegate with a duplicate name")
         kwargs = {
-            'station_address': (self.host, self.port),
-            'name': name,
-            'elements': elements,
-            'update_interval': update_interval
+            "station_address": (self.host, self.port),
+            "name": name,
+            "elements": elements,
+            "update_interval": update_interval,
         } | kwargs
         delegateinfo = blank_delegateinfo() | {
-            'name': name,
-            'inferred_status': 'initializing',
-            'update_interval': update_interval
+            "name": name,
+            "inferred_status": "initializing",
+            "update_interval": update_interval,
         }
-        if context == 'local':
+        if context == "local":
             # mostly for debugging / dev purposes
             from hostess.station.delegates import launch_delegate
 
             output = launch_delegate(is_local=True, **kwargs)
-            delegateinfo['obj'] = output
+            delegateinfo["obj"] = output
         else:
             output = self._launch_delegate_in_subprocess(context, kwargs)
         self.delegates.append(delegateinfo)
@@ -478,11 +494,11 @@ class Station(bases.Node):
 
 def blank_delegateinfo():
     return {
-        'last_seen': None,
-        'reported_status': 'initializing',
-        'init_time': dt.datetime.now(dt.timezone.utc),
-        'wait_time': 0,
-        'running': [],
-        'interface': {},
-        'actors': [],
+        "last_seen": None,
+        "reported_status": "initializing",
+        "init_time": dt.datetime.now(dt.timezone.utc),
+        "wait_time": 0,
+        "running": [],
+        "interface": {},
+        "actors": [],
     }
