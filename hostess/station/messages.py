@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from functools import cached_property, cache
 from itertools import accumulate
 import json
@@ -18,18 +19,21 @@ from dustgoggles.func import gmap
 from dustgoggles.structures import dig_for_values
 from google.protobuf.message import Message
 from google.protobuf.internal.well_known_types import Duration, Timestamp
-from google.protobuf.pyext._message import ScalarMapContainer, \
-    RepeatedCompositeContainer, RepeatedScalarContainer
+from google.protobuf.pyext._message import (
+    ScalarMapContainer,
+    RepeatedCompositeContainer,
+    RepeatedScalarContainer,
+)
 from more_itertools import split_when, all_equal
 import numpy as np
 from pympler.asizeof import asizeof
 
 from hostess.station.proto import station_pb2 as pro
 from hostess.station.proto_utils import (
-    dict2msg,
     enum,
     make_timestamp,
     proto_formatdict,
+    make_duration,
 )
 from hostess.station.comm import make_comm
 from hostess.utilities import mb, yprint
@@ -107,6 +111,8 @@ def pack_obj(obj: Any, name: str = "") -> pro.PythonObject:
     default function for serializing an in-memory object as a pro.PythonObject
     Message.
     """
+    if isinstance(obj, pro.PythonObject):
+        return obj
     if isinstance(obj, (str, bytes, int, float)):
         scanf, chartype = obj2scanf(obj)
         if isinstance(obj, str):
@@ -200,10 +206,9 @@ def completed_task_msg(actiondict: dict, steps=None) -> pro.TaskReport:
     fields = {}
     if "steps" in actiondict.keys():
         raise NotImplementedError
-    fields["result"] = pack_obj(actiondict.pop("result", None))
-    actiondict["exception"] = pack_obj(actiondict.get("exception"))
+    fields["result"] = pack_obj(actiondict.get('result'))
     fields["time"] = dict2msg(actiondict, pro.ActionTime)
-    fields['id'] = actiondict['id']
+    fields["id"] = actiondict["id"]
     action = dict2msg(actiondict, pro.ActionReport)
     action.MergeFrom(pro.ActionReport(**fields))
     return pro.TaskReport(
@@ -283,6 +288,7 @@ class Msg:
 
 class Mailbox:
     """manager class for lists of messages"""
+
     # TODO: improve efficiency with caching or something
 
     def __init__(self, messages: MutableSequence[Msg] | None = None):
@@ -373,11 +379,12 @@ def unpack_message(msg: Message | RepeatedCompositeContainer):
         elif v == "ENUM":
             formatted[k] = enum(msg, k)
         elif isinstance(element, pro.PythonObject):
-            if element.name == '':
+            if element.name == "":
                 formatted[k] = unpack_obj(element)
             else:
                 formatted[k] = {
-                    'value': unpack_obj(element), 'name': element.name
+                    "value": unpack_obj(element),
+                    "name": element.name,
                 }
         # they look like lists, but they're not!
         elif "__len__" in dir(element) and (len(element) == 0):
@@ -400,8 +407,7 @@ def unpack_message(msg: Message | RepeatedCompositeContainer):
 
 def _print_update(unpacked, maxlen=256):
     topline = (
-        f"{unpacked['nodeid']['name']} - "
-        f"PID {unpacked['nodeid']['pid']}"
+        f"{unpacked['nodeid']['name']} - " f"PID {unpacked['nodeid']['pid']}"
     )
     if (iid := unpacked.get("instruction_id")) not in (None, 0):
         topline += f" - iid {iid}"
@@ -414,9 +420,7 @@ def _print_update(unpacked, maxlen=256):
 
 
 def _print_state(unpacked, maxlen=256):
-    topline = (
-        f"status {unpacked['status']}"
-    )
+    topline = f"status {unpacked['status']}"
     lines = [topline]
     for key in ("config", "threads"):
         if key in unpacked.keys():
@@ -430,10 +434,44 @@ def format_message(unpacked, maxlen=256):
     default string formatter for unpacked message.
     TODO: more sophisticated behavior.
     """
-    if 'nodeid' in unpacked.keys():
+    if "nodeid" in unpacked.keys():
         lines = _print_update(unpacked, maxlen)
-    elif 'loc' in unpacked.keys():
+    elif "loc" in unpacked.keys():
         lines = _print_state(unpacked, maxlen)
     else:
         raise NotImplementedError
     return "\n".join(lines)
+
+
+def dict2msg(
+    mapping,
+    proto_class,
+    mtypes=(dict, MPt),
+    proto_module=pro,
+    pack_objects=True,
+) -> Message:
+    """
+    construct a protobuf from a dict, filtering any keys that are not fields
+    of `proto_class` and recursively diving into nested dicts.
+    """
+    fdict, fields = proto_formatdict(proto_class), {}
+    for k, v in mapping.items():
+        if k not in fdict.keys():
+            continue
+        if isinstance(v, mtypes):
+            fields[k] = dict2msg(v, getattr(proto_module, k))
+        elif isinstance(v, dt.datetime):
+            fields[k] = make_timestamp(v)
+        elif isinstance(v, dt.timedelta):
+            fields[k] = make_duration(v)
+        # special behavior for PythonObject
+        elif (
+            isinstance(fdict[k], dict)
+            and fdict[k].get("value") == "BYTES"
+            and not isinstance(v, bytes)
+            and pack_objects is True
+        ):
+            fields[k] = pack_obj(v)
+        else:
+            fields[k] = v
+    return proto_class(**fields)

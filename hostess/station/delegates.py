@@ -258,15 +258,7 @@ class Delegate(bases.Node):
         mdict = self._base_message()
         # TODO; multi-step case
         message = Parse(json.dumps(mdict), pro.Update())
-        try:
-            report = completed_task_msg(action)
-        except PicklingError as pe:
-            # TODO: need better behavior for this and/or handling for
-            #  info as well
-            self._log("serialization failure", obj=action)
-            action['result'] = pack_obj(pe)
-            action['status'] = 'crashed'
-            report = completed_task_msg(action)
+        report = completed_task_msg(action)
         message.MergeFrom(pro.Update(completed=report, reason="completion"))
         return self.talk_to_station(message)
 
