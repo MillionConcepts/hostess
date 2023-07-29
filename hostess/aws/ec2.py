@@ -526,7 +526,7 @@ class Cluster:
         options = {} if options is None else options
         if template is None:
             using_scratch_template = True
-            template = create_launch_template(**options)["Template"][
+            template = create_launch_template(**options)[
                 "LaunchTemplateName"
             ]
         else:
@@ -549,7 +549,11 @@ class Cluster:
             Type="instant",
         )
         if using_scratch_template is True:
-            client.delete_launch_template("LaunchTemplateName")
+            client.delete_launch_template(LaunchTemplateName=template)
+        if fleet.get('Errors') is not None:
+            raise ValueError(
+                f"Client returned launch error:\n\n{fleet['Errors'][0]}"
+            )
 
         def instance_hook():
             return instances_from_ids(
