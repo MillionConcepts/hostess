@@ -550,7 +550,7 @@ class Cluster:
         )
         if using_scratch_template is True:
             client.delete_launch_template(LaunchTemplateName=template)
-        if fleet.get('Errors') is not None:
+        if len(fleet.get('Errors', [])) > 0:
             raise ValueError(
                 f"Client returned launch error:\n\n{fleet['Errors'][0]}"
             )
