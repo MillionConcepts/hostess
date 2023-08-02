@@ -113,7 +113,7 @@ def watch_dir(
         return contents, []
     current = list(map(str, path.iterdir()))
     if contents is None:
-        return current, current
+        return current, []
     return current, list(set(current).difference(contents))
 
 
