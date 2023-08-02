@@ -12,14 +12,13 @@ setup(
         "boto3",
         "cytoolz",
         "dustgoggles",
-        "fire",
-        "flask",
+        "invoke",
+        "fabric",
         "more-itertools",
         "pandas",
         "pympler",
         "python-magic",
         "requests",
         "rich",
-        "sh>=2.0.0"
     ]
 )
