@@ -11,6 +11,7 @@ setup(
     install_requires=[
         "boto3",
         "cytoolz",
+        "dill"
         "dustgoggles",
         "invoke",
         "fabric",
