@@ -13,7 +13,7 @@ HOSTESS_ACK = b"\06hostess"
 HOSTESS_EOM = b"\03hostess"
 HOSTESS_SOH = b"\01hostess"
 CODE_TO_MTYPE = MPt(
-    {0: "none", 1: "Update", 2: "Instruction"}
+    {0: "none", 1: "Update", 2: "Instruction", 3: "PythonObject"}
 )
 MTYPE_TO_CODE = MPt({v: k for k, v in CODE_TO_MTYPE.items()})
 HEADER_STRUCT = struct.Struct("<8sBL")

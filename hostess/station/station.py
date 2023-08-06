@@ -6,11 +6,13 @@ import socket
 import sys
 import time
 from collections import defaultdict
+from copy import deepcopy
 from pathlib import Path
 from typing import Literal, Mapping, Optional, Any
 
 from dustgoggles.dynamic import exc_report
 from dustgoggles.func import gmap, filtern
+from dustgoggles.structures import dig_and_edit, valonly
 from google.protobuf.message import Message
 
 import hostess.station.proto.station_pb2 as pro
@@ -29,6 +31,7 @@ from hostess.station.messages import (
 )
 from hostess.station.proto_utils import enum
 from hostess.station.talkie import timeout_factory
+from hostess.station.viewing import has_callables, callables_to_source
 from hostess.subutils import RunCommand
 
 
@@ -377,6 +380,33 @@ class Station(bases.Node):
         task_record["sent_time"] = dt.datetime.now(tz=dt.timezone.utc)
         task_record["status"] = "sent"
 
+    def viewprops(self) -> dict:
+        props = {
+            "name": self.name,
+            "host": self.host,
+            "port": self.port,
+            "actors": {
+                k: {
+                    "class": v.__class__.__name__,
+                    "module": v.__class__.__module__,
+                }
+                for k, v in self.actors.items()
+            },
+            "delegates": [],
+            "threads": {k: v._state for k, v in self.threads.items()},
+            "config": deepcopy(self.config),
+            "tasks": deepcopy(self.tasks),
+        }
+        for d in self.delegates:
+            rec = {
+                k: v for k, v in d.items() if k != "obj"
+            }
+            props['delegates'].append(rec)
+        # noinspection PyTypeChecker
+        return dig_and_edit(
+            props, valonly(has_callables), valonly(callables_to_source)
+        )
+
     def _ackcheck(self, _conn: socket.socket, comm: dict):
         """
         callback for interpreting comms and responding as appropriate.
@@ -386,10 +416,11 @@ class Station(bases.Node):
         # TODO: lockout might be too strict
         msg, self.locked = None, True
         try:
+            if comm["body"] == b"view":
+                return make_comm(pack_obj(self.viewprops())), "sent view"
             if comm["err"]:
                 # TODO: log this and send did-not-understand
                 self._log("failed to decode", type="comms", conn=_conn)
-                print('bad')
                 return make_comm(b""), "notified sender of error"
             incoming = comm["body"]
             try:
@@ -406,8 +437,8 @@ class Station(bases.Node):
             self._handle_incoming_message(comm["body"])
             if enum(incoming.state, "status") in ("shutdown", "crashed"):
                 return make_comm(b""), "send ack to terminating delegate"
-            # if we have any Instructions for the Delegate -- including ones that
-            # might have been added to the outbox in the
+            # if we have any Instructions for the Delegate -- including ones
+            # that might have been added to the outbox in the
             # _handle_incoming_message() workflow -- pick one to send
             box, msg, pos = self._select_outgoing_message(delegatename)
             # ...and if we don't have any, send empty ack comm
@@ -425,7 +456,6 @@ class Station(bases.Node):
         # TODO: handle errors in some kind of graceful way
         except Exception as ex:
             self._log(exc_report(ex, 0), category="comms")
-            print('bad')
         finally:
             self.locked = False
 
