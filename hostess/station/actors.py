@@ -306,8 +306,7 @@ class InstructionFromInfo(DispatchActor):
     from that info based on an instruction-making function.
     """
 
-    # note: fields doesn't do anything atm
-    def match(self, note, *, fields=None, **_) -> bool:
+    def match(self, note, **_) -> bool:
         if self.criteria is None:
             raise NoMatch("no criteria to match against")
         for criterion in self.criteria:

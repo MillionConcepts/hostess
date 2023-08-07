@@ -103,7 +103,7 @@ class Station(bases.Node):
             "delegate": delegate,
             "name": instruction.action.name,
             "action_id": instruction.action.id,
-            "description": instruction.action.description,
+            "description": dict(instruction.action.description)
         }
         self.outboxes[delegate].append(instruction)
 
