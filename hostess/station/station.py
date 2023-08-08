@@ -304,10 +304,9 @@ class Station(bases.Node):
             self._check_delegates()
             if self.tendtime() > self.poll * 8:
                 crashed_threads = self.server.tend()
-                with DEFAULT_PROFILER.context('prune_mailbox'):
-                    self.inbox.prune(self.max_inbox_mb)
                 if len(crashed_threads) > 0:
                     self._log(crashed_threads, category="server_errors")
+                self.inbox.prune(self.max_inbox_mb)
                 self.reset_tend()
             time.sleep(self.poll)
 

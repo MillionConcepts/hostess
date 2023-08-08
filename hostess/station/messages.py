@@ -287,6 +287,8 @@ class Msg:
     def __repr__(self):
         return self.__str__()
 
+    sent = False
+
 
 class Mailbox:
     """manager class for lists of messages"""
@@ -341,7 +343,7 @@ class Mailbox:
     def sort(self) -> dict:
         try:
             # noinspection PyTypeChecker
-            return groupby(lambda m: m.reason, self.messages.values())
+            return groupby(lambda m: m.reason, tuple(self.messages.values()))
         except AttributeError:
             raise TypeError("This method is only used for Station inboxes.")
 

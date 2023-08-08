@@ -1,4 +1,5 @@
 """profiling and introspection utilities"""
+from __future__ import annotations
 
 import _ctypes
 import gc
@@ -9,7 +10,7 @@ from typing import Mapping, Union
 from dustgoggles.func import zero
 from pympler.asizeof import asizeof
 
-from hostess.monitors import make_stat_records, make_stat_printer
+from hostess.monitors import make_stat_records, make_stat_printer, Stopwatch
 from hostess.utilities import mb
 
 
@@ -184,3 +185,6 @@ def describe_frame_contents(frame):
 def describe_stack_contents():
     """describe the contents of the stack"""
     return tuple(map(describe_frame_contents, [s[0] for s in inspect.stack()]))
+
+
+DEFAULT_PROFILER = Profiler({'time': Stopwatch()})

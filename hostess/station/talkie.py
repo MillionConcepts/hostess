@@ -105,12 +105,18 @@ class TCPTalk:
         threads = tuple(self.threads.items())
         crashed_threads = []
         for k, v in threads:
-            if v._state == "RUNNING":
+            # will be dict if it is a crashed thread running in trywrap
+            if not isinstance(v, dict) and (v._state == 'RUNNING'):
                 continue
             self.sig(k, 0)
             time.sleep(self.poll * 2)
             self.sig(k, None)
-            crashed_threads.append(self.threads.pop(k).exception())
+            thread = self.threads.pop(k)
+            if isinstance(thread, dict):
+                exception = thread['exception']
+            else:
+                exception = thread.exception()
+            crashed_threads.append(exception)
             if k == "select":
                 self.threads["select"] = trywrap(
                     self.launch_selector, "select"
@@ -224,7 +230,8 @@ class TCPTalk:
             self.events.append(event)
             if (stream is None) or (len(stream) == 0):
                 continue
-            self.data.append(event | {"content": stream})
+            if not isinstance(stream, bytes):  # control codes, etc.
+                self.data.append(event | {"content": stream})
 
     def _accept(
         self, sock: socket.socket
