@@ -230,7 +230,7 @@ class TCPTalk:
             self.events.append(event)
             if (stream is None) or (len(stream) == 0):
                 continue
-            if not isinstance(stream, bytes):  # control codes, etc.
+            if not isinstance(stream['body'], bytes):  # control codes, etc.
                 self.data.append(event | {"content": stream})
 
     def _accept(

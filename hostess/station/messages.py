@@ -230,7 +230,10 @@ class Msg:
 
     def __init__(self, message):
         self.message, self.sent = message, False
-        self.size = self.message.ByteSize()
+        try:
+            self.size = self.message.ByteSize()
+        except Exception as ex:
+            a = 1
 
     @cached_property
     def comm(self):

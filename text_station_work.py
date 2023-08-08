@@ -2,6 +2,7 @@ import os
 import random
 import time
 
+from hostess.profilers import DEFAULT_PROFILER
 from hostess.station.actors import InstructionFromInfo
 from hostess.station.messages import make_action, make_instruction
 from hostess.station.station import Station
@@ -24,7 +25,7 @@ watch = station.launch_delegate(
         ("hostess.station.actors", "FileSystemWatch"),
         ("logscratch", "Sleepy"),
     ],
-    update_interval=0.5,
+    update_interval=3,
     poll=0.5,
     context="local",
 )
@@ -42,11 +43,15 @@ station.set_delegate_properties(
 station.start()
 
 os.unlink('dump.txt')
+exception = None
 try:
     for i in range(1000):
         with open('dump.txt', 'a') as f:
             f.write('hi')
-        time.sleep(3)
-        print(i)
+        time.sleep(1)
+        print(len(station.inbox.completed))
+        # print(DEFAULT_PROFILER)
+except Exception as ex:
+    exception = ex
 finally:
-    station.shutdown()
+    station.shutdown(exception)

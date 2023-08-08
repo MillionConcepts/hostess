@@ -176,7 +176,8 @@ class Station(bases.Node):
             "actors": message["state"].get("actors", []),
             "sensors": message["state"].get("sensors", []),
             "busy": message["state"]["busy"],
-            "host": message['delegateid']['host']
+            "host": message['delegateid']['host'],
+            "running": message.get('running', [])
         }
         for name, state in message["state"]["threads"].items():
             try:
@@ -238,7 +239,7 @@ class Station(bases.Node):
                 # TODO: plausibly some logging
                 pass
             except Exception as ex:
-                print(op, ex)
+                print('bad handling', op, ex)
 
     def _shutdown(self, exception: Optional[Exception] = None):
         """shut down the Station."""
@@ -384,7 +385,7 @@ class Station(bases.Node):
         task_record["sent_time"] = dt.datetime.now(tz=dt.timezone.utc)
         task_record["status"] = "sent"
 
-    def viewprops(self) -> dict:
+    def _viewprops(self) -> dict:
         props = {
             "name": self.name,
             "host": self.host,
@@ -397,9 +398,10 @@ class Station(bases.Node):
                 for k, v in self.actors.items()
             },
             "delegates": [],
+            # weird dict constructions for protection against mutation
             "threads": {k: v._state for k, v in self.threads.items()},
             "config": deepcopy(self.config),
-            "tasks": deepcopy(self.tasks),
+            "tasks": {k: deepcopy(v) for k, v in tuple(self.tasks.items())},
         }
         for d in self.delegates:
             rec = {
@@ -421,7 +423,7 @@ class Station(bases.Node):
         msg, self.locked = None, True
         try:
             if comm["body"] == b"view":
-                return make_comm(pack_obj(self.viewprops())), "sent view"
+                return make_comm(pack_obj(self._viewprops())), "sent view"
             if comm["err"]:
                 # TODO: log this and send did-not-understand
                 self._log("failed to decode", type="comms", conn=_conn)
