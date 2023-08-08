@@ -75,6 +75,7 @@ def actiondict(action: Message) -> dict:
     return {
         "name": action.name,
         "id": action.id,
+        "description": action.description,
         "start": dt.datetime.utcnow(),
         "stop": None,
         "status": "running",

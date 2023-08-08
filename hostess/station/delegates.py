@@ -438,8 +438,8 @@ class Delegate(bases.Node):
         state = pro.DelegateState(
             interface=pack_obj(self.config['interface']),
             cdict=pack_obj(self.config['cdict']),
-            actors=list(self.actors.keys()),
-            sensors=list(self.sensors.keys())
+            actors=self.identify_elements("actors"),
+            sensors=self.identify_elements("sensors")
         )
         message.state.MergeFrom(state)
         return message

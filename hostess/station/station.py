@@ -390,13 +390,7 @@ class Station(bases.Node):
             "name": self.name,
             "host": self.host,
             "port": self.port,
-            "actors": {
-                k: {
-                    "class": v.__class__.__name__,
-                    "module": v.__class__.__module__,
-                }
-                for k, v in self.actors.items()
-            },
+            "actors": [],
             "delegates": [],
             # weird dict constructions for protection against mutation
             "threads": {k: v._state for k, v in self.threads.items()},

@@ -66,6 +66,9 @@ message ActionReport {
   /* intended specifically for system process exit codes */
   uint32 exit_code = 8;
   uint32 id = 9;
+  /* for round-trip description tracking */
+  map <string, string> description = 10;
+
 
 }
 
@@ -98,8 +101,9 @@ message DelegateState {
   map<string, string> threads = 5;
   PythonObject interface = 6;
   PythonObject cdict = 7;
-  repeated string actors = 8;
-  repeated string sensors = 9;
+  /* actor and sensor have names as keys and class names/modules as values */
+  map<string, string> actors = 8;
+  map<string, string> sensors = 9;
   map<string, MessageCount> messagecount = 10;
 }
 message NodeId {

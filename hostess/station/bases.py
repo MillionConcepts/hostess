@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from itertools import chain
 from random import shuffle
 from types import MappingProxyType as MPt
-from typing import Any, Callable, Mapping, Union, Optional
+from typing import Any, Callable, Mapping, Union, Optional, Literal
 
 import yaml
 from cytoolz import valmap
@@ -468,12 +468,26 @@ class Node(Matcher, ABC):
         else:
             raise TypeError
 
+    def identify_elements(
+        self,
+        element_type: Optional[Literal["actors", "sensors"]] = None
+    ) -> dict[str, str]:
+        """return a dict containing names and classes of actors"""
+        if element_type is None:
+            elements = chain(self.actors.items(), self.sensors.items())
+        else:
+            elements = getattr(self, element_type).items()
+        return {
+            k: f"{v.__class__.__module__}.{v.__class__.__name__}"
+            for k, v in elements
+        }
+
     def __str__(self):
         pstring = f"{type(self).__name__} ({self.name})"
         pstring += f"\nthreads:\n"
         pstring += yprint({k: str(t) for k, t in self.threads.items()}, 2)
-        pstring += f"\nactors: {[a for a in self.actors]}"
-        pstring += f"\nsensors: {[s for s in self.sensors]}"
+        pstring += f"\nactors: {list(self.actors)}"
+        pstring += f"\nsensors: {list(self.sensors)}"
         pstring += f"\nconfig:\n{yprint(self.config, 2)}"
         return pstring
 
