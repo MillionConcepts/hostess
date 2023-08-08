@@ -197,7 +197,7 @@ def unpack_obj(obj: pro.PythonObject) -> Any:
     return value
 
 
-def completed_task_msg(actiondict: dict, steps=None) -> pro.TaskReport:
+def task_msg(actiondict: dict, steps=None) -> pro.TaskReport:
     """
     construct a TaskReport from an action dict (like the ones produced by
     watched_process and derivatives) to add to an Update.
@@ -207,7 +207,8 @@ def completed_task_msg(actiondict: dict, steps=None) -> pro.TaskReport:
     fields = {}
     if "steps" in actiondict.keys():
         raise NotImplementedError
-    fields["result"] = pack_obj(actiondict.get('result'))
+    if actiondict['status'] != 'running':
+        fields["result"] = pack_obj(actiondict.get('result'))
     fields["time"] = dict2msg(actiondict, pro.ActionTime)
     fields["id"] = actiondict["id"]
     action = dict2msg(actiondict, pro.ActionReport)

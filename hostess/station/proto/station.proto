@@ -133,7 +133,7 @@ message Update {
   DelegateState state = 2;
   google.protobuf.Timestamp time = 3;
   UpdateReason reason = 4;
-  repeated ActionReport running = 5;
+  repeated TaskReport running = 5;
   TaskReport completed = 6;
   /* structured / serialized data the delegate believes the Station needs */
   repeated PythonObject info = 7;

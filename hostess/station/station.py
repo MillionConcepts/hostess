@@ -176,6 +176,7 @@ class Station(bases.Node):
             "actors": message["state"].get("actors", []),
             "sensors": message["state"].get("sensors", []),
             "busy": message["state"]["busy"],
+            "host": message['delegateid']['host']
         }
         for name, state in message["state"]["threads"].items():
             try:

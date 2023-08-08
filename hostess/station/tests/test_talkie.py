@@ -9,7 +9,7 @@ import hostess.station.comm
 import hostess.station.proto.station_pb2 as pro
 import hostess.station.talkie as tk
 from hostess.monitors import Stopwatch
-from hostess.station.messages import completed_task_msg
+from hostess.station.messages import task_msg
 
 
 def send_randbytes(
@@ -90,7 +90,7 @@ def test_protobuf():
         'instruction_id': 3,
         'id': 2
     }
-    report = completed_task_msg(actiondict)
+    report = task_msg(actiondict)
     message = pro.Update(completed=report, instruction_id=3)
     assert dill.loads(message.completed.action.result.value) == [0]
     return message

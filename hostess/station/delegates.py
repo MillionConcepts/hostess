@@ -18,7 +18,7 @@ from google.protobuf.message import Message
 import hostess.station.proto.station_pb2 as pro
 from hostess.station import bases
 from hostess.station.bases import Sensor, Actor
-from hostess.station.messages import pack_obj, completed_task_msg, unpack_obj
+from hostess.station.messages import pack_obj, task_msg, unpack_obj
 from hostess.station.proto_utils import make_timestamp, enum
 from hostess.station.talkie import stsend, timeout_factory
 from hostess.station.comm import read_comm
@@ -157,15 +157,12 @@ class Delegate(bases.Node):
         for target in threads_to_clean:
             self.threads.pop(target)
 
-
     def _send_info(self):
         """
         construct an Update based on everything in the actionable_events
         cache and send it to the Station, then clear actionable_events.
         """
-        mdict = self._base_message()
-        mdict["reason"] = "info"
-        message = Parse(json.dumps(mdict), pro.Update())
+        message = self._base_message(reason="info")
         # TODO: this might want to be more sophisticated
         # TODO: arbitrary max number
         max_notes, info = 5, []
@@ -255,19 +252,15 @@ class Delegate(bases.Node):
 
     def _report_on_action(self, action: dict):
         """report to Station on completed/failed action."""
-        mdict = self._base_message()
-        # TODO; multi-step case
-        message = Parse(json.dumps(mdict), pro.Update())
-        report = completed_task_msg(action)
-        message.MergeFrom(pro.Update(completed=report, reason="completion"))
-        return self.talk_to_station(message)
+        msg = self._base_message(
+            completed=task_msg(action), reason="completion"
+        )
+        # TODO: multi-step case
+        return self.talk_to_station(msg)
 
     def _check_in(self):
         """send check-in Update to the Station."""
-        mdict = self._base_message()
-        mdict["reason"] = "heartbeat"
-        message = Parse(json.dumps(mdict), pro.Update())
-        self.talk_to_station(message)
+        self.talk_to_station(self._base_message(reason="heartbeat"))
         self.reset_update_timer()
 
     def _match_task_instruction(self, event) -> list[bases.Actor]:
@@ -410,25 +403,34 @@ class Delegate(bases.Node):
             )
         return status
 
-    def _base_message(self):
+    def _running_actions_message(self):
+        running = filter(
+            lambda a: a.get('status') == 'running', self.actions.values()
+        )
+        return list(map(task_msg, running))
+
+    def _base_message(self, **fields):
         """
         construct a dict with the basic components of an Update message --
         time, the delegate's ID, etc.
         """
         # noinspection PyProtectedMember
-        return {
-            "delegateid": self.nodeid(),
-            "time": MessageToDict(make_timestamp()),
-            "state": {
-                "status": self.state,
+        return pro.Update(
+            delegateid=self.nodeid(),
+            time=make_timestamp(),
+            state=pro.DelegateState(
+                status=self.state,
                 # TODO: loc assignment
-                "loc": "primary",
-                "can_receive": False,
-                "busy": self.busy(),
-                "threads": {k: v._state for k, v in self.threads.items()},
-            },
-        }
+                loc="primary",
+                can_receive=False,
+                busy=self.busy(),
+                threads={k: v._state for k, v in self.threads.items()}
+            ),
+            running=self._running_actions_message(),
+            **fields
+        )
 
+    # TODO: why are we doing part of this here and part in _base_message?
     def _insert_state(self, message: Message):
         """insert the Delegate's current state information into a Message."""
         if not message.HasField("state"):
@@ -449,11 +451,9 @@ class Delegate(bases.Node):
         send a reply Update to an Instruction informing the Station that we
         will or won't do the thing.
         """
-        mdict = self._base_message() | {
-            "reason": status,
-            "instruction_id": instruction.id,
-        }
-        msg = Parse(json.dumps(mdict), pro.Update())
+        msg = self._base_message()
+        msg.MergeFrom(pro.Update(reason=status, instruction_id=instruction.id))
+        # TODO, maybe: kinda messy?
         if err is not None:
             msg.MergeFrom(pro.Update(info=[pack_obj(err)]))
         self.talk_to_station(msg)
