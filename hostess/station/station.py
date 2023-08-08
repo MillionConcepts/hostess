@@ -34,6 +34,8 @@ from hostess.station.talkie import timeout_factory
 from hostess.station.viewing import has_callables, callables_to_source
 from hostess.subutils import RunCommand
 
+from hostess.profilers import DEFAULT_PROFILER
+
 
 class Station(bases.Node):
     """
@@ -240,10 +242,11 @@ class Station(bases.Node):
     def _shutdown(self, exception: Optional[Exception] = None):
         """shut down the Station."""
         self.state = "shutdown" if exception is None else "crashed"
+        self.exception = exception
         self._log("beginning shutdown", category="exit")
         # clear outbox etc.
         for k in self.outboxes.keys():
-            self.outboxes[k] = Mailbox([])
+            self.outboxes[k] = Mailbox()
         self.actors, self.sensors = {}, {}
         for delegate in self.delegates:
             self.shutdown_delegate(delegate["name"], "stop")
@@ -296,15 +299,16 @@ class Station(bases.Node):
 
     def _main_loop(self):
         """main loop for Station."""
+
         while self.signals.get("main") is None:
             self._check_delegates()
-            if self.tendtime() > self.poll * 30:
+            if self.tendtime() > self.poll * 8:
                 crashed_threads = self.server.tend()
-                # heuristically manage inbox size
-                self.inbox.prune(self.max_inbox_mb)
-                self.reset_tend()
+                with DEFAULT_PROFILER.context('prune_mailbox'):
+                    self.inbox.prune(self.max_inbox_mb)
                 if len(crashed_threads) > 0:
                     self._log(crashed_threads, category="server_errors")
+                self.reset_tend()
             time.sleep(self.poll)
 
     def _check_delegates(self):

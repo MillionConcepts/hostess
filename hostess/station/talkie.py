@@ -75,7 +75,7 @@ class TCPTalk:
                 executor = ThreadPoolExecutor(n_threads + 1)
             self.exec, self._lock = executor, lock
             self.threads, self.events = {}, []
-            self.data, self.peers = Mailbox([]), {}
+            self.data, self.peers = Mailbox(), {}
             self.queues = {i: [] for i in range(n_threads)}
             self.signals = {i: None for i in range(n_threads)} | {
                 "select": None
@@ -323,7 +323,7 @@ class TCPTalk:
                 return None, "ack attempt", f"{kve}"
             raise
         except Exception as ex:
-            print(ex)
+            print(f"_ack error: {ex}")
 
     def _trydecode(self, stream):
         """inner stream-decode handler function for `read`"""

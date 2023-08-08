@@ -364,6 +364,7 @@ class Node(Matcher, ABC):
         self.poll, self.timeout, self.signals = poll, timeout, {}
         self.__is_process_owner = _is_process_owner
         self.is_shut_down = False
+        self.exception = None
         atexit.register(self.exc.shutdown, wait=False, cancel_futures=True)
         if start is True:
             self.start()

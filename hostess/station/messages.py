@@ -6,12 +6,13 @@ import datetime as dt
 from functools import cached_property, cache
 from itertools import accumulate
 import json
-from operator import add
+from operator import add, attrgetter
 import random
 import struct
 import sys
 from types import MappingProxyType as MPt, NoneType
-from typing import Optional, Any, Literal, Mapping, MutableSequence
+from typing import Optional, Any, Literal, Mapping, MutableSequence, \
+    MutableMapping
 
 from cytoolz import groupby
 import dill
@@ -228,6 +229,7 @@ class Msg:
 
     def __init__(self, message):
         self.message, self.sent = message, False
+        self.size = self.message.ByteSize()
 
     @cached_property
     def comm(self):
@@ -291,24 +293,20 @@ class Mailbox:
 
     # TODO: improve efficiency with caching or something
 
-    def __init__(self, messages: MutableSequence[Msg] | None = None):
-        messages = [] if messages is None else messages
+    def __init__(self, messages: MutableMapping[int, Msg] | None = None):
+        messages = {} if messages is None else messages
+        if not isinstance(messages, MutableMapping):
+            raise TypeError
         self.messages = messages
 
     def _sizer(self):
-        return accumulate(map(asizeof, reversed(self.messages)), add)
+        return accumulate(map(attrgetter('size'), self.messages.values()), add)
 
-    def prune(self, max_mb: float = 256, fallback_max_messages=1000):
-        # TODO: see if there's a better fallback -- asizeof has a weird
-        #  specific problem with certain classes, see
-        #  https://github.com/pympler/pympler/issues/146
-        try:
-            for i, size in enumerate(self._sizer()):
-                if mb(size) > max_mb:
-                    self.messages = self.messages[:i]
-                    break
-        except TypeError:
-            self.messages = self.messages[:fallback_max_messages]
+    def prune(self, max_mb: float = 256):
+        for i, size in enumerate(self._sizer()):
+            if mb(size) > max_mb:
+                self.messages = self.messages[:i]
+                break
 
     @staticmethod
     def maybe_construct_msg(thing: dict | Message):
@@ -328,18 +326,22 @@ class Mailbox:
         self.messages[key] = self.maybe_construct_msg(value)
 
     def append(self, item):
-        self.messages.append(self.maybe_construct_msg(item))
+        if len(self.messages) == 0:
+            nextplace = 0
+        else:
+            nextplace = max(self.messages.keys()) + 1
+        self.messages[nextplace] = self.maybe_construct_msg(item)
 
     def __len__(self):
         return len(self.messages)
 
     def __iter__(self):
-        return iter(self.messages)
+        return iter(self.messages.values())
 
     def sort(self) -> dict:
         try:
             # noinspection PyTypeChecker
-            return groupby(lambda m: m.reason, self.messages)
+            return groupby(lambda m: m.reason, self.messages.values())
         except AttributeError:
             raise TypeError("This method is only used for Station inboxes.")
 
