@@ -1,16 +1,42 @@
 import os
-from itertools import chain
 import random
-import threading
 import time
+from itertools import chain
+
+from cytoolz.curried import get
+from dustgoggles.codex.implements import Sticky
+from dustgoggles.func import gmap
 
 from hostess.monitors import DEFAULT_TICKER
-from hostess.profilers import DEFAULT_PROFILER
 from hostess.station.actors import InstructionFromInfo
 from hostess.station.messages import make_action, make_instruction
 from hostess.station.station import Station
 
-from dustgoggles.codex.implements import Sticky
+
+def getsocks(station: Station):
+    selkeys = {
+        k[0].fd: k[0]
+        for k in
+        list(chain.from_iterable(station.server.queues.values()))
+        + station.server.sel.select()
+    }
+    sprint = []
+    for s in selkeys.values():
+        if s.fd == station.server.sock.fileno():
+            connected = 'is server'
+        else:
+            try:
+                connected = s.fileobj.getpeername()
+            except OSError as ose:
+                connected = str(ose).split(' Transport')[0]
+        rec = {
+            'fd': s.fd,
+            'connected': connected,
+            'events': s.events,
+            'callback': '' if not hasattr(s, 'data') else s.data.__name__
+        }
+        sprint.append(rec)
+    return sorted(sprint, key=get('fd'))
 
 
 def sleep_trigger_instruction(*_, **__):
@@ -23,8 +49,6 @@ def sleep_trigger_instruction(*_, **__):
 host, port = "localhost", random.randint(10000, 20000)
 sticky = Sticky.note(port, "station-port-report", cleanup_on_exit=True)
 station = Station(host, port)
-print(port)
-
 watch = station.launch_delegate(
     "watch",
     elements=[
@@ -40,7 +64,6 @@ station.add_element(InstructionFromInfo, name="dosleep")
 station.dosleep_instruction_maker = sleep_trigger_instruction
 station.dosleep_criteria = [lambda n: "match" in n.keys()]
 station.dosleep_target_name = "watch"
-
 station.set_delegate_properties(
     "watch",
     filewatch_target="dump.txt",
@@ -48,35 +71,39 @@ station.set_delegate_properties(
     sleeper_duration=1,
 )
 station.start()
-
 os.unlink('dump.txt')
 exception = None
+
 try:
     i, n = 0, 1000
     while True:
+        start = time.time()
         if i < n:
             with open('dump.txt', 'a') as f:
                 f.write('hi')
-            time.sleep(0.2)
+            loop_pause = 0.2
         else:
-            time.sleep(0.5)
-        # print(DEFAULT_PROFILER)
+            loop_pause = 0.5
+        time.sleep(loop_pause)
         if station.state == 'crashed':
             raise station.exception
         # Note that if you write quite quickly, do not expect n completed tasks
         #  (the Sensor does not trigger once per 'hi', but once per detected
         #  write)
-        socks = (
-            len(station.server.sel.select(1)) + sum(
-                map(len, station.server.queues.values())
-            )
+        # socks = station.server.sel.select(1)
+        # try:
+        #     sock = socks[0][0].fileobj
+        dstring = (
+            f"{len(station.inbox.completed)} tasks completed\n"
+            f"{i} loops\n"
+            f"loop latency {round(time.time() - start - loop_pause, 3)}\n"
+            f"peer lock size {len(station.server.peers)}\n"
+            f"--socks--\n"
         )
-        print(
-            f"{len(station.inbox.completed)} tasks completed\n",
-            f"{i} loops\n",
-            f"{socks} pending sockets\n",
-            f"--ticks--\n{DEFAULT_TICKER}\n----"
-        )
+        for rec in getsocks(station):
+            dstring += f"{rec}\n"
+        dstring += f"--ticks--\n{DEFAULT_TICKER}\n----"
+        print(dstring)
         i += 1
 except Exception as ex:
     exception = ex

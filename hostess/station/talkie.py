@@ -109,21 +109,24 @@ class TCPTalk:
             # will be dict if it is a crashed thread running in trywrap
             if not isinstance(v, dict) and (v._state == 'RUNNING'):
                 continue
+            DEFAULT_TICKER.tick('oopsie-woopsie!')
             self.sig(k, 0)
             time.sleep(self.poll * 2)
             self.sig(k, None)
-            thread = self.threads.pop(k)
+            thread = self.threads.pop(k, None)
             if isinstance(thread, dict):
                 exception = thread['exception']
-            else:
+            elif thread is not None:
                 exception = thread.exception()
+            else:
+                exception = None
             crashed_threads.append(exception)
             if k == "select":
-                self.threads["select"] = trywrap(
-                    self.launch_selector, "select"
-                )()
+                self.threads["select"] = self.exec.submit(
+                    self.launch_selector
+                )
             else:
-                self.threads[k] = trywrap(self.launch_io, k)(k)
+                self.threads[k] = self.exec.submit(self.launch_io, k)
         self.status = "running"
         return crashed_threads
 
@@ -137,37 +140,28 @@ class TCPTalk:
 
     locked = property(_get_locked, _set_locked)
 
-    def _handle_callback(self, callback, peer, peersock):
+    def _handle_callback(self, callback, peername, peersock):
         """inner callback-handler tree for i/o threads"""
         if callback.__name__ == "_read":
-            # noinspection PyProtectedMember
-            if peersock._closed or (peer is None):
-                # ensure closed sockets don't stay in the queue forever
-                self.sel.unregister(peersock)
-                return False, "guard", False, "closed socket"
-            self.peers[peer] = True
+            self.peers[peername] = True
             try:
                 # callback is self._read
                 stream, event, status = callback(peersock)
             except KeyError:
                 # attempting to unregister an already-unregistered conn
-                return None, "guard", peer, "already unregistered"
+                return None, "guard", peername, "already unregistered"
         elif callback.__name__ == "_ack":
             # callback is self._ack
             stream, event, status = callback(peersock)
-            try:
-                # remove peer from peering-lock dict, unless someone else
-                # got to it first
-                del self.peers[peer]
-            except KeyError:
-                pass
+            # remove peer from peering-lock dict
+            self.peers.pop(peername, None)
         elif callback.__name__ == "_accept":
             # callback is self._accept
-            stream, event, peer, status = callback(peersock)
+            stream, event, peername, status = callback(peersock)
         else:
             # who attached some weirdo function?
             stream, event, status = None, "skipped", "invalid callback"
-        return stream, event, peer, status
+        return stream, event, peername, status
 
     def queued_descriptors(self):
         return {s[0].fd for s in chain.from_iterable(self.queues.values())}
@@ -182,7 +176,7 @@ class TCPTalk:
         self.sel.register(
             self.sock,
             selectors.EVENT_READ,
-            ticked(self._accept, 'accept_register', DEFAULT_TICKER)
+            ticked(self._accept, 'connection accepted', DEFAULT_TICKER)
         )
         while self.signals.get("select") is None:
             try:
@@ -215,27 +209,27 @@ class TCPTalk:
                 key, id_ = self.queues[name].pop()
             except IndexError:
                 continue
-            peer, peerage = self._check_peerage(key)
+            # noinspection PyProtectedMember
+            peername, peerage = self._check_peerage(key)
             callback, peersock = key.data, key.fileobj  # explanatory variables
             if (peerage is True) and (callback.__name__ != "_ack"):
                 # connection / read already handled
-                DEFAULT_TICKER.tick('peered')
+                DEFAULT_TICKER.tick(f'already peered')
                 continue
             if self.locked and callback.__name__ != "_ack":
                 continue
             try:
-                stream, event, peer, status = self._handle_callback(
-                    callback, peer, peersock
+                stream, event, peername, status = self._handle_callback(
+                    callback, peername, peersock
                 )
-                # hit exception that suggests task was already handled
-                # (or unhandleable)
+                # task was already handled (or unhandleable)
                 if event == "guard":
                     continue
             except OSError as err:
                 stream, event, status = None, "oserror", str(err)
             event = {
                 "event": event,
-                "peer": peer,
+                "peer": peername,
                 "status": status,
                 "time": logstamp(),
                 "thread": name,
@@ -252,19 +246,16 @@ class TCPTalk:
         self, sock: socket.socket
     ) -> tuple[None, str, Optional[tuple], str]:
         """
-        accept-connection callback for read threads. attached to keys by the
-        selector.
+        accept-connection callback for i/o threads. in normal operation, sock
+        will be self.sock.
         """
         try:
             conn, addr = sock.accept()
         except BlockingIOError:
-            # TODO: do something..,
-            DEFAULT_TICKER.tick('blocking')
-            return None, "blocking", None, "blocking"
+            return None, "blocking", None, "blocking on self"
         conn.setblocking(False)
         # tell the selector the socket is ready for a `read` callback
         self.sel.register(conn, selectors.EVENT_READ, self._read)
-        DEFAULT_TICKER.tick('read_register')
         return None, "accept", conn.getpeername(), "ok"
 
     def _read(self, conn: socket.socket) -> tuple[bytes, str, str]:
@@ -291,12 +282,24 @@ class TCPTalk:
             self.sel.register(
                 conn, selectors.EVENT_WRITE, curry(self._ack)(stream)
             )
-            DEFAULT_TICKER.tick('ack_register')
         except BrokenPipeError:
+            DEFAULT_TICKER.tick('broken pipe')
+            conn.close()
             status = "broken pipe"
         except TimeoutError:
+            DEFAULT_TICKER.tick("timed out")
+            conn.close()
             status = "timed out"
-        except (IOError, KeyError, OSError) as err:
+        except KeyError as ke:
+            if "is not registered" in str(ke):
+                status = f"{conn} already unregistered"
+            else:
+                raise
+        except BlockingIOError:
+            self.peers.pop(conn.getpeername(), None)
+            status = f"cleared blocking socket {conn.getpeername()}"
+            DEFAULT_TICKER.tick(f'cleared blocking socket')
+        except (IOError, OSError) as err:
             status = f"{type(err)}: {str(err)}"
         event = f"read {len(stream)}" if event is None else event
         return stream, event, status
@@ -367,11 +370,14 @@ class TCPTalk:
             event, status = f"read {nbytes}", f"decode error;{type(ex)};{ex}"
         return stream, event, status
 
-    def _check_peerage(self, key: selectors.SelectorKey):
+    def _check_peerage(self, key: selectors.SelectorKey | socket.socket):
         """check already-peered lock."""
         try:
-            # noinspection PyUnresolvedReferences
-            peer = key.fileobj.getpeername()
+            if hasattr(key, 'fileobj'):
+                # noinspection PyUnresolvedReferences
+                peer = key.fileobj.getpeername()
+            else:
+                peer = key.getpeername()
             return peer, peer in self.peers
         except OSError:
             return None, False
