@@ -306,7 +306,9 @@ class Mailbox:
         self.messages = messages
 
     def _sizer(self):
-        return accumulate(map(attrgetter('size'), self.messages.values()), add)
+        return accumulate(
+            map(attrgetter('size'), tuple(self.messages.values())), add
+        )
 
     def prune(self, max_mb: float = 256):
         for i, size in enumerate(self._sizer()):

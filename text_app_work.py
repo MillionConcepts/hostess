@@ -1,10 +1,12 @@
-from copy import deepcopy
 import datetime as dt
 import random
 import time
+from collections import defaultdict
+from functools import wraps, partial
 from typing import Optional, Sequence, Callable, Mapping
 
-from cytoolz import keyfilter, keymap, valmap
+import fire
+from cytoolz import keyfilter, keymap, valmap, partition
 from dustgoggles.codex.implements import Sticky
 from dustgoggles.codex.memutilz import (
     deactivate_shared_memory_resource_tracker,
@@ -12,42 +14,79 @@ from dustgoggles.codex.memutilz import (
 from dustgoggles.func import constant
 from dustgoggles.structures import NestingDict
 from rich.text import Text
+
+from textual_callback_signature_monkeypatch import do_patch
+do_patch()
+
 from textual._loop import loop_last
 from textual.app import App, ComposeResult
 from textual.containers import HorizontalScroll, VerticalScroll
 from textual.geometry import Size
-from textual.widgets import Label, Tree, Button
+from textual.widgets import Button, Label, Pretty, Tree
 from textual.widgets._tree import TreeNode, TreeDataType, _TreeLine
 
+from hostess.profilers import DEFAULT_PROFILER
 from hostess.station.comm import read_comm
 from hostess.station.messages import unpack_obj
 from hostess.station.talkie import stsend
 from hostess.utilities import curry
 
 deactivate_shared_memory_resource_tracker()
-PORT = Sticky("test_station_port").read()
-print(PORT)
+
+PRINTCACHE = []
 
 
+class Ticker:
+
+    def __init__(self):
+        self.counts = defaultdict(int)
+
+    def tick(self, label):
+        self.counts[label] += 1
+
+    def __repr__(self):
+        if len(self.counts) == 0:
+            return "Ticker (no counts)"
+        selfstr = ""
+        for k, v in self.counts.items():
+            selfstr += f"{k}: {v}\n"
+        return selfstr
+
+    def __str__(self):
+        return self.__repr__()
+
+
+TICKER = Ticker()
+
+
+@curry
+def ticked(func, label):
+    @wraps(func)
+    def tickoff(*args, **kwargs):
+        TICKER.tick(label)
+        return func(*args, **kwargs)
+
+    return tickoff
+
+
+# TODO: maybe redundant?
 STATION_PATTERNS = {
     'sort': (
         lambda l: (len(l) == 2) and (l[1] == 'actors'),
         lambda l: (len(l) in (3, 4)) and l[1] == 'tasks'
     ),
-    'protect': (
-        lambda l: (len(l) == 4) and l[1] == 'tasks',
-    )
+    'protect': (lambda l: (len(l) == 4) and l[1] == 'tasks',)
 }
 
 DELEGATE_PATTERNS = {
-    # 'sort': (
-    #     lambda l: (len(l) == 2) and (l[1] == 'actors'),
-    #     lambda l: (len(l) in (3, 4)) and l[1] == 'tasks'
-    # ),
-    # 'protect': (
-    #     lambda l: (len(l) == 4) and l[1] == 'tasks',
-    # )
+    'sort': (
+        lambda l: (len(l) == 3) and (l[2] == 'actors'),
+        lambda l: (len(l) in (3, 4)) and l[1] == 'running'
+    ),
+    'protect': (lambda l: (len(l) == 4) and l[1] == 'running',),
+    'protect': (lambda l: (len(l) == 4) and l[1] == 'running',)
 }
+
 
 def get_parent_labels(node: TreeNode):
     active_node, labels = node, []
@@ -57,7 +96,18 @@ def get_parent_labels(node: TreeNode):
     return tuple(reversed(labels))
 
 
+def _is_dropnode(node):
+    """is a node designed to hide stuff?"""
+    return isinstance(node.data, dict) and node.data['type'] == 'dropnode'
+
+
+# noinspection PyPep8Naming,PyProtectedMember,PyShadowingNames
 class SortingTree(Tree):
+
+    """
+    tree that can alphabetize nodes and protect them from removal;
+    also allows nodes under root level to have long labels.
+    """
 
     def __init__(
         self,
@@ -96,9 +146,13 @@ class SortingTree(Tree):
             add_line(TreeLine(child_path, last))
             if node._expanded:
                 if self.match(node, 'sort'):
-                    children = sorted(
-                        node._children, key=lambda c: str(c.label)
-                    )
+                    drop = filter(lambda c: _is_dropnode(c), node._children)
+                    reg = filter(lambda c: not _is_dropnode(c), node._children)
+                    children = sorted(reg, key=lambda c: str(c.label))
+                    # currently we don't actually have a case where we have
+                    # dropdowns and not-dropdowns, but this is the correct
+                    # behavior
+                    children += sorted(drop, key=lambda c: c.data['start'])
                 else:
                     children = node._children
                 for last, child in loop_last(children):
@@ -133,15 +187,19 @@ class SortingTree(Tree):
             if self.cursor_line >= len(lines):
                 self.cursor_line = -1
         self.refresh()
-# noinspection PyPep8Naming,PyProtectedMember
 
 
-def get_view():
+def get_view(host, port):
+    if (host is None) or (port is None):
+        raise ConnectionError("valid station address not available")
     # TODO: handle recurring queries a little more gracefully
-    response, _ = stsend(b"view", "localhost", PORT, timeout=0.5)
+    response, _ = stsend(b"view", host, port, timeout=0.5)
     if response == "timeout":
         raise TimeoutError('dropped packet')
-    comm = read_comm(response)
+    try:
+        comm = read_comm(response)
+    except TypeError:
+        raise ConnectionError(f'bad response: {response[:128]}')
     return unpack_obj(comm["body"])
 
 
@@ -150,22 +208,21 @@ def mutate_mapping(mapping):
         mapping[k] = random.randint(1, 10)
 
 
-def add_config_to_elements(actors: dict | list, config: dict) -> dict:
-    actors = deepcopy(actors)
-    if isinstance(actors, list):  # stub information for Delegates
-        actors = {a: {} for a in actors}
-    # TODO: more elegant with groupbys?
-    for name, props in actors.items():
-        inter = keyfilter(
+def add_config_to_elements(elements: dict, config: dict) -> dict[str]:
+    """join config information to matching Actors/Sensors"""
+    out = {}
+    for name, classname in elements.items():
+        out[name] = {'class': classname}
+        element_interface = keyfilter(
             lambda k: k.split('_')[0] == name, config['interface']
         )
-        if len(inter) > 0:
-            props['interface'] = keymap(
-                lambda k: "_".join(k.split("_")[1:]), inter
+        if len(element_interface) > 0:
+            out[name]['interface'] = keymap(
+                lambda k: "_".join(k.split("_")[1:]), element_interface
             )
-        if (actor_config := config['cdict'].get(name)) is not None:
-            props['cdict'] = actor_config
-    return actors
+        if (element_cdict := config.get('cdict', {}).get(name)) is not None:
+            out[name]['cdict'] = element_cdict
+    return out
 
 
 def organize_tasks(tasks: dict) -> dict:
@@ -207,6 +264,33 @@ def organize_running_actions(reports: dict) -> dict:
     return out.todict()
 
 
+def delegate_dict(ddict: Mapping) -> dict:
+    config = {
+        'cdict': ddict.get('cdict', {}),
+        'interface': ddict.get('interface', {})
+    }
+    out = {'status': ddict['inferred_status'], 'wait_time': ddict['wait_time']}
+    if ddict.get('busy') is True:
+        ddict['wait_time'] = str(out['wait_time']) + ' [busy]'
+    for element_type in ('actors', 'sensors'):
+        if len(element_dict := ddict.get(element_type, {})) > 0:
+            out[element_type] = add_config_to_elements(element_dict, config)
+    if len(ddict.get('running', [])) > 0:
+        out['running'] = organize_running_actions(ddict['running'])
+    return out
+
+
+def organize_delegate_view(view: dict) -> dict:
+    out = {}
+    for ddict in view['delegates']:
+        title = (
+            f"{ddict['name']}@{ddict.get('host', '?')}: "
+            f"(PID {ddict.get('pid', '?')})"
+        )
+        out[title] = delegate_dict(ddict)
+    return out
+
+
 def organize_station_view(view: dict) -> dict:
     view = keyfilter(lambda k: k != 'delegates', view)
     return {
@@ -216,56 +300,75 @@ def organize_station_view(view: dict) -> dict:
     }
 
 
-def delegate_dict(ddict: Mapping) -> dict:
-    config = {'cdict': ddict['cdict'], 'interface': ddict['interface']}
-    out = {
-        'running': organize_running_actions(ddict['running']),
-        'actors': add_config_to_elements(ddict['actors'], config),
-        'sensors': add_config_to_elements(ddict['sensors'], config),
-        'wait_time': ddict['wait_time']
-    }
-    return out
+def populate_dropnodes(node, items, max_items):
+    dropnodes = {}
+    for c in tuple(node.children):
+        if _is_dropnode(c):
+            if c.data['start'] > len(items):
+                c.remove()
+            else:
+                dropnodes[c.data['start']] = c
+        else:
+            # note that we lose expanded status when we 'move' TreeNodes into
+            # dropdowns this way
+            c.remove()
+    partitions = partition(max_items, items)
+    for i, p in enumerate(partitions):
+        start, stop = i * max_items + 1, (i + 1) * max_items
+        if start not in dropnodes.keys():
+            drop = node.add(
+                f'{start}-{stop}', data={'type': 'dropnode', 'start': start}
+            )
+        else:
+            drop = dropnodes[start]
+        with DEFAULT_PROFILER.context('dropnode_population'):
+            populate_children_from_dict(drop, {k: v for k, v in p}, max_items)
 
 
-def organize_delegate_view(view: dict) -> dict:
-    out = {}
-    for ddict in view['delegates']:
-        id_ = (
-            f"{ddict['name']}@{ddict['host']} (PID {ddict['pid']}): "
-            f"{ddict['inferred_status']}"
-        )
-        out[id_] = delegate_dict(ddict)
-    return out
-
-
-def dict_to_children(node: TreeNode, obj: list | tuple | dict):
+def populate_children_from_dict(
+    node: TreeNode, obj: list | tuple | dict, max_items: Optional[int]
+) -> None:
     if isinstance(obj, (list, tuple)):
-        items = enumerate(obj)
+        items = tuple(enumerate(obj))
     elif isinstance(obj, dict):
         items = obj.items()
     else:
         raise TypeError
-    new_children = []
-    for k, v in items:
+    if (max_items is not None) and (len(items) > max_items):
+        return populate_dropnodes(node, items, max_items)
+    items, ok_children = tuple(enumerate(items)), []
+    for i, kv in items:
+        k, v = kv
         # TODO: is there a nicer way to do this? it's hard to really attach
-        #  a fiducial at the station level.
+        #  a fiducial at the station level. The colon-splitting thing is also
+        #  a little hazardous.
+        before = str(k).split(': ')[0]
         matches = [
-            c for c in node.children if str(c.label) in (str(k), f"{k}: {v}")
+            c for c in node.children if str(c.label).split(': ')[0] == before
         ]
         assert len(matches) < 2, f"too many matches on {k}"
-        new_children += matches
+        ok_children += matches
         child = None if len(matches) == 0 else matches[0]
         if isinstance(v, (dict, list, tuple)):
             if child is None:
-                new_children.append(child := node.add(str(k)))
-            dict_to_children(child, v)
+                ok_children.append(child := node.add(str(k)))
+            else:
+                child.set_label(str(k))
+            populate_children_from_dict(child, v, max_items)
         elif child is None:
-            new_children.append(node.add_leaf(f"{k}: {v}"))
+            ok_children.append(node.add_leaf(f"{k}: {v}"))
+        else:
+            child.set_label(f"{k}: {v}")
+        if _is_dropnode(node):
+            PRINTCACHE.append(child)
+            PRINTCACHE.append((node, len(node.children)))
     if "match" not in dir(node.tree):
         protectmatch = constant(False)
     else:
-        protectmatch = curry(node.tree.match)(pattern_type="protect")
-    for c in filter(lambda c: c not in new_children, node.children):
+        protectmatch = partial(node.tree.match, pattern_type="protect")
+    for c in filter(
+        lambda c: c not in ok_children and not _is_dropnode(c), node.children
+    ):
         if protectmatch(c):
             c.remove_children()
         else:
@@ -276,11 +379,12 @@ def dict_to_tree(
     dictionary: dict,
     name: str = "",
     tree: Optional[Tree] = None,
+    max_items: Optional[int] = None,
     **tree_kwargs,
 ) -> Tree:
     tree = tree if tree is not None else SortingTree(name, **tree_kwargs)
     tree.root.expand()
-    dict_to_children(tree.root, dictionary)
+    populate_children_from_dict(tree.root, dictionary, max_items)
     return tree
 
 
@@ -303,21 +407,24 @@ class DictColumn(VerticalScroll):
     """
     mapping = {}
     patterns = {}
+    max_items = 20
 
     def on_mount(self):
         pass
         self.mount(Label(self.name))
-        # self.mount(UpdateButton("update", target=self, id=f"{self.id}-update"))
 
     def update(self) -> None:
+        tkwargs = {
+            'dictionary': self.mapping,
+            'patterns': self.patterns,
+            'max_items': self.max_items
+        }
         if len(self.children) == 1:
-            tree = dict_to_tree(
-                self.mapping, id=f"{self.id}-tree", patterns=self.patterns
-            )
+            tree = dict_to_tree(id=f"{self.id}-tree", **tkwargs)
             self.mount(tree)
             return
         tree = self.query_one(f"#{self.id}-tree")
-        dict_to_tree(self.mapping, tree=tree, patterns=self.patterns)
+        dict_to_tree(tree=tree, **tkwargs)
 
 
 class StatusBar(Label):
@@ -329,41 +436,75 @@ class StatusBar(Label):
     """
 
 
-# noinspection PyUnresolvedReferences
 class StationApp(App):
+
+    def __init__(
+        self, *args, host=None, port=None, memory_address=None, **kwargs
+    ):
+        super().__init__(*args, **kwargs)
+        self.host, self.port, self.memory_address = host, port, memory_address
+        self.view = {}
+
     def compose(self) -> ComposeResult:
         yield StatusBar(id="statusbar")
         # yield Footer(id="Footer")
         with HorizontalScroll():
             yield DictColumn(id="station-column", name="Station")
             yield DictColumn(id="delegate-column", name="Delegates")
+        yield Pretty(DEFAULT_PROFILER, id='profiler-panel')
+        yield Pretty(TICKER, id='ticker-panel')
 
+    # noinspection PyTypeChecker
     def update_view(self):
         error_label = self.query_one("#statusbar")
         try:
-            self.view = get_view()
+            self.view = get_view(self.host, self.port)
             scol: DictColumn = self.query_one("#station-column")
             scol.mapping = organize_station_view(self.view)
             scol.patterns = STATION_PATTERNS
-            dcol = self.query_one("#delegate-column")
+            dcol: DictColumn = self.query_one("#delegate-column")
             dcol.mapping = organize_delegate_view(self.view)
             dcol.patterns = DELEGATE_PATTERNS
             error_label.update(Text("status -- ok", style="bold green"))
+            # with DEFAULT_PROFILER.context('update-station-column'):
             scol.update()
+            # with DEFAULT_PROFILER.context('update-delegate-column'):
             dcol.update()
+            ppanel: Pretty = self.query_one("#profiler-panel")
+            ppanel.update(DEFAULT_PROFILER)
+            tpanel: Pretty = self.query_one('#ticker-panel')
+            tpanel.update(TICKER)
         except (
-            TypeError, AssertionError, AttributeError, TimeoutError
+            TypeError, AttributeError, TimeoutError, ConnectionError
         ) as err:
             error_label.update(
                 Text(f"status: error -- {err}", style="bold red")
             )
+            if isinstance(err, ConnectionError):
+                try:
+                    self.port = Sticky(self.memory_address).read()
+                except (FileNotFoundError, TypeError, ValueError):
+                    return
 
     def on_mount(self):
         self.set_interval(1, self.update_view)
 
-    view = {}
+
+def run_station_viewer(
+    memory_address: str = 'station-port-report',
+    host: str = 'localhost',
+    port: int = None,
+):
+    if isinstance(port, int):
+        port = port
+    else:
+        port = Sticky(memory_address).read()
+    app = StationApp(host=host, port=port, memory_address=memory_address)
+    app.run()
+
+
+
 
 
 if __name__ == "__main__":
-    app = StationApp()
-    app.run()
+    fire.Fire(run_station_viewer)

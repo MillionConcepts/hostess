@@ -10,6 +10,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Literal, Mapping, Optional, Any
 
+from cytoolz import keyfilter
 from dustgoggles.dynamic import exc_report
 from dustgoggles.func import gmap, filtern
 from dustgoggles.structures import dig_and_edit, valonly
@@ -31,7 +32,7 @@ from hostess.station.messages import (
 )
 from hostess.station.proto_utils import enum
 from hostess.station.talkie import timeout_factory
-from hostess.station.viewing import has_callables, callables_to_source
+from hostess.station.viewing import has_callables, callable_info
 from hostess.subutils import RunCommand
 
 from hostess.profilers import DEFAULT_PROFILER
@@ -390,21 +391,18 @@ class Station(bases.Node):
             "name": self.name,
             "host": self.host,
             "port": self.port,
-            "actors": [],
-            "delegates": [],
+            "actors": self.identify_elements("actors"),
+            "delegates": [
+                keyfilter(lambda k: k != 'obj', d) for d in self.delegates
+            ],
             # weird dict constructions for protection against mutation
             "threads": {k: v._state for k, v in self.threads.items()},
             "config": deepcopy(self.config),
             "tasks": {k: deepcopy(v) for k, v in tuple(self.tasks.items())},
         }
-        for d in self.delegates:
-            rec = {
-                k: v for k, v in d.items() if k != "obj"
-            }
-            props['delegates'].append(rec)
         # noinspection PyTypeChecker
         return dig_and_edit(
-            props, valonly(has_callables), valonly(callables_to_source)
+            props, valonly(has_callables), valonly(callable_info)
         )
 
     def _ackcheck(self, _conn: socket.socket, comm: dict):
@@ -530,5 +528,5 @@ def blank_delegateinfo():
         "wait_time": 0,
         "running": [],
         "interface": {},
-        "actors": [],
+        "actors": {},
     }

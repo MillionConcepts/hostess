@@ -11,11 +11,14 @@ from dustgoggles.codex.implements import Sticky
 
 
 def sleep_trigger_instruction(*_, **__):
-    return make_instruction("do", action=make_action({}, name="sleep"))
+    return make_instruction(
+        "do",
+        action=make_action({'why': 'no reason'}, name="sleep"),
+    )
 
 
 host, port = "localhost", random.randint(10000, 20000)
-sticky = Sticky.note(port, "test_station_port", cleanup_on_exit=True)
+sticky = Sticky.note(port, "station-port-report", cleanup_on_exit=True)
 station = Station(host, port)
 print(port)
 
@@ -25,8 +28,9 @@ watch = station.launch_delegate(
         ("hostess.station.actors", "FileSystemWatch"),
         ("logscratch", "Sleepy"),
     ],
-    update_interval=3,
-    poll=0.5,
+    update_interval=0.5,
+    poll=0.01,
+    n_threads=8,
     context="local",
 )
 station.add_element(InstructionFromInfo, name="dosleep")
@@ -38,20 +42,32 @@ station.set_delegate_properties(
     "watch",
     filewatch_target="dump.txt",
     filewatch_patterns=("hi",),
-    sleeper_duration=2,
+    sleeper_duration=1,
 )
 station.start()
 
 os.unlink('dump.txt')
 exception = None
 try:
-    for i in range(1000):
-        with open('dump.txt', 'a') as f:
-            f.write('hi')
-        time.sleep(1)
-        print(len(station.inbox.completed))
+    i, n = 0, 1000
+    while True:
+        if i < n:
+            with open('dump.txt', 'a') as f:
+                f.write('hi')
+            i += 1
+            time.sleep(0.2)
+        else:
+            time.sleep(0.5)
         # print(DEFAULT_PROFILER)
+        if station.state == 'crashed':
+            raise station.exception
+        # Note that if you write quite quickly, do not expect n completed tasks
+        #  (the Sensor does not trigger once per 'hi', but once per detected
+        #  write)
+        print(len(station.inbox.completed))
+        time.sleep(0.1)
 except Exception as ex:
     exception = ex
+    print(exception)
 finally:
     station.shutdown(exception)
