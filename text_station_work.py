@@ -1,7 +1,10 @@
 import os
+from itertools import chain
 import random
+import threading
 import time
 
+from hostess.monitors import DEFAULT_TICKER
 from hostess.profilers import DEFAULT_PROFILER
 from hostess.station.actors import InstructionFromInfo
 from hostess.station.messages import make_action, make_instruction
@@ -63,7 +66,17 @@ try:
         # Note that if you write quite quickly, do not expect n completed tasks
         #  (the Sensor does not trigger once per 'hi', but once per detected
         #  write)
-        print(len(station.inbox.completed), i)
+        socks = (
+            len(station.server.sel.select(1)) + sum(
+                map(len, station.server.queues.values())
+            )
+        )
+        print(
+            f"{len(station.inbox.completed)} tasks completed\n",
+            f"{i} loops\n",
+            f"{socks} pending sockets\n",
+            f"--ticks--\n{DEFAULT_TICKER}\n----"
+        )
         i += 1
 except Exception as ex:
     exception = ex

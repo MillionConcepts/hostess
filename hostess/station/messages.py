@@ -346,6 +346,7 @@ class Mailbox:
     def __iter__(self):
         return iter(self.messages.values())
 
+    # TODO: we should probably partly cache this or something
     def sort(self) -> dict:
         try:
             # noinspection PyTypeChecker

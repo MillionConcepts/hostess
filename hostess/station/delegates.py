@@ -16,6 +16,7 @@ from google.protobuf.json_format import MessageToDict, Parse
 from google.protobuf.message import Message
 
 import hostess.station.proto.station_pb2 as pro
+from hostess.monitors import ticked, DEFAULT_TICKER
 from hostess.station import bases
 from hostess.station.bases import Sensor, Actor
 from hostess.station.messages import pack_obj, task_msg, unpack_obj
@@ -233,11 +234,8 @@ class Delegate(bases.Node):
         """
         send Update to Station informing it that the delegate is exiting, and why.
         """
-        mdict = self._base_message()
-        mdict["reason"] = "exiting"
         self.state = "crashed" if exception is not None else "shutdown"
-        mdict["state"]["status"] = self.state
-        message = Parse(json.dumps(mdict), pro.Update())
+        msg = self._base_message(reason='exiting')
         if exception is not None:
             try:
                 info = pro.Update(
@@ -247,8 +245,8 @@ class Delegate(bases.Node):
                 info = pro.Update(
                     info=[pack_obj(exc_report(ex, 0)), "exception"]
                 )
-            message.MergeFrom(info)
-        self.talk_to_station(message)
+            msg.MergeFrom(info)
+        self.talk_to_station(msg)
 
     def _report_on_action(self, action: dict):
         """report to Station on completed/failed action."""
@@ -368,7 +366,11 @@ class Delegate(bases.Node):
                     self._log(response, category="comms", direction="recv")
                 # TODO, maybe: this could be a separate attribute
                 time.sleep(self.update_interval)
-            response, _ = stsend(self._insert_state(message), *self.station)
+            response, _ = ticked(
+                stsend,
+                'delegate_stsend',
+                DEFAULT_TICKER
+            )(self._insert_state(message), *self.station)
         # if we locked ourselves due to bad responses, and we weren't already
         # locked for some reason -- like we often will have been if sending
         # a task report or something -- unlock ourselves.

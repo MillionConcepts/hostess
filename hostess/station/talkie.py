@@ -7,9 +7,10 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
-from itertools import cycle
+from itertools import cycle, chain
 from typing import Optional, Callable
 
+from hostess.monitors import DEFAULT_TICKER, ticked
 from hostess.station.comm import make_comm, read_header, read_comm
 from hostess.station.messages import Mailbox
 
@@ -141,6 +142,8 @@ class TCPTalk:
         if callback.__name__ == "_read":
             # noinspection PyProtectedMember
             if peersock._closed or (peer is None):
+                # ensure closed sockets don't stay in the queue forever
+                self.sel.unregister(peersock)
                 return False, "guard", False, "closed socket"
             self.peers[peer] = True
             try:
@@ -166,6 +169,9 @@ class TCPTalk:
             stream, event, status = None, "skipped", "invalid callback"
         return stream, event, peer, status
 
+    def queued_descriptors(self):
+        return {s[0].fd for s in chain.from_iterable(self.queues.values())}
+
     def launch_selector(self):
         """
         launch the server's selector thread.
@@ -173,13 +179,21 @@ class TCPTalk:
             An dict with name, any received signal, and any exception.
         """
         id_, cycler = 0, cycle(self.queues.keys())
-        self.sel.register(self.sock, selectors.EVENT_READ, self._accept)
+        self.sel.register(
+            self.sock,
+            selectors.EVENT_READ,
+            ticked(self._accept, 'accept_register', DEFAULT_TICKER)
+        )
         while self.signals.get("select") is None:
             try:
                 events = self.sel.select(1)
             except TimeoutError:
                 continue
+            queued = self.queued_descriptors()
             for key, _mask in events:
+                # try to ensure we don't have a million pending events
+                if key.fd in queued:
+                    continue
                 target = next(cycler)
                 self.queues[target].append((key, id_))
                 id_ += 1
@@ -205,6 +219,7 @@ class TCPTalk:
             callback, peersock = key.data, key.fileobj  # explanatory variables
             if (peerage is True) and (callback.__name__ != "_ack"):
                 # connection / read already handled
+                DEFAULT_TICKER.tick('peered')
                 continue
             if self.locked and callback.__name__ != "_ack":
                 continue
@@ -244,10 +259,12 @@ class TCPTalk:
             conn, addr = sock.accept()
         except BlockingIOError:
             # TODO: do something..,
+            DEFAULT_TICKER.tick('blocking')
             return None, "blocking", None, "blocking"
         conn.setblocking(False)
         # tell the selector the socket is ready for a `read` callback
         self.sel.register(conn, selectors.EVENT_READ, self._read)
+        DEFAULT_TICKER.tick('read_register')
         return None, "accept", conn.getpeername(), "ok"
 
     def _read(self, conn: socket.socket) -> tuple[bytes, str, str]:
@@ -274,6 +291,7 @@ class TCPTalk:
             self.sel.register(
                 conn, selectors.EVENT_WRITE, curry(self._ack)(stream)
             )
+            DEFAULT_TICKER.tick('ack_register')
         except BrokenPipeError:
             status = "broken pipe"
         except TimeoutError:
@@ -319,6 +337,9 @@ class TCPTalk:
                     unwait()
                     # ...but only truncate by amount we successfullly sent
                     response = response[sent:]
+                except BrokenPipeError:
+                    DEFAULT_TICKER.tick('broken pipe')
+                    return None, "ack attempt", "broken pipe"
                 except OSError:
                     waiting()
                     time.sleep(self.delay)
@@ -329,8 +350,10 @@ class TCPTalk:
                 # someone else got here firs
                 return None, "ack attempt", f"{kve}"
             raise
+        except TimeoutError as te:
+            return None, "ack attempt", f"{te}"
         except Exception as ex:
-            print(f"_ack error: {ex}")
+            print(f"_ack error: {type(ex)}: {ex}")
 
     def _trydecode(self, stream):
         """inner stream-decode handler function for `read`"""

@@ -36,39 +36,6 @@ deactivate_shared_memory_resource_tracker()
 PRINTCACHE = []
 
 
-class Ticker:
-
-    def __init__(self):
-        self.counts = defaultdict(int)
-
-    def tick(self, label):
-        self.counts[label] += 1
-
-    def __repr__(self):
-        if len(self.counts) == 0:
-            return "Ticker (no counts)"
-        selfstr = ""
-        for k, v in self.counts.items():
-            selfstr += f"{k}: {v}\n"
-        return selfstr
-
-    def __str__(self):
-        return self.__repr__()
-
-
-TICKER = Ticker()
-
-
-@curry
-def ticked(func, label):
-    @wraps(func)
-    def tickoff(*args, **kwargs):
-        TICKER.tick(label)
-        return func(*args, **kwargs)
-
-    return tickoff
-
-
 # TODO: maybe redundant?
 STATION_PATTERNS = {
     'sort': (
@@ -194,6 +161,7 @@ def get_view(host, port):
         raise ConnectionError("valid station address not available")
     # TODO: handle recurring queries a little more gracefully
     response, _ = stsend(b"view", host, port, timeout=0.5)
+    # TODO: timeout tracker
     if response == "timeout":
         raise TimeoutError('dropped packet')
     try:
@@ -278,6 +246,8 @@ def delegate_dict(ddict: Mapping) -> dict:
             out[element_type] = add_config_to_elements(element_dict, config)
     if len(ddict.get('running', [])) > 0:
         out['running'] = organize_running_actions(ddict['running'])
+    else:
+        out['running'] = []
     return out
 
 
@@ -297,7 +267,8 @@ def organize_station_view(view: dict) -> dict:
     return {
         'id': f"{view['name']}@{view.get('host', '?')}:{view['port']}",
         'actors': add_config_to_elements(view['actors'], view['config']),
-        'tasks': organize_tasks(view['tasks'])
+        'tasks': organize_tasks(view['tasks']),
+        'threads': view['threads']
     }
 
 
@@ -313,6 +284,7 @@ def populate_dropnodes(node, items, max_items):
             # note that we lose expanded status when we 'move' TreeNodes into
             # dropdowns this way
             c.remove()
+    # TODO: need to be able to do incomplete partitions
     partitions = partition(max_items, items)
     for i, p in enumerate(partitions):
         start, stop = i * max_items + 1, (i + 1) * max_items
@@ -328,7 +300,7 @@ def populate_dropnodes(node, items, max_items):
             #  it has the disadvantage, as the application is currently
             #  written, that expanded dropdowns will not populate until the
             #  next update cycle.
-            populate_children_from_dict(drop, {k: v for k, v in p}, max_items)
+            ticked(populate_children_from_dict, 'dropnode_dig')(drop, {k: v for k, v in p}, max_items)
 
 
 def populate_children_from_dict(
@@ -459,8 +431,11 @@ class StationApp(App):
 
     # noinspection PyTypeChecker
     def update_view(self):
+        if self.fetching is True:
+            return
         error_label = self.query_one("#statusbar")
         try:
+            self.fetching = True
             self.view = get_view(self.host, self.port)
             scol: DictColumn = self.query_one("#station-column")
             scol.mapping = organize_station_view(self.view)
@@ -488,9 +463,13 @@ class StationApp(App):
                     self.port = Sticky(self.memory_address).read()
                 except (FileNotFoundError, TypeError, ValueError):
                     return
+        finally:
+            self.fetching = False
 
     def on_mount(self):
         self.set_interval(1, self.update_view)
+
+    fetching = False
 
 
 def run_station_viewer(
@@ -504,9 +483,6 @@ def run_station_viewer(
         port = Sticky(memory_address).read()
     app = StationApp(host=host, port=port, memory_address=memory_address)
     app.run()
-
-
-
 
 
 if __name__ == "__main__":
