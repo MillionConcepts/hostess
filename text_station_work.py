@@ -54,7 +54,6 @@ try:
         if i < n:
             with open('dump.txt', 'a') as f:
                 f.write('hi')
-            i += 1
             time.sleep(0.2)
         else:
             time.sleep(0.5)
@@ -64,8 +63,8 @@ try:
         # Note that if you write quite quickly, do not expect n completed tasks
         #  (the Sensor does not trigger once per 'hi', but once per detected
         #  write)
-        print(len(station.inbox.completed))
-        time.sleep(0.1)
+        print(len(station.inbox.completed), i)
+        i += 1
 except Exception as ex:
     exception = ex
     print(exception)

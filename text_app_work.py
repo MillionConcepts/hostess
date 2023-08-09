@@ -245,7 +245,8 @@ def organize_tasks(tasks: dict) -> dict:
     for k in ('success', 'running', 'sent', 'pending', 'crash'):
         # noinspection PyStatementEffect
         out[k]
-    return out.todict()
+    return out
+    # return out.todict()
 
 
 def organize_running_actions(reports: dict) -> dict:
@@ -322,12 +323,18 @@ def populate_dropnodes(node, items, max_items):
         else:
             drop = dropnodes[start]
         with DEFAULT_PROFILER.context('dropnode_population'):
+            # TODO, maybe: we _could_ just skip populating non-expanded nodes,
+            #  which would be wildly more efficient for many applications.
+            #  it has the disadvantage, as the application is currently
+            #  written, that expanded dropdowns will not populate until the
+            #  next update cycle.
             populate_children_from_dict(drop, {k: v for k, v in p}, max_items)
 
 
 def populate_children_from_dict(
     node: TreeNode, obj: list | tuple | dict, max_items: Optional[int]
 ) -> None:
+    """warning: expects a SortingTree as parent of the TreeNode."""
     if isinstance(obj, (list, tuple)):
         items = tuple(enumerate(obj))
     elif isinstance(obj, dict):
@@ -337,39 +344,35 @@ def populate_children_from_dict(
     if (max_items is not None) and (len(items) > max_items):
         return populate_dropnodes(node, items, max_items)
     items, ok_children = tuple(enumerate(items)), []
+    prefix_map = {str(c.label).split(': ')[0]: c for c in node.children}
     for i, kv in items:
         k, v = kv
         # TODO: is there a nicer way to do this? it's hard to really attach
         #  a fiducial at the station level. The colon-splitting thing is also
         #  a little hazardous.
         before = str(k).split(': ')[0]
-        matches = [
-            c for c in node.children if str(c.label).split(': ')[0] == before
-        ]
-        assert len(matches) < 2, f"too many matches on {k}"
-        ok_children += matches
-        child = None if len(matches) == 0 else matches[0]
+        child = prefix_map.get(before)
+        if child is not None:
+            ok_children.append(child)
         if isinstance(v, (dict, list, tuple)):
             if child is None:
                 ok_children.append(child := node.add(str(k)))
-            else:
+            elif str(child.label) != str(k):
                 child.set_label(str(k))
             populate_children_from_dict(child, v, max_items)
         elif child is None:
             ok_children.append(node.add_leaf(f"{k}: {v}"))
-        else:
+        elif str(child.label) != f"{k}: {v}":
             child.set_label(f"{k}: {v}")
         if _is_dropnode(node):
             PRINTCACHE.append(child)
             PRINTCACHE.append((node, len(node.children)))
-    if "match" not in dir(node.tree):
-        protectmatch = constant(False)
-    else:
-        protectmatch = partial(node.tree.match, pattern_type="protect")
+    # prevent removal of 'emptied' nodes we'd like to optionally remain
+    # expanded (action names, etc.)
     for c in filter(
         lambda c: c not in ok_children and not _is_dropnode(c), node.children
     ):
-        if protectmatch(c):
+        if node.tree.match(c, "protect"):
             c.remove_children()
         else:
             c.remove()
