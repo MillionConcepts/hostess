@@ -32,18 +32,18 @@ class TCPTalk:
     """lightweight multithreaded tcp server."""
 
     def __init__(
-        self,
-        host,
-        port,
-        n_threads=4,
-        poll=0.01,
-        decoder: Callable = read_comm,
-        ackcheck: Optional[Callable] = None,
-        executor: Optional[ThreadPoolExecutor] = None,
-        lock: Optional[threading.Lock] = None,
-        chunksize: int = 16384,
-        delay: float = 0.01,
-        timeout: int = 10,
+            self,
+            host,
+            port,
+            n_threads=4,
+            poll=0.01,
+            decoder: Callable = read_comm,
+            ackcheck: Optional[Callable] = None,
+            executor: Optional[ThreadPoolExecutor] = None,
+            lock: Optional[threading.Lock] = None,
+            chunksize: int = 16384,
+            delay: float = 0.01,
+            timeout: int = 10,
     ):
         """
         Args:
@@ -237,6 +237,7 @@ class TCPTalk:
                 "callback": callback.__name__,
             }
             self.events.append(event)
+            DEFAULT_TICKER.tick(f'{name} thread acted on key')
             if (stream is None) or (len(stream) == 0):
                 continue
             if not isinstance(stream['body'], bytes):  # control codes, etc.
@@ -283,13 +284,18 @@ class TCPTalk:
                 conn, selectors.EVENT_WRITE, curry(self._ack)(stream)
             )
         except BrokenPipeError:
-            DEFAULT_TICKER.tick('broken pipe')
-            conn.close()
-            status = "broken pipe"
+            DEFAULT_TICKER.tick('broken pipe in read')
+            try:
+                self.peers.pop(conn.getpeername(), None)
+                status = "broken pipe"
+                DEFAULT_TICKER.tick("cleared broken pipe in read")
+            except Exception as ex:
+                a = 1
         except TimeoutError:
-            DEFAULT_TICKER.tick("timed out")
-            conn.close()
+            DEFAULT_TICKER.tick("timed out in read")
+            self.peers.pop(conn.getpeername(), None)
             status = "timed out"
+            DEFAULT_TICKER.tick("cleared timeout in read")
         except KeyError as ke:
             if "is not registered" in str(ke):
                 status = f"{conn} already unregistered"
@@ -305,7 +311,7 @@ class TCPTalk:
         return stream, event, status
 
     def _tryread(
-        self, conn: socket.socket
+            self, conn: socket.socket
     ) -> tuple[Optional[bytes], str]:
         """inner read-individual-chunk-from-socket handler for `read`"""
         status = "streaming"
@@ -341,7 +347,9 @@ class TCPTalk:
                     # ...but only truncate by amount we successfullly sent
                     response = response[sent:]
                 except BrokenPipeError:
-                    DEFAULT_TICKER.tick('broken pipe')
+                    DEFAULT_TICKER.tick('broken pipe in ack')
+                    # don't need to release peerlock here because we always
+                    # release it after _ack
                     return None, "ack attempt", "broken pipe"
                 except OSError:
                     waiting()
@@ -355,8 +363,9 @@ class TCPTalk:
             raise
         except TimeoutError as te:
             return None, "ack attempt", f"{te}"
-        except Exception as ex:
-            print(f"_ack error: {type(ex)}: {ex}")
+        except Exception as _ex:
+            DEFAULT_TICKER.tick('_ack fail')
+            raise
 
     def _trydecode(self, stream):
         """inner stream-decode handler function for `read`"""
