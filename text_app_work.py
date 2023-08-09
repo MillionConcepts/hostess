@@ -15,6 +15,7 @@ from dustgoggles.func import constant
 from dustgoggles.structures import NestingDict
 from rich.text import Text
 
+from hostess.monitors import DEFAULT_TICKER
 from textual_callback_signature_monkeypatch import do_patch
 do_patch()
 
@@ -364,10 +365,10 @@ def dict_to_tree(
 
 
 class UpdateButton(Button):
+
     def __init__(self, *args, target, **kwargs):
         super().__init__(*args, **kwargs)
         self.target = target
-
     def press(self):
         self.target.update()
 
@@ -411,6 +412,18 @@ class StatusBar(Label):
     """
 
 
+def find_station_port(memory_address=None, port=None):
+    if isinstance(port, int):
+        port = port
+    elif memory_address is None:
+        raise TypeError('must have port or memory address')
+    else:
+        port = Sticky(memory_address).read()
+    if port is None:
+        raise FileNotFoundError('no port at address')
+    return port
+
+
 class StationApp(App):
 
     def __init__(
@@ -427,9 +440,9 @@ class StationApp(App):
             yield DictColumn(id="station-column", name="Station")
             yield DictColumn(id="delegate-column", name="Delegates")
         yield Pretty(DEFAULT_PROFILER, id='profiler-panel')
-        yield Pretty(TICKER, id='ticker-panel')
-
+        yield Pretty(DEFAULT_TICKER, id='ticker-panel')
     # noinspection PyTypeChecker
+
     def update_view(self):
         if self.fetching is True:
             return
@@ -451,7 +464,7 @@ class StationApp(App):
             ppanel: Pretty = self.query_one("#profiler-panel")
             ppanel.update(DEFAULT_PROFILER)
             tpanel: Pretty = self.query_one('#ticker-panel')
-            tpanel.update(TICKER)
+            tpanel.update(DEFAULT_TICKER)
         except (
             TypeError, AttributeError, TimeoutError, ConnectionError
         ) as err:
@@ -460,7 +473,7 @@ class StationApp(App):
             )
             if isinstance(err, ConnectionError):
                 try:
-                    self.port = Sticky(self.memory_address).read()
+                    self.port = find_station_port(self.memory_address)
                 except (FileNotFoundError, TypeError, ValueError):
                     return
         finally:
@@ -468,7 +481,6 @@ class StationApp(App):
 
     def on_mount(self):
         self.set_interval(1, self.update_view)
-
     fetching = False
 
 
@@ -477,10 +489,7 @@ def run_station_viewer(
     host: str = 'localhost',
     port: int = None,
 ):
-    if isinstance(port, int):
-        port = port
-    else:
-        port = Sticky(memory_address).read()
+    port = find_station_port(memory_address, port)
     app = StationApp(host=host, port=port, memory_address=memory_address)
     app.run()
 

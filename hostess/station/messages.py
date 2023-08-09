@@ -29,6 +29,7 @@ from more_itertools import split_when, all_equal
 import numpy as np
 from pympler.asizeof import asizeof
 
+from hostess.monitors import DEFAULT_TICKER
 from hostess.station.proto import station_pb2 as pro
 from hostess.station.proto_utils import (
     enum,
@@ -230,10 +231,7 @@ class Msg:
 
     def __init__(self, message):
         self.message, self.sent = message, False
-        try:
-            self.size = self.message.ByteSize()
-        except Exception as ex:
-            a = 1
+        self.size = self.message.ByteSize()
 
     @cached_property
     def comm(self):
@@ -260,9 +258,10 @@ class Msg:
     def __getattr__(self, attr):
         try:
             try:
-                return self.unpack(attr)
+                out = self.unpack(attr)
             except AttributeError:
-                return dig_for_values(self.body, attr)[0]
+                out = dig_for_values(self.body, attr)[0]
+            return out
         except TypeError:
             raise AttributeError(f"Msg has no attribute '{attr}'")
 
@@ -398,7 +397,7 @@ def unpack_message(msg: Message | RepeatedCompositeContainer):
                     "name": element.name,
                 }
         # they look like lists, but they're not!
-        elif "__len__" in dir(element) and (len(element) == 0):
+        elif hasattr(element, "__len__") and (len(element) == 0):
             continue
         elif isinstance(element, ScalarMapContainer):
             formatted[k] = dict(element)

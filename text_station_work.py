@@ -5,12 +5,12 @@ from itertools import chain
 
 from cytoolz.curried import get
 from dustgoggles.codex.implements import Sticky
-from dustgoggles.func import gmap
 
 from hostess.monitors import DEFAULT_TICKER
 from hostess.station.actors import InstructionFromInfo
 from hostess.station.messages import make_action, make_instruction
 from hostess.station.station import Station
+from hostess.station.tests.testing_actors import TrivialActor
 
 
 def getsocks(station: Station):
@@ -39,6 +39,20 @@ def getsocks(station: Station):
     return sorted(sprint, key=get('fd'))
 
 
+def status_display(station, n):
+    dstring = (
+        f"{len(station.inbox.completed)} tasks completed\n"
+        f"{n} loops\n"
+        f"loop latency {round(time.time() - start - loop_pause, 3)}\n"
+        f"peer lock size {len(station.server.peers)}\n"
+        f"--queued sockets--\n"
+    )
+    for rec in getsocks(station):
+        dstring += f"{rec}\n"
+    dstring += f"--ticks--\n{DEFAULT_TICKER}\n----"
+    return dstring
+
+
 def sleep_trigger_instruction(*_, **__):
     return make_instruction(
         "do",
@@ -60,10 +74,13 @@ watch = station.launch_delegate(
     n_threads=8,
     context="local",
 )
+
 station.add_element(InstructionFromInfo, name="dosleep")
 station.dosleep_instruction_maker = sleep_trigger_instruction
 station.dosleep_criteria = [lambda n: "match" in n.keys()]
 station.dosleep_target_name = "watch"
+for _ in range(50):
+    station.add_element(TrivialActor)
 station.set_delegate_properties(
     "watch",
     filewatch_target="dump.txt",
@@ -75,7 +92,7 @@ os.unlink('dump.txt')
 exception = None
 
 try:
-    i, n = 0, 1000
+    i, n = 0, 10
     while True:
         start = time.time()
         if i < n:
@@ -90,20 +107,7 @@ try:
         # Note that if you write quite quickly, do not expect n completed tasks
         #  (the Sensor does not trigger once per 'hi', but once per detected
         #  write)
-        # socks = station.server.sel.select(1)
-        # try:
-        #     sock = socks[0][0].fileobj
-        dstring = (
-            f"{len(station.inbox.completed)} tasks completed\n"
-            f"{i} loops\n"
-            f"loop latency {round(time.time() - start - loop_pause, 3)}\n"
-            f"peer lock size {len(station.server.peers)}\n"
-            f"--socks--\n"
-        )
-        for rec in getsocks(station):
-            dstring += f"{rec}\n"
-        dstring += f"--ticks--\n{DEFAULT_TICKER}\n----"
-        print(dstring)
+        print(status_display(station, i))
         i += 1
 except Exception as ex:
     exception = ex

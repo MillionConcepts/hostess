@@ -8,9 +8,10 @@ from types import MappingProxyType as MPt
 from typing import Union, Optional
 
 import google.protobuf.json_format
-from google.protobuf.descriptor import FieldDescriptor
+from google.protobuf.descriptor import FieldDescriptor, Descriptor
 # noinspection PyUnresolvedReferences
 from google.protobuf.duration_pb2 import Duration
+from google.protobuf.message import Message
 # noinspection PyUnresolvedReferences
 from google.protobuf.timestamp_pb2 import Timestamp
 
@@ -24,13 +25,15 @@ PROTO_TYPES = MPt(
 m2d = google.protobuf.json_format.MessageToDict
 
 
-def proto_formatdict(proto) -> dict[str, Union[dict, str]]:
+def proto_formatdict(
+    proto: Message | Descriptor
+) -> dict[str, Union[dict, str]]:
     """
     return a (possibly nested) dict showing the legal fields of a protobuf
     message or message type.
     """
     # i.e., it's a descriptor
-    if 'fields_by_name' in dir(proto):
+    if hasattr(proto, 'fields_by_name'):
         descriptor = proto
     else:
         descriptor = proto.DESCRIPTOR
@@ -54,7 +57,7 @@ def make_duration(delta: Union[dt.timedelta, float]) -> Duration:
     return duration
 
 
-def make_timestamp(datetime: Optional[dt.datetime] = None):
+def make_timestamp(datetime: Optional[dt.datetime] = None) -> Timestamp:
     """
     create a Timestamp Message from either the current time or a dt.datetime
     object
@@ -67,7 +70,7 @@ def make_timestamp(datetime: Optional[dt.datetime] = None):
     return timestamp
 
 
-def enum(message, field):
+def enum(message: Message, field: str) -> str | int:
     """get the string value of an enum field in a message."""
     for desc, val in message.ListFields():
         if desc.enum_type is None:

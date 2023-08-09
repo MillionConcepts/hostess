@@ -11,3 +11,15 @@ class NormalActor(Actor):
 
     name = 'normal_actor_that_does_useful_things'
     actortype = 'action'
+
+
+class TrivialActor(Actor):
+
+    def match(self, event, **_):
+        return False
+
+    def execute(self, node, event, **_):
+        return
+
+    actortype = "trivial"
+    name = "trivial"
