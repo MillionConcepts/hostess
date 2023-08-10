@@ -32,7 +32,8 @@ from hostess.station.messages import (
 )
 from hostess.station.proto_utils import enum
 from hostess.station.talkie import timeout_factory
-from hostess.station.viewing import has_callables, callable_info
+from hostess.station.viewing import has_callables, callable_info, pack_config, \
+    pack_delegate, pack_tasks
 from hostess.subutils import RunCommand
 
 from hostess.profilers import DEFAULT_PROFILER
@@ -106,7 +107,7 @@ class Station(bases.Node):
             "delegate": delegate,
             "name": instruction.action.name,
             "action_id": instruction.action.id,
-            "description": dict(instruction.action.description)
+            "description": dict(instruction.action.description),
         }
         self.outboxes[delegate].append(instruction)
 
@@ -177,8 +178,8 @@ class Station(bases.Node):
             "actors": message["state"].get("actors", []),
             "sensors": message["state"].get("sensors", []),
             "busy": message["state"]["busy"],
-            "host": message['delegateid']['host'],
-            "running": message.get('running', [])
+            "host": message["delegateid"]["host"],
+            "running": message.get("running", []),
         }
         for name, state in message["state"]["threads"].items():
             try:
@@ -240,7 +241,7 @@ class Station(bases.Node):
                 # TODO: plausibly some logging
                 pass
             except Exception as ex:
-                print('bad handling', op, ex)
+                print("bad handling", op, ex)
 
     def _shutdown(self, exception: Optional[Exception] = None):
         """shut down the Station."""
@@ -392,18 +393,14 @@ class Station(bases.Node):
             "host": self.host,
             "port": self.port,
             "actors": self.identify_elements("actors"),
-            "delegates": [
-                keyfilter(lambda k: k != 'obj', d) for d in self.delegates
-            ],
+            # TODO: make this more efficient
+            "delegates": {d['name']: pack_delegate(d) for d in self.delegates},
             # weird dict constructions for protection against mutation
+            "config": pack_config(self.config),
             "threads": {k: v._state for k, v in self.threads.items()},
-            "config": deepcopy(self.config),
-            "tasks": {k: deepcopy(v) for k, v in tuple(self.tasks.items())},
+            "tasks": pack_tasks(self.tasks),
         }
-        # noinspection PyTypeChecker
-        return dig_and_edit(
-            props, valonly(has_callables), valonly(callable_info)
-        )
+        return props
 
     def _ackcheck(self, _conn: socket.socket, comm: dict):
         """

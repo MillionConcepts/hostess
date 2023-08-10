@@ -7,6 +7,7 @@ from cytoolz.curried import get
 from dustgoggles.codex.implements import Sticky
 
 from hostess.monitors import DEFAULT_TICKER
+from hostess.profilers import DEFAULT_PROFILER
 from hostess.station.actors import InstructionFromInfo
 from hostess.station.messages import make_action, make_instruction
 from hostess.station.station import Station
@@ -43,13 +44,14 @@ def status_display(station, n):
     dstring = (
         f"{len(station.inbox.completed)} tasks completed\n"
         f"{n} loops\n"
-        f"loop latency {round(time.time() - start - loop_pause, 3)}\n"
-        f"peer lock size {len(station.server.peers)}\n"
-        f"--queued sockets--\n"
+        # f"loop latency {round(time.time() - start - loop_pause, 3)}\n"
+        # f"peer lock size {len(station.server.peers)}\n"
+        # f"--queued sockets--\n"
     )
     for rec in getsocks(station):
         dstring += f"{rec}\n"
-    dstring += f"--ticks--\n{DEFAULT_TICKER}\n----"
+    # dstring += f"--ticks--\n{DEFAULT_TICKER}\n----"
+    dstring += f"{DEFAULT_PROFILER}\n"
     return dstring
 
 
@@ -70,9 +72,9 @@ watch = station.launch_delegate(
         ("logscratch", "Sleepy"),
     ],
     update_interval=0.5,
-    poll=0.01,
-    n_threads=8,
-    context="local",
+    poll=0.05,
+    n_threads=4,
+    context="subprocess",
 )
 
 station.add_element(InstructionFromInfo, name="dosleep")
@@ -92,7 +94,7 @@ os.unlink('dump.txt')
 exception = None
 
 try:
-    i, n = 0, 10
+    i, n = 0, 1000
     while True:
         start = time.time()
         if i < n:

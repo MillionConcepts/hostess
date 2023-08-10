@@ -1,23 +1,22 @@
 import datetime as dt
 import random
 import time
-from collections import defaultdict
-from functools import wraps, partial
 from typing import Optional, Sequence, Callable, Mapping
 
 import fire
 from cytoolz import keyfilter, keymap, valmap, partition
 from dustgoggles.codex.implements import Sticky
 from dustgoggles.codex.memutilz import (
-    deactivate_shared_memory_resource_tracker,
+    deactivate_shared_memory_resource_tracker
 )
-from dustgoggles.func import constant
 from dustgoggles.structures import NestingDict
 from rich.text import Text
 
-from hostess.monitors import DEFAULT_TICKER
-from textual_callback_signature_monkeypatch import do_patch
-do_patch()
+from hostess.monitors import DEFAULT_TICKER, ticked
+from textual_callback_signature_monkeypatch import patch_textual_invoke
+
+patch_textual_invoke()
+deactivate_shared_memory_resource_tracker()
 
 from textual._loop import loop_last
 from textual.app import App, ComposeResult
@@ -30,9 +29,7 @@ from hostess.profilers import DEFAULT_PROFILER
 from hostess.station.comm import read_comm
 from hostess.station.messages import unpack_obj
 from hostess.station.talkie import stsend
-from hostess.utilities import curry
 
-deactivate_shared_memory_resource_tracker()
 
 PRINTCACHE = []
 
@@ -221,10 +218,9 @@ def organize_tasks(tasks: dict) -> dict:
 def organize_running_actions(reports: dict) -> dict:
     out = NestingDict()
     for r in reports:
-        action = r['action']
-        times = action['time']
+        times = r['time']
         title = f"{times['start'][:21]} ({r['instruction_id']})"
-        target = out[action['name']][title]
+        target = out[r['name']][title]
         target['times'] = times
         # TODO: maybe we should squeeze descriptions into the ActionReports?
         target['duration'] = (
@@ -254,10 +250,9 @@ def delegate_dict(ddict: Mapping) -> dict:
 
 def organize_delegate_view(view: dict) -> dict:
     out = {}
-    for ddict in view['delegates']:
+    for name, ddict in view['delegates'].items():
         title = (
-            f"{ddict['name']}@{ddict.get('host', '?')}: "
-            f"(PID {ddict.get('pid', '?')})"
+            f"{name}@{ddict.get('host', '?')}: (PID {ddict.get('pid', '?')})"
         )
         out[title] = delegate_dict(ddict)
     return out
@@ -301,7 +296,9 @@ def populate_dropnodes(node, items, max_items):
             #  it has the disadvantage, as the application is currently
             #  written, that expanded dropdowns will not populate until the
             #  next update cycle.
-            ticked(populate_children_from_dict, 'dropnode_dig')(drop, {k: v for k, v in p}, max_items)
+            ticked(
+                populate_children_from_dict, 'dropnode_dig', DEFAULT_TICKER
+            )(drop, {k: v for k, v in p}, max_items)
 
 
 def populate_children_from_dict(

@@ -24,6 +24,7 @@ from google.protobuf.pyext._message import Message
 from hostess.station.handlers import flatten_for_json, json_sanitize
 from hostess.station.proto_utils import enum
 from hostess.station.talkie import TCPTalk
+from hostess.station.viewing import element_dict
 from hostess.utilities import configured, logstamp, yprint
 
 
@@ -477,10 +478,7 @@ class Node(Matcher, ABC):
             elements = chain(self.actors.items(), self.sensors.items())
         else:
             elements = getattr(self, element_type).items()
-        return {
-            k: f"{v.__class__.__module__}.{v.__class__.__name__}"
-            for k, v in elements
-        }
+        return element_dict(elements)
 
     def __str__(self):
         pstring = f"{type(self).__name__} ({self.name})"

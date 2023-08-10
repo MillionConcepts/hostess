@@ -27,6 +27,7 @@ from google.protobuf.pyext._message import (
 )
 from more_itertools import split_when, all_equal
 
+from hostess.profilers import DEFAULT_PROFILER
 from hostess.station.comm import make_comm
 from hostess.station.proto import station_pb2 as pro
 from hostess.station.proto_utils import (
@@ -110,25 +111,26 @@ def pack_obj(obj: Any, name: str = "") -> pro.PythonObject:
     default function for serializing an in-memory object as a pro.PythonObject
     Message.
     """
-    if isinstance(obj, pro.PythonObject):
+    with DEFAULT_PROFILER.context('packing'):
+        if isinstance(obj, pro.PythonObject):
+            return obj
+        if isinstance(obj, (str, bytes, int, float)):
+            scanf, chartype = obj2scanf(obj)
+            if isinstance(obj, str):
+                obj = obj.encode("utf-8")
+            elif isinstance(obj, NoneType):
+                obj = b"\x00"
+            obj = pro.PythonObject(
+                name=name,
+                scanf=scanf,
+                chartype=chartype,
+                value=struct.pack(scanf, obj),
+            )
+        else:
+            obj = pro.PythonObject(
+                name=name, serialization="dill", value=dill.dumps(obj)
+            )
         return obj
-    if isinstance(obj, (str, bytes, int, float)):
-        scanf, chartype = obj2scanf(obj)
-        if isinstance(obj, str):
-            obj = obj.encode("utf-8")
-        elif isinstance(obj, NoneType):
-            obj = b"\x00"
-        obj = pro.PythonObject(
-            name=name,
-            scanf=scanf,
-            chartype=chartype,
-            value=struct.pack(scanf, obj),
-        )
-    else:
-        obj = pro.PythonObject(
-            name=name, serialization="dill", value=dill.dumps(obj)
-        )
-    return obj
 
 
 def make_function_call_action(

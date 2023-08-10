@@ -35,6 +35,6 @@ async def _invoke(callback: Callable, *params: object) -> Any:
     return result
 
 
-def do_patch():
+def patch_textual_invoke():
     from textual import _callback
     _callback._invoke = _invoke
