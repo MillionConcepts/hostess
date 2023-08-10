@@ -3,33 +3,31 @@
 from __future__ import annotations
 
 import datetime as dt
-from functools import cached_property, cache
-from itertools import accumulate
 import json
-from operator import add, attrgetter
 import random
 import struct
 import sys
+from functools import cached_property, cache
+from itertools import accumulate
+from operator import add, attrgetter
 from types import MappingProxyType as MPt, NoneType
-from typing import Optional, Any, Literal, Mapping, MutableSequence, \
-    MutableMapping
+from typing import Optional, Any, Literal, Mapping, MutableMapping
 
-from cytoolz import groupby
 import dill
+import numpy as np
+from cytoolz import groupby
 from dustgoggles.func import gmap
 from dustgoggles.structures import dig_for_values
-from google.protobuf.message import Message
 from google.protobuf.internal.well_known_types import Duration, Timestamp
+from google.protobuf.message import Message
 from google.protobuf.pyext._message import (
     ScalarMapContainer,
     RepeatedCompositeContainer,
     RepeatedScalarContainer,
 )
 from more_itertools import split_when, all_equal
-import numpy as np
-from pympler.asizeof import asizeof
 
-from hostess.monitors import DEFAULT_TICKER
+from hostess.station.comm import make_comm
 from hostess.station.proto import station_pb2 as pro
 from hostess.station.proto_utils import (
     enum,
@@ -37,7 +35,6 @@ from hostess.station.proto_utils import (
     proto_formatdict,
     make_duration,
 )
-from hostess.station.comm import make_comm
 from hostess.utilities import mb, yprint
 
 
@@ -208,8 +205,8 @@ def task_msg(actiondict: dict, steps=None) -> pro.TaskReport:
     fields = {}
     if "steps" in actiondict.keys():
         raise NotImplementedError
-    if actiondict['status'] != 'running':
-        fields["result"] = pack_obj(actiondict.get('result'))
+    if actiondict["status"] != "running":
+        fields["result"] = pack_obj(actiondict.get("result"))
     fields["time"] = dict2msg(actiondict, pro.ActionTime)
     fields["id"] = actiondict["id"]
     action = dict2msg(actiondict, pro.ActionReport)
@@ -306,7 +303,7 @@ class Mailbox:
 
     def _sizer(self):
         return accumulate(
-            map(attrgetter('size'), tuple(self.messages.values())), add
+            map(attrgetter("size"), tuple(self.messages.values())), add
         )
 
     def prune(self, max_mb: float = 256):
