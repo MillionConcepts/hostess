@@ -6,9 +6,10 @@ import random
 import time
 from itertools import chain
 from pathlib import Path
+from string import ascii_lowercase
 
 import fire
-from cytoolz.curried import get, valmap
+from cytoolz.curried import get
 
 from hostess.monitors import Ticker, ticked
 from hostess.station.actors import InstructionFromInfo, reported
@@ -65,9 +66,15 @@ def status_display(station, n, start, loop_pause):
 
 def sleep_trigger_instruction(note, *_, **__):
     if 'succeed' in note['match']:
-        description = {'what_to_do': 'succeed'}
+        description = {
+            'what_to_do': 'succeed',
+            'title': 'succeed_' + ''.join(random.choices(ascii_lowercase, k=15))
+        }
     else:
-        description = {'what_to_do': 'fail'}
+        description = {
+            'what_to_do': 'fail',
+            'title': 'fail_' + ''.join(random.choices(ascii_lowercase, k=15))
+        }
     return make_instruction(
         "do", action=make_action(description, name="sleep"),
     )
@@ -127,7 +134,7 @@ def make_sample_station():
         filewatch_target="dump.txt",
         filewatch_patterns=("succeed", "fail",),
     )
-    station.set_delegate_properties('sleepy', sleeper_duration=0.2)
+    station.set_delegate_properties('sleepy', sleeper_duration=20)
 
     station._situation_comm = ticked(
         station._situation_comm, 'sent situation', SITSTATION_TICKER

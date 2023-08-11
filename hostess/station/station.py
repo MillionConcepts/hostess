@@ -466,8 +466,9 @@ class Station(bases.Node):
         **kwargs,
     ):
         """
-        launch a delegate, by default daemonized, and add it to the delegatelist.
-        may also launch locally or in a non-daemonized subprocess.
+        launch a delegate, by default daemonized, and add it to the
+        delegatelist. may also launch locally or in a non-daemonized
+        subprocess.
         """
         # TODO: option to specify remote host and run this using SSH
         if host != "localhost":

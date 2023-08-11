@@ -63,6 +63,8 @@ def organize_tasks(tasks: dict) -> dict:
             keyfilter(lambda f: f.endswith("_time"), task)
         )
         title = f"{times['init_time'][:21]} ({code})"
+        if 'title' in task.get('description', {}):
+            title = f"{task['description']['title']}: {title}"
         target = out[task['status']][task['name']][title]
         target['times'] = times
         target['delegate'] = task['delegate']
