@@ -340,7 +340,7 @@ class Station(bases.Node):
         box[pos].sent = True
 
     def _select_outgoing_message(
-            self, delegatename
+        self, delegatename
     ) -> tuple[Optional[Mailbox], Optional[pro.Instruction], Optional[int]]:
         """
         pick outgoing message, if one exists for this delegate.
@@ -455,13 +455,13 @@ class Station(bases.Node):
         return output
 
     def launch_delegate(
-            self,
-            name,
-            elements=(),
-            host="localhost",
-            update_interval=0.1,
-            context="daemon",
-            **kwargs,
+        self,
+        name,
+        elements=(),
+        host="localhost",
+        update_interval=0.1,
+        context="daemon",
+        **kwargs,
     ):
         """
         launch a delegate, by default daemonized, and add it to the delegatelist.

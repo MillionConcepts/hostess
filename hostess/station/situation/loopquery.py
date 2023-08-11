@@ -7,6 +7,8 @@ import time
 
 import fire
 
+from hostess.station.comm import read_comm
+from hostess.station.proto import station_pb2 as pro
 from hostess.station.station import get_port_from_shared_memory
 from hostess.station.talkie import stsend
 
@@ -16,7 +18,7 @@ def _view_loop(port: int, timeout: float, poll: float):
     while True:
         start = time.time()
         v, sock = stsend(
-            b'eswadzxswzeradhbgz', 'localhost', port, timeout=timeout
+            b'situation', 'localhost', port, timeout=timeout
         )
         if v == 'timeout':
             print('timeout')
@@ -27,15 +29,24 @@ def _view_loop(port: int, timeout: float, poll: float):
                 return i, v, sock
             print('\n******station disconnected******\n')
             break
+        if v == b'shutting down':
+            if i != 0:
+                print(f'\n******station entering shutdown mode******\n')
+            else:
+                print(f'station@{port} in shutdown mode\n')
+            break
         elif i == 0:
             print(f'station@{port} connected\n')
         i += 1
-        print(
-            f"{i}\n----\n",
-            f"latency: {time.time() - start}\n",
-            f"view size: {len(v)}\n",
+        message = read_comm(v).get('body')
+        status =(
+            f"{i}\n----\n"
+            f"response ok: {isinstance(message, pro.PythonObject)}\n"
+            f"roundtrip latency: {time.time() - start}\n"
+            f"response size: {len(v)}\n"
             f"socket: {sock}\n"
         )
+        print(status)
         time.sleep(poll)
     return i, v, sock
 
@@ -61,7 +72,8 @@ def view_forever(
             _view_loop(port, timeout, poll)
             time.sleep(3)
         except KeyboardInterrupt:
-            raise
+            print("\nexiting on keyboard interrupt\n")
+            return
         except Exception as ex:
             print(
                 f'\n******encountered exception: {type(ex)}: {ex}******\n'

@@ -10,12 +10,13 @@ from pathlib import Path
 import fire
 from cytoolz.curried import get
 
-# from hostess.monitors import DEFAULT_TICKER
-# from hostess.profilers import DEFAULT_PROFILER
+from hostess.monitors import Ticker, ticked
 from hostess.station.actors import InstructionFromInfo
 from hostess.station.messages import make_action, make_instruction
 from hostess.station.station import Station
 from hostess.station.tests.testing_actors import TrivialActor
+
+SITSTATION_TICKER = Ticker()
 
 
 def getsocks(station: Station):
@@ -47,15 +48,15 @@ def getsocks(station: Station):
 
 def status_display(station, n, start, loop_pause):
     dstring = (
-        f"{len(station.inbox.completed)} tasks completed\n"
         f"{n} loops\n"
+        f"{len(station.inbox.completed)} tasks completed\n"
         f"loop latency {round(time.time() - start - loop_pause, 3)}\n"
         f"peer lock size {len(station.server.peers)}\n"
         f"--queued sockets--\n"
     )
     for rec in getsocks(station):
         dstring += f"{rec}\n"
-    # dstring += f"--ticks--\n{DEFAULT_TICKER}\n----"
+    dstring += f"--ticks--\n{SITSTATION_TICKER}"
     # dstring += f"{DEFAULT_PROFILER}\n"
     return dstring
 
@@ -95,6 +96,12 @@ def make_sample_station():
         filewatch_patterns=("hi",),
         sleeper_duration=1,
     )
+    station._situation_comm = ticked(
+        station._situation_comm, 'sent situation', SITSTATION_TICKER
+    )
+    station._handle_incoming_message = ticked(
+        station._handle_incoming_message, 'Updates received', SITSTATION_TICKER
+    )
     station.start()
     if (textfile := Path("dump.txt")).exists():
         textfile.unlink()
@@ -112,9 +119,6 @@ def _backend_loop(i, n, verbose, station):
     time.sleep(loop_pause)
     if station.state == "crashed":
         raise station.exception
-    # Note that if you write quite quickly, do not expect n
-    # completed tasks (the Sensor does not trigger once per 'hi',
-    # but once per detected write)
     if verbose:
         print(status_display(station, i, start, loop_pause))
     return i + 1

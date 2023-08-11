@@ -42,6 +42,9 @@ class Profiler:
     def context(self, label=""):
         return PContext(self, label)
 
+    def reset(self):
+        self.labels = defaultdict(self._newcaches)
+
     def _newcaches(self):
         caches = {}
         for k, v in self.monitors.items():

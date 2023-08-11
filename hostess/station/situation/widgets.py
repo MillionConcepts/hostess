@@ -39,8 +39,9 @@ def populate_dropnodes(node, items, max_items):
             # dropdowns this way
             c.remove()
     # TODO: need to be able to do incomplete partitions
-    partitions = partition(max_items, items)
+    partitions = partition(max_items, items, pad=None)
     for i, p in enumerate(partitions):
+        p = tuple(filter(None, p))
         start, stop = i * max_items + 1, (i + 1) * max_items
         if start not in dropnodes.keys():
             drop = node.add(
@@ -48,15 +49,12 @@ def populate_dropnodes(node, items, max_items):
             )
         else:
             drop = dropnodes[start]
-        with DEFAULT_PROFILER.context('dropnode_population'):
-            # TODO, maybe: we _could_ just skip populating non-expanded nodes,
-            #  which would be wildly more efficient for many applications.
-            #  it has the disadvantage, as the application is currently
-            #  written, that expanded dropdowns will not populate until the
-            #  next update cycle.
-            ticked(
-                populate_children_from_dict, 'dropnode_dig', DEFAULT_TICKER
-            )(drop, {k: v for k, v in p}, max_items)
+        # TODO, maybe: we _could_ just skip populating non-expanded nodes,
+        #  which would be wildly more efficient for many applications.
+        #  it has the disadvantage, as the application is currently
+        #  written, that expanded dropdowns will not populate until the
+        #  next update cycle.
+        populate_children_from_dict(drop, {k: v for k, v in p}, max_items)
 
 
 def populate_children_from_dict(

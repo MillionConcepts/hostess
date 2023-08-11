@@ -366,11 +366,7 @@ class Delegate(bases.Node):
                     self._log(response, category="comms", direction="recv")
                 # TODO, maybe: this could be a separate attribute
                 time.sleep(self.update_interval)
-            response, _ = ticked(
-                stsend,
-                'delegate_stsend',
-                DEFAULT_TICKER
-            )(self._insert_state(message), *self.station)
+            response, _ = stsend(self._insert_state(message), *self.station)
         # if we locked ourselves due to bad responses, and we weren't already
         # locked for some reason -- like we often will have been if sending
         # a task report or something -- unlock ourselves.

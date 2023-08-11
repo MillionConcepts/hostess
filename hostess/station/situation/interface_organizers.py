@@ -13,21 +13,28 @@ from dustgoggles.structures import NestingDict
 
 from hostess.station.comm import read_comm
 from hostess.station.messages import unpack_obj
+from hostess.station.proto import station_pb2 as pro
 from hostess.station.talkie import stsend
 
 
 def get_situation(host, port):
     if (host is None) or (port is None):
-        raise ConnectionError("valid station address not available")
+        raise TypeError("station address not defined")
     # TODO: handle recurring queries a little more gracefully
-    response, _ = stsend(b"view", host, port, timeout=0.5)
+    response, _ = stsend(b"situation", host, port, timeout=0.5)
     # TODO: timeout tracker
     if response == "timeout":
         raise TimeoutError('dropped packet')
+    if response == 'connection refused':
+        raise ConnectionError('connection refused')
+    if response == b'shutting down':
+        raise ConnectionError('station in shutdown mode')
     try:
         comm = read_comm(response)
     except TypeError:
-        raise ConnectionError(f'bad response: {response[:128]}')
+        raise ValueError(f'bad response: {response[:128]}')
+    if not isinstance(comm['body'], pro.PythonObject):
+        raise ValueError(f'bad response: {comm["body"][:128]}')
     return unpack_obj(comm["body"])
 
 
