@@ -38,19 +38,19 @@ def get_situation(host, port):
     return unpack_obj(comm["body"])
 
 
-def add_config_to_elements(elements: dict, config: dict) -> dict[str]:
+def add_config_to_elements(elements: dict, interface, cdict) -> dict[str]:
     """join config information to matching Actors/Sensors"""
     out = {}
     for name, classname in elements.items():
         out[name] = {'class': classname}
         element_interface = keyfilter(
-            lambda k: k.split('_')[0] == name, config['interface']
+            lambda k: k.split('_')[0] == name, interface
         )
         if len(element_interface) > 0:
             out[name]['interface'] = keymap(
                 lambda k: "_".join(k.split("_")[1:]), element_interface
             )
-        if (element_cdict := config.get('cdict', {}).get(name)) is not None:
+        if (element_cdict := cdict.get(name)) is not None:
             out[name]['cdict'] = element_cdict
     return out
 
@@ -95,16 +95,16 @@ def organize_running_actions(reports: dict) -> dict:
 
 
 def delegate_dict(ddict: Mapping) -> dict:
-    config = {
-        'cdict': ddict.get('cdict', {}),
-        'interface': ddict.get('interface', {})
-    }
     out = {'status': ddict['inferred_status'], 'wait_time': ddict['wait_time']}
     if ddict.get('busy') is True:
         ddict['wait_time'] = str(out['wait_time']) + ' [busy]'
     for element_type in ('actors', 'sensors'):
         if len(element_dict := ddict.get(element_type, {})) > 0:
-            out[element_type] = add_config_to_elements(element_dict, config)
+            out[element_type] = add_config_to_elements(
+                element_dict,
+                ddict.get('cdict', {}),
+                ddict.get('interface', {})
+            )
         if element_type == 'sensors' and ddict.get('infocount') is not None:
             for k, v in ddict['infocount'].items():
                 if k in out[element_type]:
@@ -130,7 +130,9 @@ def organize_station(view: dict) -> dict:
     view = keyfilter(lambda k: k != 'delegates', view)
     return {
         'id': f"{view['name']}@{view.get('host', '?')}:{view['port']}",
-        'actors': add_config_to_elements(view['actors'], view['config']),
+        'actors': add_config_to_elements(
+            view['actors'], view.get('cdict', {}), view.get('interface', {})
+        ),
         'tasks': organize_tasks(view['tasks']),
-        'threads': view['threads']
+        'threads': view['threads'],
     }

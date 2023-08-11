@@ -82,21 +82,21 @@ def callable_info(obj: Any) -> dict[str, str] | tuple[dict[str, str]]:
     raise TypeError(f"don't know how to handle {type(obj)}")
 
 
-def pack_config(config: dict[str]) -> dict[str]:
-    packed = {"interface": {}, "cdict": {}}
-    for k, v in config["interface"].items():
+def pack_config(cdict, interface) -> tuple[dict[str], dict[str]]:
+    cdict_out, interface_out = {}, {}
+    for k, v in interface.items():
         if has_callables(v):
-            packed["interface"][k] = callable_info(v)
+            interface_out[k] = callable_info(v)
         else:
-            packed["interface"][k] = str(v)
+            interface[k] = str(v)
     # TODO: find some clunky efficient way to do this one
     # noinspection PyTypedDict
-    packed["cdict"] = dig_and_edit(
-        deepcopy(config["cdict"]),
+    cdict_out = dig_and_edit(
+        deepcopy(cdict),
         valonly(has_callables),
         valonly(callable_info),
     )
-    return packed
+    return cdict_out, interface_out
 
 
 def pack_delegate(ddict: dict[str]) -> dict[str]:
@@ -112,11 +112,8 @@ def pack_delegate(ddict: dict[str]) -> dict[str]:
         "infocount"
     )
     packed = {k: ddict.get(k) for k in literals}
-    packed["config"] = pack_config(
-        {
-            "cdict": ddict.get('cdict', {}),
-            "interface": ddict.get('interface', {})
-        }
+    packed["cdict"], packed["interface"] = pack_config(
+        ddict.get('cdict', {}), ddict.get('interface', {})
     )
     packed["running"] = [
         {
@@ -147,10 +144,13 @@ def pack_tasks(tasks: dict[int]) -> dict:
         "duration",
         "description",  # TODO: maybe a bad idea w/huge description
     )
-    return {id_: {k: t.get(k) for k in literals} for id_, t in tasks.items()}
+    return {
+        id_: {k: t.get(k) for k in literals} for id_, t in tuple(tasks.items())
+    }
 
 
 def situation_of(station: Station) -> dict:
+    # noinspection PyDictCreation
     props = {
         "name": station.name,
         "host": station.host,
@@ -159,8 +159,10 @@ def situation_of(station: Station) -> dict:
         # TODO: make this more efficient
         "delegates": {d['name']: pack_delegate(d) for d in station.delegates},
         # weird dict constructions for protection against mutation
-        "config": pack_config(station.config),
         "threads": {k: v._state for k, v in station.threads.items()},
         "tasks": pack_tasks(station.tasks),
     }
+    props['cdict'], props['interface'] = pack_config(
+        station.config['cdict'], station.config['interface']
+    )
     return props

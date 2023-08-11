@@ -354,7 +354,7 @@ class Station(bases.Node):
         # TODO, maybe: this search will be expensive if outboxes get really big
         #  -- might want some kind of hashing
         messages = tuple(
-            filter(lambda pm: pm[1].sent is False, enumerate(box))
+            filter(lambda pm: pm[1].sent is False, tuple(enumerate(box)))
         )
         if len(messages) == 0:
             return None, None, None  # this will trigger an empty ack message
