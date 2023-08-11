@@ -14,23 +14,21 @@ from concurrent.futures import ThreadPoolExecutor
 from itertools import chain
 from random import shuffle
 from types import MappingProxyType as MPt
-from typing import Any, Callable, Mapping, Union, Optional, Literal
+from typing import Any, Callable, Mapping, Union, Optional, Literal, Collection
 
 import yaml
 from cytoolz import valmap
+
 # noinspection PyProtectedMember
 from google.protobuf.pyext._message import Message
 
 from hostess.station.handlers import flatten_for_json, json_sanitize
 from hostess.station.proto_utils import enum
 from hostess.station.talkie import TCPTalk
-from hostess.station.viewing import element_dict
 from hostess.utilities import configured, logstamp, yprint
 
 
-def associate_actor(
-    cls, cdict, params, actors: dict[Actor], props, name=None
-):
+def associate_actor(cls, cdict, params, actors: dict[Actor], props, name=None):
     """utility function for associating an actor with a Sensor."""
     name = inc_name(cls.name if name is None else name, cdict)
     actors[name] = cls()
@@ -45,6 +43,7 @@ def associate_actor(
 
 
 class AttrConsumer:
+
     """
     implements functionality for "consuming" the attributes of associated
     objects. designed to permit Nodes and similar objects to promote the
@@ -104,6 +103,7 @@ class AttrConsumer:
 
 
 class Matcher(AttrConsumer, ABC):
+
     """base class for things that can match sequences of actors."""
 
     def match(self, event: Any, category=None, **kwargs) -> list[Actor]:
@@ -161,6 +161,7 @@ class Matcher(AttrConsumer, ABC):
 
 
 class Sensor(Matcher, ABC):
+
     """bass class for watching an input source."""
 
     def __init__(self):
@@ -219,6 +220,7 @@ class Sensor(Matcher, ABC):
 
 
 class Actor(ABC):
+
     """base class for conditional responses to events."""
 
     def __init__(self):
@@ -253,10 +255,13 @@ class DispatchActor(Actor, ABC):
     abstract subclass for actors intended to dispatch instructions from
     Stations to Nodes.
     """
+
     def __init__(self):
         super().__init__()
         self.interface = self.interface + (
-            "target_name", "target_actor", "target_picker"
+            "target_name",
+            "target_actor",
+            "target_picker",
         )
 
     def pick(self, station: "Station", message: Message, **_):
@@ -267,18 +272,18 @@ class DispatchActor(Actor, ABC):
             raise TypeError("Must have a delegate name, actor name, or picker")
         targets = station.delegates
         if self.target_name is not None:
-            targets = [n for n in targets if n['name'] == self.target_name]
+            targets = [n for n in targets if n["name"] == self.target_name]
         if self.target_actor is not None:
-            targets = [n for n in targets if self.target_actor in n['actors']]
+            targets = [n for n in targets if self.target_actor in n["actors"]]
         if self.target_picker is not None:
             targets = [n for n in targets if self.target_picker(n, message)]
-        not_busy = [n for n in targets if n.get('busy') is False]
+        not_busy = [n for n in targets if n.get("busy") is False]
         if len(targets) == 0:
             raise NoMatchingDelegate
         if len(not_busy) == 0:
             shuffle(targets)
-            return targets[0]['name']
-        return not_busy[0]['name']
+            return targets[0]["name"]
+        return not_busy[0]["name"]
 
     target_name: Optional[str] = None
     target_actor: Optional[str] = None
@@ -308,6 +313,7 @@ class NoInstructionType(DoNotUnderstand):
 class NoMatch(Exception):
     """actor does not match instruction. used for control flow."""
 
+
 class NoMatchingDelegate(Exception):
     """no nodes are available that match this action."""
 
@@ -316,11 +322,20 @@ class AllBusy(Exception):
     """all nodes we could dispatch this instruction to are busy."""
 
 
-def inc_name(name, config):
+def inc_name(name: str, config: Mapping[str]) -> str:
+    """add an incrementing numerical suffix to a prospective duplicate key"""
     if name in config:
         matches = filter(lambda k: re.match(name, k), config)
         name = f"{name}_{len(tuple(matches)) + 1}"
     return name
+
+
+def element_dict(elements: Collection[Actor | Sensor]) -> dict[str, str]:
+    """sensor title formatter for identify_elements or similar tasks"""
+    return {
+        k: f"{v.__class__.__module__}.{v.__class__.__name__}"
+        for k, v in elements
+    }
 
 
 def validate_instruction(instruction):
@@ -347,7 +362,7 @@ class Node(Matcher, ABC):
         port: Optional[int] = None,
         poll: float = 0.08,
         timeout: int = 10,
-        _is_process_owner=False
+        _is_process_owner=False,
     ):
         super().__init__()
         self.host, self.port = host, port
@@ -431,14 +446,14 @@ class Node(Matcher, ABC):
 
     def shutdown(self, exception=None, instruction=None):
         self.locked = True
-        self.state = 'shutdown' if exception is None else 'crashed'
-        self.signals['main'] = 1
+        self.state = "shutdown" if exception is None else "crashed"
+        self.signals["main"] = 1
         try:
             self._shutdown(exception=exception)
         except Exception as ex:
             self._log("shutdown exception", exception=ex)
         self.is_shut_down = True
-        self._log('shutdown complete')
+        self._log("shutdown complete")
 
     def _start(self):
         """
@@ -453,7 +468,7 @@ class Node(Matcher, ABC):
         except Exception as ex:
             exception = ex
         # don't do a double shutdown during a graceful termination
-        if self.state not in ('shutdown', 'crashed'):
+        if self.state not in ("shutdown", "crashed"):
             self.shutdown(exception)
         return exception
 
@@ -470,10 +485,13 @@ class Node(Matcher, ABC):
             raise TypeError
 
     def identify_elements(
-        self,
-        element_type: Optional[Literal["actors", "sensors"]] = None
+        self, element_type: Optional[Literal["actors", "sensors"]] = None
     ) -> dict[str, str]:
-        """return a dict containing names and classes of actors"""
+        """
+        return a dict with names and classes of node's attached elements.
+        intended primarily to produce a lightweight version of identifying
+        information for transmission.
+        """
         if element_type is None:
             elements = chain(self.actors.items(), self.sensors.items())
         else:
@@ -498,7 +516,7 @@ class Node(Matcher, ABC):
             # TODO, maybe: still want an event key?
             logdict |= flatten_for_json(event)
         else:
-            logdict['event'] = json_sanitize(event)
+            logdict["event"] = json_sanitize(event)
         with self.logfile.open("a") as stream:
             json.dump(logdict, stream, indent=2)
             stream.write(",\n")
@@ -510,7 +528,7 @@ class Node(Matcher, ABC):
         for name, actor_cdict in self.params.items():
             for k, v in filter(lambda kv: kv[1] != (), actor_cdict.items()):
                 params[name][k] = self.cdict[name].get(k)
-        return {'interface': props, 'cdict': dict(params)}
+        return {"interface": props, "cdict": dict(params)}
 
     def _get_n_threads(self):
         return self._n_threads
@@ -531,5 +549,3 @@ class Node(Matcher, ABC):
     server_events = None
     state = "stopped"
     _ackcheck: Optional[Callable] = None
-
-

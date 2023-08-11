@@ -1,21 +1,29 @@
-import re
+"""
+functions for describing and organizing Station attributes in preparation for
+sending them to the situation frontend
+"""
+
 from copy import deepcopy
+from inspect import getsource
+import re
 from types import FunctionType
-from typing import Callable
+from typing import Callable, Any
 
 from dustgoggles.func import gmap
 from dustgoggles.structures import dig_and_edit, valonly
-from inspect import getsource
+
+from hostess.station.station import Station
 
 
-def has_callables(obj):
+def has_callables(obj: Any) -> bool:
     if callable(obj):
         return True
     if "__iter__" in dir(obj) and any(callable(o) for o in obj):
         return True
+    return False
 
 
-def digsource(obj: Callable):
+def digsource(obj: Callable) -> str:
     """
     wrapper for inspect.getsource that attempts to work on objects like
     Dynamic, functools.partial, etc.
@@ -52,21 +60,21 @@ def getdef(func: Callable, get_docstring: bool = True) -> str:
     return defstring + '\n    """' + func.__doc__ + '"""\n'
 
 
-def maybe_getdef(obj, maxchar=100):
+def maybe_getdef(obj: Any, maxchar: int = 100) -> str:
     try:
         return getdef(obj, get_docstring=False)[:maxchar]
     except (TypeError, ValueError, AttributeError):
         return str(obj)[:maxchar]
 
 
-def sourcerec(obj):
+def sourcerec(obj: Any) -> dict[str, str]:
     return {
         "name": f"{obj.__class__.__module__}{obj.__class__.__name__}",
         "def": maybe_getdef(obj),
     }
 
 
-def callable_info(obj):
+def callable_info(obj: Any) -> dict[str, str] | tuple[dict[str, str]]:
     if callable(obj):
         return sourcerec(obj)
     if "__iter__" in dir(obj):
@@ -89,13 +97,6 @@ def pack_config(config: dict[str]) -> dict[str]:
         valonly(callable_info),
     )
     return packed
-
-
-def element_dict(elements):
-    return {
-        k: f"{v.__class__.__module__}.{v.__class__.__name__}"
-        for k, v in elements
-    }
 
 
 def pack_delegate(ddict: dict[str]) -> dict[str]:
@@ -140,6 +141,22 @@ def pack_tasks(tasks: dict[int]) -> dict:
         "start_time",
         "end_time",
         "duration",
-        "description",  # TODO: maybe a bad idea w/huge description,
+        "description",  # TODO: maybe a bad idea w/huge description
     )
     return {id_: {k: t.get(k) for k in literals} for id_, t in tasks.items()}
+
+
+def situation_of(station: Station) -> dict:
+    props = {
+        "name": station.name,
+        "host": station.host,
+        "port": station.port,
+        "actors": station.identify_elements("actors"),
+        # TODO: make this more efficient
+        "delegates": {d['name']: pack_delegate(d) for d in station.delegates},
+        # weird dict constructions for protection against mutation
+        "config": pack_config(station.config),
+        "threads": {k: v._state for k, v in station.threads.items()},
+        "tasks": pack_tasks(station.tasks),
+    }
+    return props

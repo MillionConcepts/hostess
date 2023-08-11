@@ -1,22 +1,18 @@
 from __future__ import annotations
 
+from collections import defaultdict
 import datetime as dt
+from pathlib import Path
 import random
 import socket
 import sys
 import time
-from collections import defaultdict
-from copy import deepcopy
-from pathlib import Path
 from typing import Literal, Mapping, Optional, Any
 
-from cytoolz import keyfilter
 from dustgoggles.dynamic import exc_report
 from dustgoggles.func import gmap, filtern
-from dustgoggles.structures import dig_and_edit, valonly
 from google.protobuf.message import Message
 
-import hostess.station.proto.station_pb2 as pro
 from hostess.caller import generic_python_endpoint
 from hostess.station import bases
 from hostess.station.bases import NoMatchingDelegate
@@ -30,13 +26,10 @@ from hostess.station.messages import (
     Msg,
     unpack_message,
 )
+import hostess.station.proto.station_pb2 as pro
 from hostess.station.proto_utils import enum
 from hostess.station.talkie import timeout_factory
-from hostess.station.viewing import has_callables, callable_info, pack_config, \
-    pack_delegate, pack_tasks
 from hostess.subutils import RunCommand
-
-from hostess.profilers import DEFAULT_PROFILER
 
 
 class Station(bases.Node):
@@ -46,15 +39,15 @@ class Station(bases.Node):
     """
 
     def __init__(
-        self,
-        host: str,
-        port: int,
-        name: str = "station",
-        n_threads: int = 8,
-        max_inbox_mb: float = 250,
-        logdir=Path(__file__).parent / ".nodelogs",
-        _is_process_owner=False,
-        **kwargs,
+            self,
+            host: str,
+            port: int,
+            name: str = "station",
+            n_threads: int = 8,
+            max_inbox_mb: float = 250,
+            logdir=Path(__file__).parent / ".nodelogs",
+            _is_process_owner=False,
+            **kwargs,
     ):
         super().__init__(
             host=host,
@@ -120,7 +113,7 @@ class Station(bases.Node):
         )
 
     def shutdown_delegate(
-        self, delegate: str, how: Literal["stop", "kill"] = "stop"
+            self, delegate: str, how: Literal["stop", "kill"] = "stop"
     ):
         self.outboxes[delegate].append(make_instruction(how))
 
@@ -185,10 +178,10 @@ class Station(bases.Node):
             try:
                 instruction_id = int(name.replace("Instruction_", ""))
                 if self.tasks[instruction_id]["status"] not in (
-                    "success",
-                    "failure",
-                    "crash",
-                    "timeout",
+                        "success",
+                        "failure",
+                        "crash",
+                        "timeout",
                 ):
                     # don't override formally reported status
                     self.tasks[instruction_id]["status"] = state.lower()
@@ -347,7 +340,7 @@ class Station(bases.Node):
         box[pos].sent = True
 
     def _select_outgoing_message(
-        self, delegatename
+            self, delegatename
     ) -> tuple[Optional[Mailbox], Optional[pro.Instruction], Optional[int]]:
         """
         pick outgoing message, if one exists for this delegate.
@@ -387,21 +380,6 @@ class Station(bases.Node):
         task_record["sent_time"] = dt.datetime.now(tz=dt.timezone.utc)
         task_record["status"] = "sent"
 
-    def _viewprops(self) -> dict:
-        props = {
-            "name": self.name,
-            "host": self.host,
-            "port": self.port,
-            "actors": self.identify_elements("actors"),
-            # TODO: make this more efficient
-            "delegates": {d['name']: pack_delegate(d) for d in self.delegates},
-            # weird dict constructions for protection against mutation
-            "config": pack_config(self.config),
-            "threads": {k: v._state for k, v in self.threads.items()},
-            "tasks": pack_tasks(self.tasks),
-        }
-        return props
-
     def _ackcheck(self, _conn: socket.socket, comm: dict):
         """
         callback for interpreting comms and responding as appropriate.
@@ -411,19 +389,20 @@ class Station(bases.Node):
         # TODO: lockout might be too strict
         msg, self.locked = None, True
         try:
-            if comm["body"] == b"view":
-                return make_comm(pack_obj(self._viewprops())), "sent view"
+            if comm["body"] == b"situation":
+                if self.state in ("shutdown", "crashed"):
+                    return make_comm(b"shutting down"), "sent shutdown notice"
+                return self._situation_comm(), "sent situation"
             if comm["err"]:
                 # TODO: log this and send did-not-understand
                 self._log("failed to decode", type="comms", conn=_conn)
-                return make_comm(b""), "notified sender of error"
+                return make_comm(b"bad decode"), "notified sender bad decode"
             incoming = comm["body"]
             try:
                 delegatename = incoming.delegateid.name
-            except (AttributeError, ValueError) as err:
-                # TODO: send not-enough-info message
-                self.log("name error", error=str(err), category="comms")
-                return make_comm(b""), "notified sender not enough info"
+            except (AttributeError, ValueError):
+                self._log("bad request", error="bad request", category="comms")
+                return make_comm(b"bad request"), "notified sender bad request"
             # interpret the comm here in case we want to immediately send a
             # response based on its contents (e.g., in a gPhoton 2-like
             # pipeline that's mostly coordinating execution of a big list of
@@ -448,9 +427,9 @@ class Station(bases.Node):
                 self._update_task_record(msg)
             self._record_message(box, msg, pos)
             return box[pos].comm, f"sent instruction {box[pos].id}"
-        # TODO: handle errors in some kind of graceful way
         except Exception as ex:
             self._log(exc_report(ex, 0), category="comms")
+            return b"response failure", "failed to respond"
         finally:
             self.locked = False
 
@@ -476,13 +455,13 @@ class Station(bases.Node):
         return output
 
     def launch_delegate(
-        self,
-        name,
-        elements=(),
-        host="localhost",
-        update_interval=0.1,
-        context="daemon",
-        **kwargs,
+            self,
+            name,
+            elements=(),
+            host="localhost",
+            update_interval=0.1,
+            context="daemon",
+            **kwargs,
     ):
         """
         launch a delegate, by default daemonized, and add it to the delegatelist.
@@ -495,11 +474,11 @@ class Station(bases.Node):
         if any(n["name"] == name for n in self.delegates):
             raise ValueError("can't launch a delegate with a duplicate name")
         kwargs = {
-            "station_address": (self.host, self.port),
-            "name": name,
-            "elements": elements,
-            "update_interval": update_interval,
-        } | kwargs
+                     "station_address": (self.host, self.port),
+                     "name": name,
+                     "elements": elements,
+                     "update_interval": update_interval,
+                 } | kwargs
         delegateinfo = blank_delegateinfo() | {
             "name": name,
             "inferred_status": "initializing",
@@ -516,6 +495,23 @@ class Station(bases.Node):
         self.delegates.append(delegateinfo)
         return output
 
+    def save_port_to_shared_memory(self, address: Optional[str] = None):
+        from dustgoggles.codex.implements import Sticky
+        from dustgoggles.codex.memutilz import (
+            deactivate_shared_memory_resource_tracker
+        )
+
+        deactivate_shared_memory_resource_tracker()
+        address = self.name if address is None else address
+        Sticky.note(
+            self.port, address=f"{address}-port-report", cleanup_on_exit=True
+        )
+
+    def _situation_comm(self) -> bytes:
+        from hostess.station.situation.response_organizers import situation_of
+
+        return make_comm(pack_obj(situation_of(self)))
+
 
 def blank_delegateinfo():
     return {
@@ -527,3 +523,15 @@ def blank_delegateinfo():
         "interface": {},
         "actors": {},
     }
+
+
+def get_port_from_shared_memory(memory_address='station'):
+    from dustgoggles.codex.implements import Sticky
+    from dustgoggles.codex.memutilz import (
+        deactivate_shared_memory_resource_tracker
+    )
+
+    deactivate_shared_memory_resource_tracker()
+    if (port := Sticky(f"{memory_address}-port-report").read()) is None:
+        raise FileNotFoundError('no port at address')
+    return port

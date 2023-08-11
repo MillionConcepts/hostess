@@ -13,13 +13,11 @@ from typing import Optional, Callable
 from hostess.monitors import DEFAULT_TICKER, ticked
 from hostess.station.comm import make_comm, read_header, read_comm
 from hostess.station.messages import Mailbox
-
 from hostess.utilities import (
     curry,
     logstamp,
     timeout_factory,
     signal_factory,
-    trywrap,
 )
 
 
@@ -32,18 +30,18 @@ class TCPTalk:
     """lightweight multithreaded tcp server."""
 
     def __init__(
-            self,
-            host,
-            port,
-            n_threads=4,
-            poll=0.01,
-            decoder: Callable = read_comm,
-            ackcheck: Optional[Callable] = None,
-            executor: Optional[ThreadPoolExecutor] = None,
-            lock: Optional[threading.Lock] = None,
-            chunksize: int = 16384,
-            delay: float = 0.01,
-            timeout: int = 10,
+        self,
+        host,
+        port,
+        n_threads=4,
+        poll=0.01,
+        decoder: Callable = read_comm,
+        ackcheck: Optional[Callable] = None,
+        executor: Optional[ThreadPoolExecutor] = None,
+        lock: Optional[threading.Lock] = None,
+        chunksize: int = 16384,
+        delay: float = 0.01,
+        timeout: int = 10,
     ):
         """
         Args:
@@ -107,24 +105,22 @@ class TCPTalk:
         crashed_threads = []
         for k, v in threads:
             # will be dict if it is a crashed thread running in trywrap
-            if not isinstance(v, dict) and (v._state == 'RUNNING'):
+            if not isinstance(v, dict) and (v._state == "RUNNING"):
                 continue
-            DEFAULT_TICKER.tick('oopsie-woopsie!')
+            DEFAULT_TICKER.tick("oopsie-woopsie!")
             self.sig(k, 0)
             time.sleep(self.poll * 2)
             self.sig(k, None)
             thread = self.threads.pop(k, None)
             if isinstance(thread, dict):
-                exception = thread['exception']
+                exception = thread["exception"]
             elif thread is not None:
                 exception = thread.exception()
             else:
                 exception = None
             crashed_threads.append(exception)
             if k == "select":
-                self.threads["select"] = self.exec.submit(
-                    self.launch_selector
-                )
+                self.threads["select"] = self.exec.submit(self.launch_selector)
             else:
                 self.threads[k] = self.exec.submit(self.launch_io, k)
         self.status = "running"
@@ -176,7 +172,7 @@ class TCPTalk:
         self.sel.register(
             self.sock,
             selectors.EVENT_READ,
-            ticked(self._accept, 'connection accepted', DEFAULT_TICKER)
+            ticked(self._accept, "connection accepted", DEFAULT_TICKER),
         )
         while self.signals.get("select") is None:
             try:
@@ -214,7 +210,7 @@ class TCPTalk:
             callback, peersock = key.data, key.fileobj  # explanatory variables
             if (peerage is True) and (callback.__name__ != "_ack"):
                 # connection / read already handled
-                DEFAULT_TICKER.tick(f'already peered')
+                DEFAULT_TICKER.tick(f"already peered")
                 continue
             if self.locked and callback.__name__ != "_ack":
                 continue
@@ -237,10 +233,10 @@ class TCPTalk:
                 "callback": callback.__name__,
             }
             self.events.append(event)
-            DEFAULT_TICKER.tick(f'{name} thread acted on key')
+            DEFAULT_TICKER.tick(f"{name} thread acted on key")
             if (stream is None) or (len(stream) == 0):
                 continue
-            if not isinstance(stream['body'], bytes):  # control codes, etc.
+            if not isinstance(stream["body"], bytes):  # control codes, etc.
                 self.data.append(event | {"content": stream})
 
     def _accept(
@@ -268,7 +264,7 @@ class TCPTalk:
             self.sel.unregister(conn)
             waiting, unwait = timeout_factory(timeout=self.timeout)
             stream, length = conn.recv(self.chunksize), None
-            length = read_header(stream)['length']
+            length = read_header(stream)["length"]
             while waiting() >= 0:  # syntactic handwaving. breaks w/exception.
                 if (length is not None) and (len(stream) >= length):
                     break
@@ -284,7 +280,7 @@ class TCPTalk:
                 conn, selectors.EVENT_WRITE, curry(self._ack)(stream)
             )
         except BrokenPipeError:
-            DEFAULT_TICKER.tick('broken pipe in read')
+            DEFAULT_TICKER.tick("broken pipe in read")
             try:
                 self.peers.pop(conn.getpeername(), None)
                 status = "broken pipe"
@@ -304,15 +300,13 @@ class TCPTalk:
         except BlockingIOError:
             self.peers.pop(conn.getpeername(), None)
             status = f"cleared blocking socket {conn.getpeername()}"
-            DEFAULT_TICKER.tick(f'cleared blocking socket')
+            DEFAULT_TICKER.tick(f"cleared blocking socket")
         except (IOError, OSError) as err:
             status = f"{type(err)}: {str(err)}"
         event = f"read {len(stream)}" if event is None else event
         return stream, event, status
 
-    def _tryread(
-            self, conn: socket.socket
-    ) -> tuple[Optional[bytes], str]:
+    def _tryread(self, conn: socket.socket) -> tuple[Optional[bytes], str]:
         """inner read-individual-chunk-from-socket handler for `read`"""
         status = "streaming"
         try:
@@ -341,13 +335,13 @@ class TCPTalk:
             while len(response) > 0:
                 try:
                     # attempt to send chunk of designated size...
-                    payload = response[:self.chunksize]
+                    payload = response[: self.chunksize]
                     sent = conn.send(payload)
                     unwait()
                     # ...but only truncate by amount we successfullly sent
                     response = response[sent:]
                 except BrokenPipeError:
-                    DEFAULT_TICKER.tick('broken pipe in ack')
+                    DEFAULT_TICKER.tick("broken pipe in ack")
                     # don't need to release peerlock here because we always
                     # release it after _ack
                     return None, "ack attempt", "broken pipe"
@@ -364,7 +358,7 @@ class TCPTalk:
         except TimeoutError as te:
             return None, "ack attempt", f"{te}"
         except Exception as _ex:
-            DEFAULT_TICKER.tick('_ack fail')
+            DEFAULT_TICKER.tick("_ack fail")
             raise
 
     def _trydecode(self, stream):
@@ -382,7 +376,7 @@ class TCPTalk:
     def _check_peerage(self, key: selectors.SelectorKey | socket.socket):
         """check already-peered lock."""
         try:
-            if hasattr(key, 'fileobj'):
+            if hasattr(key, "fileobj"):
                 # noinspection PyUnresolvedReferences
                 peer = key.fileobj.getpeername()
             else:
@@ -427,7 +421,7 @@ def read_from_socket(headerread, sock, timeout):
     response, length = data, None
     if headerread is not None:
         try:
-            length = headerread(response)['length']
+            length = headerread(response)["length"]
         except (IOError, KeyError):
             pass
     while True:
@@ -458,5 +452,5 @@ def stsend(data, host, port, timeout=10, delay=0, chunksize=None):
         timeout,
         delay,
         chunksize,
-        headerread=read_header
+        headerread=read_header,
     )

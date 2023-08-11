@@ -136,3 +136,5 @@ def flatten_for_json(
     if isinstance(event, Message):
         event = m2d(event)
     return valmap(curry(json_sanitize, maxlen=maxlen), event)
+
+

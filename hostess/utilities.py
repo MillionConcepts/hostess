@@ -12,7 +12,6 @@ from importlib import import_module
 from importlib.util import spec_from_file_location, module_from_spec
 from pathlib import Path
 from socket import gethostname
-from sys import stdout
 from types import ModuleType
 from typing import Callable, MutableMapping, Optional, Sequence, Any, Hashable
 
