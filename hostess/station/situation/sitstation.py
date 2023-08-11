@@ -8,10 +8,11 @@ from itertools import chain
 from pathlib import Path
 
 import fire
-from cytoolz.curried import get
+from cytoolz.curried import get, valmap
 
 from hostess.monitors import Ticker, ticked
-from hostess.station.actors import InstructionFromInfo
+from hostess.station.actors import InstructionFromInfo, reported
+from hostess.station.bases import Actor, NoMatch
 from hostess.station.messages import make_action, make_instruction
 from hostess.station.station import Station
 from hostess.station.tests.testing_actors import TrivialActor
@@ -20,13 +21,14 @@ SITSTATION_TICKER = Ticker()
 
 
 def getsocks(station: Station):
-    selkeys = {
-        k[0].fd: k[0]
-        for k in list(chain.from_iterable(station.server.queues.values()))
+    selkeys = {}
+    for k in list(
+        chain.from_iterable(station.server.queues.values())
         # with the short timeout duration, we will sometimes miss sockets,
         # but it's better than adding 0.5s per loop for a status display.
-        + station.server.sel.select(0.05)
-    }
+    ) + station.server.sel.select(0.05):
+        if hasattr(k[0], 'fd'):  # filter intentional bad values
+            selkeys[k[0].fd] = k[0]
     sprint = []
     for s in selkeys.values():
         if s.fd == station.server.sock.fileno():
@@ -61,11 +63,41 @@ def status_display(station, n, start, loop_pause):
     return dstring
 
 
-def sleep_trigger_instruction(*_, **__):
+def sleep_trigger_instruction(note, *_, **__):
+    if 'succeed' in note['match']:
+        description = {'what_to_do': 'succeed'}
+    else:
+        description = {'what_to_do': 'fail'}
     return make_instruction(
-        "do",
-        action=make_action({"why": "no reason"}, name="sleep"),
+        "do", action=make_action(description, name="sleep"),
     )
+
+
+class Sleepy(Actor):
+
+    def match(self, instruction, *_, **__):
+        if instruction.action.name == 'sleep':
+            return True
+        raise NoMatch
+
+    @reported
+    def execute(self, node, msg, *_, **__):
+        if msg.description.value == 'fail':
+            raise Exception('failed!')
+        time.sleep(self.duration)
+        return 1
+
+    def _get_duration(self):
+        return self._duration
+
+    def _set_duration(self, duration):
+        self._duration = duration
+
+    name = 'sleeper'
+    actortype = 'action'
+    duration = property(_get_duration, _set_duration)
+    _duration = 1
+    interface = ('duration',)
 
 
 def make_sample_station():
@@ -77,7 +109,7 @@ def make_sample_station():
         "watch",
         elements=[
             ("hostess.station.actors", "FileSystemWatch"),
-            ("logscratch", "Sleepy"),
+            ("hostess.station.situation.sitstation", "Sleepy"),
         ],
         update_interval=0.5,
         poll=0.05,
@@ -93,7 +125,7 @@ def make_sample_station():
     station.set_delegate_properties(
         "watch",
         filewatch_target="dump.txt",
-        filewatch_patterns=("hi",),
+        filewatch_patterns=("succeed|fail",),
         sleeper_duration=1,
     )
     station._situation_comm = ticked(
@@ -111,16 +143,22 @@ def make_sample_station():
 def _backend_loop(i, n, verbose, station):
     start = time.time()
     if i < n:
+        text = 'succeed' if random.random() > 0.1 else 'fail'
         with open("dump.txt", "a") as f:
-            f.write("hi\n")
+            f.write(f"{text}\n")
         loop_pause = 0.2
     else:
         loop_pause = 0.5
+    if random.random() < 0.08:
+        random.choice(
+            tuple(station.server.queues.values())
+        ).append(bytearray(b"NO"))
     time.sleep(loop_pause)
     if station.state == "crashed":
         raise station.exception
     if verbose:
         print(status_display(station, i, start, loop_pause))
+        # print(valmap(lambda t: t._state, station.threads))
     return i + 1
 
 

@@ -83,7 +83,7 @@ class TCPTalk:
             for ix in range(n_threads):
                 self.threads[ix] = executor.submit(self.launch_io, ix)
             self.status = "running"
-        except Exception as exception:
+        except Exception as _ex:
             self.sock.close()
             self.status = "crashed"
             self.kill()
@@ -167,11 +167,14 @@ class TCPTalk:
             An dict with name, any received signal, and any exception.
         """
         id_, cycler = 0, cycle(self.queues.keys())
-        self.sel.register(
-            self.sock,
-            selectors.EVENT_READ,
-            self._accept
-        )
+        try:
+            self.sel.register(
+                self.sock,
+                selectors.EVENT_READ,
+                self._accept
+            )
+        except KeyError:  # will occur on relaunch
+            pass
         while self.signals.get("select") is None:
             try:
                 events = self.sel.select(1)

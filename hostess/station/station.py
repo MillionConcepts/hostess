@@ -303,6 +303,7 @@ class Station(bases.Node):
                 crashed_threads = self.server.tend()
                 if len(crashed_threads) > 0:
                     self._log(crashed_threads, category="server_errors")
+                    self.threads |= self.server.threads
                 self.inbox.prune(self.max_inbox_mb)
                 self.reset_tend()
             time.sleep(self.poll)
