@@ -88,7 +88,7 @@ def pack_config(cdict, interface) -> tuple[dict[str], dict[str]]:
         if has_callables(v):
             interface_out[k] = callable_info(v)
         else:
-            interface[k] = str(v)
+            interface_out[k] = str(v)
     # TODO: find some clunky efficient way to do this one
     # noinspection PyTypedDict
     cdict_out = dig_and_edit(

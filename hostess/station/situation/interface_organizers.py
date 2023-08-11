@@ -102,8 +102,8 @@ def delegate_dict(ddict: Mapping) -> dict:
         if len(element_dict := ddict.get(element_type, {})) > 0:
             out[element_type] = add_config_to_elements(
                 element_dict,
-                ddict.get('cdict', {}),
-                ddict.get('interface', {})
+                ddict.get('interface', {}),
+                ddict.get('cdict', {})
             )
         if element_type == 'sensors' and ddict.get('infocount') is not None:
             for k, v in ddict['infocount'].items():
@@ -131,7 +131,7 @@ def organize_station(view: dict) -> dict:
     return {
         'id': f"{view['name']}@{view.get('host', '?')}:{view['port']}",
         'actors': add_config_to_elements(
-            view['actors'], view.get('cdict', {}), view.get('interface', {})
+            view['actors'], view.get('interface', {}), view.get('cdict', {})
         ),
         'tasks': organize_tasks(view['tasks']),
         'threads': view['threads'],
