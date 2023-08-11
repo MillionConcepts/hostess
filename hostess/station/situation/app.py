@@ -101,6 +101,7 @@ class SituationApp(App):
             AttributeError,
             TimeoutError,
             ConnectionError,
+            FileNotFoundError
         ) as err:  # TODO: concatenate / specify those exceptions
             return self._handle_error(err, error_label)
         finally:
