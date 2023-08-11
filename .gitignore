@@ -138,6 +138,7 @@ dmypy.json
 # development
 *scratch.py
 *scratch.ipynb
+/hostess/station/situation/dump.txt
 
 # logs
 /hostess/logs
