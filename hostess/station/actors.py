@@ -287,12 +287,13 @@ class ReportStringMatch(Actor):
         path=None,
         **_
     ):
-        node.actionable_events.append(
+        node.add_actionable_event(
             {
                 "path": str(path),
                 "content": line,
                 "match": [p for p in patterns if re.search(p, line)]
-            }
+            },
+            self.owner
         )
     name = "grepreport"
     actortype = "action"

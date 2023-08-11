@@ -105,6 +105,10 @@ def delegate_dict(ddict: Mapping) -> dict:
     for element_type in ('actors', 'sensors'):
         if len(element_dict := ddict.get(element_type, {})) > 0:
             out[element_type] = add_config_to_elements(element_dict, config)
+        if element_type == 'sensors' and ddict.get('infocount') is not None:
+            for k, v in ddict['infocount'].items():
+                if k in out[element_type]:
+                    out[element_type][k]['infocount'] = v
     if len(ddict.get('running', [])) > 0:
         out['running'] = organize_running_actions(ddict['running'])
     else:

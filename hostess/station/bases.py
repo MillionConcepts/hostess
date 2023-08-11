@@ -28,22 +28,7 @@ from hostess.station.talkie import TCPTalk
 from hostess.utilities import configured, logstamp, yprint
 
 
-def associate_actor(cls, cdict, params, actors: dict[Actor], props, name=None):
-    """utility function for associating an actor with a Sensor."""
-    name = inc_name(cls.name if name is None else name, cdict)
-    actors[name] = cls()
-    cdict[name] = actors[name].config
-    params[name] = {
-        "match": actors[name].params["match"],
-        "exec": actors[name].params["exec"],
-    }
-    for prop in actors[name].interface:
-        props.append((f"{name}_{prop}", getattr(actors[name], prop)))
-    return cdict, params, actors, props
-
-
 class AttrConsumer:
-
     """
     implements functionality for "consuming" the attributes of associated
     objects. designed to permit Nodes and similar objects to promote the
@@ -103,7 +88,6 @@ class AttrConsumer:
 
 
 class Matcher(AttrConsumer, ABC):
-
     """base class for things that can match sequences of actors."""
 
     def match(self, event: Any, category=None, **kwargs) -> list[Actor]:
@@ -144,7 +128,7 @@ class Matcher(AttrConsumer, ABC):
         """
         name = inc_name(cls.name if name is None else name, self.cdict)
         element = cls()
-        element.name = name
+        element.name, element.owner = name, self
         if issubclass(cls, Actor):
             self.actors[name] = element
         elif issubclass(cls, Sensor):
@@ -154,6 +138,7 @@ class Matcher(AttrConsumer, ABC):
         self.cdict[name], self.params[name] = element.config, element.params
         for prop in element.interface:
             self.consume_property(element, prop, f"{name}_{prop}")
+        return name
 
     actors: dict[str, Actor]
     params: dict[str, Any]
@@ -161,32 +146,44 @@ class Matcher(AttrConsumer, ABC):
 
 
 class Sensor(Matcher, ABC):
-
-    """bass class for watching an input source."""
+    """base class for watching an input source."""
 
     def __init__(self):
         super().__init__()
         if "sources" in dir(self):
             raise TypeError("bad configuration: can't nest Sources.")
-        props, actors = [], {}
+        props, self.actors = [], {}
         checkp = inspect.getfullargspec(self.check).kwonlyargs
         self.config = {"check": {k: None for k in checkp}}
         self.check_params = tuple(checkp)
-        params = {"check": self.check_params}
+        self.params = {"check": self.check_params}
         for cls in chain(self.actions, self.loggers):
-            self.config, params, actors, props = associate_actor(
-                cls, self.config, params, actors, props
-            )
-        self.params, self.actors = params, actors
+            self.add_element(cls, cls.name)
         for prop in props:
             setattr(self, *prop)
         self.check = configured(self.check, self.config["check"])
         self.memory = None
 
+    # TODO: perhaps make this less redundant with superclass add_element
+    def associate_actor(self, cls, name=None):
+        """associate an actor with this Sensor."""
+        name = inc_name(cls.name if name is None else name, self.actors)
+        self.actors[name] = cls()
+        self.actors[name].owner, self.actors[name].name = self, name
+        self.config[name] = self.actors[name].config
+        self.params[name] = {
+            "match": self.actors[name].params["match"],
+            "exec": self.actors[name].params["exec"],
+        }
+        for prop in self.actors[name].interface:
+            self.props.append(
+                (f"{name}_{prop}", getattr(self.actors[name], prop))
+            )
+
     def add_element(self, cls: type[Actor], name=None):
         if issubclass(cls, Sensor):
             raise TypeError("cannot add Sensors to a Sensor.")
-        super().add_element(cls, name)
+        self.associate_actor(cls, name)
 
     def check(self, node, **check_kwargs):
         self.memory, events = self.checker(self.memory, **check_kwargs)
@@ -220,7 +217,6 @@ class Sensor(Matcher, ABC):
 
 
 class Actor(ABC):
-
     """base class for conditional responses to events."""
 
     def __init__(self):
@@ -248,6 +244,7 @@ class Actor(ABC):
     config: Mapping
     interface = ()
     actortype: str
+    owner = None
 
 
 class DispatchActor(Actor, ABC):

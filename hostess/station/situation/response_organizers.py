@@ -109,10 +109,14 @@ def pack_delegate(ddict: dict[str]) -> dict[str]:
         "host",
         "actors",
         "sensors",
+        "infocount"
     )
     packed = {k: ddict.get(k) for k in literals}
     packed["config"] = pack_config(
-        {"cdict": ddict["cdict"], "interface": ddict["interface"]}
+        {
+            "cdict": ddict.get('cdict', {}),
+            "interface": ddict.get('interface', {})
+        }
     )
     packed["running"] = [
         {

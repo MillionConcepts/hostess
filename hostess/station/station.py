@@ -173,6 +173,7 @@ class Station(bases.Node):
             "busy": message["state"]["busy"],
             "host": message["delegateid"]["host"],
             "running": message.get("running", []),
+            "infocount": message['state'].get('infocount', {})
         }
         for name, state in message["state"]["threads"].items():
             try:

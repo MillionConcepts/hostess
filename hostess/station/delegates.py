@@ -4,6 +4,7 @@ import json
 import random
 import sys
 import time
+from collections import defaultdict
 from itertools import count
 from pathlib import Path
 from pickle import PicklingError
@@ -64,7 +65,7 @@ class Delegate(bases.Node):
             _is_process_owner=_is_process_owner
         )
         self.update_interval = update_interval
-        self.actionable_events = []
+        self.actionable_events, self.infocount = [], defaultdict(int)
         self.station = station_address
         self.actions = {}
         self.instruction_queue = []
@@ -437,7 +438,8 @@ class Delegate(bases.Node):
             interface=pack_obj(self.config['interface']),
             cdict=pack_obj(self.config['cdict']),
             actors=self.identify_elements("actors"),
-            sensors=self.identify_elements("sensors")
+            sensors=self.identify_elements("sensors"),
+            infocount=dict(self.infocount)
         )
         message.state.MergeFrom(state)
         return message
@@ -455,6 +457,11 @@ class Delegate(bases.Node):
         if err is not None:
             msg.MergeFrom(pro.Update(info=[pack_obj(err)]))
         self.talk_to_station(msg)
+
+    def add_actionable_event(self, event, sensor=None):
+        if sensor is not None:
+            self.infocount[sensor.name] += 1
+        self.actionable_events.append(event)
 
 
 class HeadlessDelegate(Delegate):

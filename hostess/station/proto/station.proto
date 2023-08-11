@@ -104,21 +104,16 @@ message DelegateState {
   /* actor and sensor have names as keys and class names/modules as values */
   map<string, string> actors = 8;
   map<string, string> sensors = 9;
-  map<string, MessageCount> messagecount = 10;
+  /* total info objects ever sent by sensors */
+  map<string, uint32> infocount = 10;
+  /* total action instructions ever received */
+  map<string, uint32> actioncount = 11;
 }
 message NodeId {
   string name = 1;
   uint32 pid = 3;
   string host = 4;
   string port = 5;
-}
-
-/* TODO: figure out where this goes */
-message MessageCount {
-  /* total hostess-external messages ever received */
-  uint32 total_messages = 1;
-  /* hostess-external messages received since last update */
-  uint32 new_messages = 2;
 }
 
 enum UpdateReason {
