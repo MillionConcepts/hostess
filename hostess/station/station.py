@@ -475,11 +475,11 @@ class Station(bases.Node):
         if any(n["name"] == name for n in self.delegates):
             raise ValueError("can't launch a delegate with a duplicate name")
         kwargs = {
-                     "station_address": (self.host, self.port),
-                     "name": name,
-                     "elements": elements,
-                     "update_interval": update_interval,
-                 } | kwargs
+             "station_address": (self.host, self.port),
+             "name": name,
+             "elements": elements,
+             "update_interval": update_interval,
+         } | kwargs
         delegateinfo = blank_delegateinfo() | {
             "name": name,
             "inferred_status": "initializing",

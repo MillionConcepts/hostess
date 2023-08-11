@@ -73,7 +73,7 @@ def sleep_trigger_instruction(note, *_, **__):
     )
 
 
-class Sleepy(Actor):
+class Sleeper(Actor):
 
     def match(self, instruction, *_, **__):
         if instruction.action.name == 'sleep':
@@ -82,7 +82,7 @@ class Sleepy(Actor):
 
     @reported
     def execute(self, node, msg, *_, **__):
-        if msg.description.value == 'fail':
+        if msg.description['what_to_do'] == 'fail':
             raise Exception('failed!')
         time.sleep(self.duration)
         return 1
@@ -95,8 +95,8 @@ class Sleepy(Actor):
 
     name = 'sleeper'
     actortype = 'action'
-    duration = property(_get_duration, _set_duration)
     _duration = 1
+    duration = property(_get_duration, _set_duration)
     interface = ('duration',)
 
 
@@ -105,29 +105,30 @@ def make_sample_station():
 
     station = Station(host, port)
     station.save_port_to_shared_memory()
+    delkwargs = {'update_interval': 0.5, 'context': 'local'}
     station.launch_delegate(
         "watch",
-        elements=[
-            ("hostess.station.actors", "FileSystemWatch"),
-            ("hostess.station.situation.sitstation", "Sleepy"),
-        ],
-        update_interval=0.5,
-        poll=0.05,
-        n_threads=4,
-        context="local",
+        elements=[("hostess.station.actors", "FileSystemWatch")],
+        **delkwargs
+    )
+    station.launch_delegate(
+        "sleepy",
+        elements=[("hostess.station.situation.sitstation", "Sleeper")],
+        **delkwargs
     )
     station.add_element(InstructionFromInfo, name="dosleep")
     station.dosleep_instruction_maker = sleep_trigger_instruction
     station.dosleep_criteria = [lambda n: "match" in n.keys()]
-    station.dosleep_target_name = "watch"
+    station.dosleep_target_name = "sleepy"
     for _ in range(50):
         station.add_element(TrivialActor)
     station.set_delegate_properties(
         "watch",
         filewatch_target="dump.txt",
-        filewatch_patterns=("succeed|fail",),
-        sleeper_duration=1,
+        filewatch_patterns=("succeed", "fail",),
     )
+    station.set_delegate_properties('sleepy', sleeper_duration=0.2)
+
     station._situation_comm = ticked(
         station._situation_comm, 'sent situation', SITSTATION_TICKER
     )
@@ -143,6 +144,9 @@ def make_sample_station():
 def _backend_loop(i, n, verbose, station):
     start = time.time()
     if i < n:
+        # indirectly trigger tasks by writing text to file the Sensor on
+        # the 'watch' delegate will recognize. occasionally queue the Actor on
+        # the 'sleeper' delegate to fail a task by randomly writing 'fail'.
         text = 'succeed' if random.random() > 0.1 else 'fail'
         with open("dump.txt", "a") as f:
             f.write(f"{text}\n")
@@ -150,6 +154,7 @@ def _backend_loop(i, n, verbose, station):
     else:
         loop_pause = 0.5
     if random.random() < 0.08:
+        # randomly crash server threads
         random.choice(
             tuple(station.server.queues.values())
         ).append(bytearray(b"NO"))
