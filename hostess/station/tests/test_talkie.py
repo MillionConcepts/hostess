@@ -1,6 +1,7 @@
 import datetime as dt
 import random
 import re
+import time
 from multiprocessing import Pool
 
 import dill
@@ -111,12 +112,19 @@ def test_comm_online():
     port = random.randint(10000, 20000)
     host, port, report = "localhost", port, test_protobuf()
     server = tk.TCPTalk(host, port)
-    for _ in range(1):
+    for i in range(10):
         ack, _ = tk.stsend(report, host, port, timeout=100)
-        response = server.events[-2]
         # Timestamp is variable-length depending on nanoseconds
+        response, j = None, 0
+        while response is None and j < 1000:
+            for v in reversed(server.events):
+                if v['event'].startswith('decoded'):
+                    response = v
+                    break
+        if response is None:
+            raise TimeoutError
         assert response["event"] in ("decoded 96", "decoded 97", "decoded 98")
-        comm = hostess.station.talkie.read_comm(server.data[-1].comm)
+        comm = hostess.station.talkie.read_comm(server.data[i].comm)
         assert comm["err"] == ""
         assert comm["header"]["length"] == int(response['event'][-2:])
         message = comm["body"]
