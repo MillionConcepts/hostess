@@ -17,4 +17,7 @@ def test_directory():
     assert treeframe.columns.to_list() == [
         0, 1, 2, 3, 'filename', 'size', 'suffix'
     ]
-    a = 1
+
+
+test_directory()
+

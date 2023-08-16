@@ -86,13 +86,14 @@ def test_timeout_factory():
     # did we get the right delay?
     assert round(waiting(), 3) == 0.02
     unwait()
+    waiting()
     time.sleep(0.04)
     # did unwait() correctly reset the time cache in enclosing scope?
     waiting()
     # will we correctly time out now?
     time.sleep(0.01)
     try:
-        waiting()
+        print(waiting())
     except TimeoutError:
         return
     raise ValueError("Should have timed out.")
@@ -125,3 +126,10 @@ def test_signal_factory():
         # now it should have quit
         assert futures[i].running() is False
         assert futures[i].result() == i
+
+
+test_notary()
+test_aliased()
+test_signal_factory()
+test_timeout_factory()
+test_infer_stream_length_offline()
