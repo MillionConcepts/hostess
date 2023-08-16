@@ -17,7 +17,9 @@ from hostess.utilities import timeout_factory
 def test_shutdown():
     host, port = "localhost", random.randint(10000, 20000)
     station = Station(host, port)
-    writer = station.launch_delegate("null", context="local", update_interval=0.1)
+    writer = station.launch_delegate(
+        "null", context="local", update_interval=0.1
+    )
     station.start()
     station.shutdown()
     assert all(thread.done() for thread in writer.threads.values())
@@ -130,7 +132,7 @@ def test_application_1():
     station.start()
 
     # launch the nodes as daemonic processes
-    station.launch_delegate("watcher", **watcher_launch_spec, update_interval=0.5)
+    station.launch_delegate("watcher", **watcher_launch_spec, update_interval=0.5, context='local')
     station.launch_delegate(
         "thumbnail",
         **thumbnail_launch_spec,
@@ -139,12 +141,13 @@ def test_application_1():
     )
     # configure the watcher delegate
     station.set_delegate_properties("watcher", **watcher_config_spec)
-
+    # allow config to propagate
+    time.sleep(1)
     # copy a squirrel picture into the directory as a test (representing some
     # external change to the system)
     test_file = "test_data/squirrel.jpg"
     shutil.copyfile(test_file, test_dir / (Path(test_file).stem + "_full.jpg"))
-    time.sleep(2)
+    time.sleep(1)
     try:
         assert station.inbox.completed[-1]["action"]["status"] == "success"
         assert Path("test_dir/squirrel_thumbnail.jpg").exists()
@@ -166,9 +169,10 @@ def test_missing():
     station.launch_delegate(
         'normal_node',
         elements=[('hostess.station.tests.testing_actors', 'NormalActor')],
-        update_interval=0.05,
+        update_interval=0.01,
+        # context='local'
     )
-    time.sleep(0.55)
+    time.sleep(0.5)
     try:
         # make sure it is normal and fine
         assert station.delegates[0]['reported_status'] == 'nominal'
@@ -183,7 +187,7 @@ def test_missing():
         station.shutdown()
 
 
-# test_shutdown()
-# test_actions_1()
-# test_missing()
-# test_application_1()
+test_shutdown()
+test_actions_1()
+test_missing()
+test_application_1()
