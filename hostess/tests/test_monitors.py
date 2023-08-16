@@ -11,7 +11,7 @@ from hostess.monitors import (
 
 def test_monitor_init():
     """test proper monitor initialization"""
-    monitors = make_monitors()
+    monitors = make_monitors(digits=1)
     printstats = make_stat_printer(monitors)
     text = printstats()
     assert text == (
@@ -20,7 +20,11 @@ def test_monitor_init():
         "write count 0.0 MB;sent 0.0 MB;recv 0.0 MB;sent count 0.0 MB;recv "
         "count 0.0 MB;0.0 s"
     )
-
+        # ("0.0 %;user 0.0;system 0.0;idle 0.01;iowait 0.0;0.0 MB;total 0.0 MB;"
+        #  "used 0.0 MB;free 0.0 MB;read 0.0 MB;write 0.0 MB;read count 0.0 MB;"
+        #  "write count 0.0 MB;sent 0.0 MB;recv 0.0 MB;sent count 0.0 MB;"
+        #  "recv count 0.0 MB;0.0 s")
+        #
 
 def test_stopwatch():
     """test basic stopwatch functionality"""
@@ -59,3 +63,8 @@ def test_bouncer():
         assert len(bouncer.events) == next(count)
         assert sw.clickpeek() == next(lap)
     assert sw.peek(which="total") == "2.22 s"
+
+
+test_bouncer()
+test_stopwatch()
+test_monitor_init()

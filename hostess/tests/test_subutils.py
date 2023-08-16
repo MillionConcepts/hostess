@@ -22,3 +22,7 @@ def test_viewer_2():
     time.sleep(0.1)
     assert len(trash) == 0
     assert viewer.stderr == []
+
+
+test_viewer_1()
+test_viewer_2()

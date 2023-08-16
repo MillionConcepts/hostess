@@ -49,3 +49,9 @@ def test_identify():
     assert identification['line'] is None
     assert identification['r'] == repr(arr)[:25]
     assert identification['size'] == 0.1
+
+
+test_identify()
+test_di()
+test_profiler()
+test_ref_analysis()
