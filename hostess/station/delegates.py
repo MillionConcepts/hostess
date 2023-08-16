@@ -458,9 +458,11 @@ class Delegate(bases.Node):
             msg.MergeFrom(pro.Update(info=[pack_obj(err)]))
         self.talk_to_station(msg)
 
-    def add_actionable_event(self, event, sensor=None):
-        if sensor is not None:
-            self.infocount[sensor.name] += 1
+    def add_actionable_event(self, event, category: str | Sensor = None):
+        if isinstance(category, Sensor):
+            category = category.name
+        if category is not None:
+            self.infocount[category] += 1
         self.actionable_events.append(event)
 
 
