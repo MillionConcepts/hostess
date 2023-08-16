@@ -14,9 +14,13 @@ def pointlessly_nest(obj: Any, func: Callable = identity) -> Any:
 
 
 def segfault(max_tries=100):
-    """attempt to segfault the calling process."""
+    """attempt to segfault the calling process. recommended only for tests!"""
     from hostess.profilers import di
 
     for i in range(max_tries):
         di(id([]))
     raise TimeoutError
+
+
+def return_this(this):
+    return this

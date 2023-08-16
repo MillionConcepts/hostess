@@ -14,12 +14,12 @@ from hostess.tests.utilz import defwrap
 def test_to_heredoc():
     """whitebox test for to_heredoc"""
     expected_heredoc = """__BOUNDARYTAG__ 
-    def add(a, b):
-        return a + b
-    __BOUNDARYTAG__
-    """
+def add(a, b):
+    return a + b
+__BOUNDARYTAG__
+"""
     source = """def add(a, b):
-        return a + b"""
+    return a + b"""
     assert to_heredoc(source) == expected_heredoc
 
 
@@ -57,9 +57,15 @@ def test_format_importer():
 def test_endpoint():
     """simple test of hostess's generic python code injector"""
     script = generic_python_endpoint(
-        module="hostess.tests.test_utilz",
+        module="hostess.tests.utilz",
         func="return_this",
         payload='hi',
         print_result=True
     )
     assert run(script) == 'hi\n'
+
+
+test_endpoint()
+test_format_importer()
+test_to_heredoc()
+test_format_deserializer()
