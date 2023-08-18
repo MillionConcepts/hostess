@@ -58,7 +58,7 @@ class Station(bases.Node):
             **kwargs,
         )
         self.max_inbox_mb = max_inbox_mb
-        self.events, self.delegates, self.tasks = [], [], {}
+        self.events, self.delegates, self.relaunched, self.tasks = [], [], [], {}
         self.outboxes = defaultdict(Mailbox)
         self.tendtime, self.reset_tend = timeout_factory(False)
         self.last_handler = None
@@ -173,7 +173,8 @@ class Station(bases.Node):
             "busy": message["state"]["busy"],
             "host": message["delegateid"]["host"],
             "running": message.get("running", []),
-            "infocount": message['state'].get('infocount', {})
+            "infocount": message['state'].get('infocount', {}),
+            "init_params": message["state"]["init_params"]
         }
         for name, state in message["state"]["threads"].items():
             try:
@@ -506,7 +507,8 @@ class Station(bases.Node):
             self.shutdown_delegate(name, "stop")
             waiting, unwait = timeout_factory(timeout=20)
             self._check_delegates()
-            while delegate["inferred_status"] not in ("shutdown", "crashed"):
+            while self.get_delegate(name)["inferred_status"] not in ("shutdown",
+                                                                     "crashed"):
                 try:
                     waiting()
                 except TimeoutError:
@@ -515,7 +517,7 @@ class Station(bases.Node):
                 self._check_delegates()
             unwait()
         elements = []
-        elements_dict = delegate["actors"] | delegate["sensors"]
+        elements_dict = dict(delegate["actors"]) | dict(delegate["sensors"])
         for k in elements_dict.keys():
             cls = elements_dict[k].split('.')[-1]
             mod = elements_dict[k].removesuffix['.' + cls]
@@ -528,7 +530,8 @@ class Station(bases.Node):
             # TODO: how do you know if it's "daemon" vs "subprocess"?
         else:
             context = "local"
-        delegate["init_params"] |= {"start": True}  # always start a relaunched delegate
+        self.delegates.remove(delegate)
+        self.relaunched.append(delegate)
         self.launch_delegate(name, elements, host=host, context=context, **delegate[
             "init_params"])
 
