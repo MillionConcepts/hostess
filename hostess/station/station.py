@@ -498,6 +498,29 @@ class Station(bases.Node):
         self.delegates.append(delegateinfo)
         return output
 
+    def relaunch_delegate(self, name):
+        delegate = self.get_delegate(name)
+        if delegate["inferred_status"] == "missing":
+            pass  # TODO: os level kill
+        elif delegate["inferred_status"] not in ["shutdown", "crashed"]:
+            pass  # TODO: shutdown
+        elements = []
+        elements_dict = delegate["actors"] | delegate["sensors"]
+        for k in elements_dict.keys():
+            cls = elements_dict[k].split('.')[-1]
+            mod = elements_dict[k].removesuffix['.' + cls]
+            elements = elements + [(mod, cls)]
+        elements = tuple(elements)
+        host = "localhost"
+        # TODO: add remote host detection/relaunch capability
+        if delegate["init_params"]["_is_process_owner"]:
+            context = "daemon"
+            # TODO: how do you know if it's "daemon" or "subprocess"?
+        else:
+            context = "local"
+        self.launch_delegate(name, elements, host=host, context=context, **delegate[
+            "init_params"])
+
     def save_port_to_shared_memory(self, address: Optional[str] = None):
         from dustgoggles.codex.implements import Sticky
         from dustgoggles.codex.memutilz import (
