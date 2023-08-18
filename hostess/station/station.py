@@ -525,9 +525,10 @@ class Station(bases.Node):
         # TODO: add remote host detection/relaunch capability
         if delegate["init_params"]["_is_process_owner"]:
             context = "daemon"
-            # TODO: how do you know if it's "daemon" or "subprocess"?
+            # TODO: how do you know if it's "daemon" vs "subprocess"?
         else:
             context = "local"
+        delegate["init_params"] |= {"start": True}  # always start a relaunched delegate
         self.launch_delegate(name, elements, host=host, context=context, **delegate[
             "init_params"])
 

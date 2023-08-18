@@ -80,6 +80,13 @@ class Delegate(bases.Node):
             f"{self.station[0]}_{self.station[1]}_{self.name}_"
             f"{self.logid}.log",
         )
+        self.init_params = {"n_threads": n_threads,
+                            "poll": poll,
+                            "timeout": timeout,
+                            "logdir": logdir,
+                            "update_interval": update_interval,
+                            "_is_process_owner": _is_process_owner
+                            }
 
     def _sensor_loop(self, sensor: bases.Sensor):
         """
@@ -439,7 +446,8 @@ class Delegate(bases.Node):
             cdict=pack_obj(self.config['cdict']),
             actors=self.identify_elements("actors"),
             sensors=self.identify_elements("sensors"),
-            infocount=dict(self.infocount)
+            infocount=dict(self.infocount),
+            init_params=pack_obj(self.init_params)
         )
         message.state.MergeFrom(state)
         return message

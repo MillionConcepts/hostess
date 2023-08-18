@@ -108,6 +108,7 @@ message DelegateState {
   map<string, uint32> infocount = 10;
   /* total action instructions ever received */
   map<string, uint32> actioncount = 11;
+  PythonObject init_params = 12;
 }
 message NodeId {
   string name = 1;
