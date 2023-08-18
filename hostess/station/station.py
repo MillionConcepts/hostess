@@ -503,7 +503,17 @@ class Station(bases.Node):
         if delegate["inferred_status"] == "missing":
             pass  # TODO: os level kill
         elif delegate["inferred_status"] not in ["shutdown", "crashed"]:
-            pass  # TODO: shutdown
+            self.shutdown_delegate(name, "stop")
+            waiting, unwait = timeout_factory(timeout=20)
+            self._check_delegates()
+            while delegate["inferred_status"] not in ("shutdown", "crashed"):
+                try:
+                    waiting()
+                except TimeoutError:
+                    break
+                time.sleep(0.1)
+                self._check_delegates()
+            unwait()
         elements = []
         elements_dict = delegate["actors"] | delegate["sensors"]
         for k in elements_dict.keys():
