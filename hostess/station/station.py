@@ -471,10 +471,10 @@ class Station(bases.Node):
         delegatelist. may also launch locally or in a non-daemonized
         subprocess.
         """
-        # TODO: option to specify remote host and run this using SSH
+        # TODO: option to specify remote host and run this using SSH (update
+        #  relaunch_delegate as well when adding this feature)
         if host != "localhost":
             raise NotImplementedError
-        # TODO: some facility for relaunching
         if any(n["name"] == name for n in self.delegates):
             raise ValueError("can't launch a delegate with a duplicate name")
         kwargs = {
