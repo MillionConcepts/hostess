@@ -21,10 +21,10 @@ def get_situation(host, port):
     if (host is None) or (port is None):
         raise TypeError("station address not defined")
     # TODO: handle recurring queries a little more gracefully
-    response, _ = stsend(b"situation", host, port, timeout=0.5)
+    response, _ = stsend(b"situation", host, port, timeout=1)
     # TODO: timeout tracker
     if response == "timeout":
-        raise TimeoutError('dropped packet')
+        raise TimeoutError(f'response delayed')
     if response == 'connection refused':
         raise ConnectionError('connection refused')
     if response == b'shutting down':
@@ -62,9 +62,10 @@ def organize_tasks(tasks: dict) -> dict:
             lambda t: t if not isinstance(t, dt.datetime) else t.isoformat(),
             keyfilter(lambda f: f.endswith("_time"), task)
         )
-        title = f"{times['init_time'][:21]} ({code})"
         if 'title' in task.get('description', {}):
-            title = f"{task['description']['title']}: {title}"
+            title = f"{task['description']['title']} ({code})"
+        else:
+            title = f"{times['init_time'][:21]} ({code})"
         target = out[task['status']][task['name']][title]
         target['times'] = times
         target['delegate'] = task['delegate']
@@ -85,9 +86,13 @@ def organize_running_actions(reports: dict) -> dict:
     out = NestingDict()
     for r in reports:
         times = r['time']
-        title = f"{times['start'][:21]} ({r['instruction_id']})"
+        if 'title' in r.get('description', {}):
+            title = f"{r['description']['title']} ({r['instruction_id']})"
+        else:
+            title = f"{times['init_time'][:21]} ({r['instruction_id']})"
         target = out[r['name']][title]
         target['times'] = times
+        target['description'] = r['description']
         # TODO: maybe we should squeeze descriptions into the ActionReports?
         target['duration'] = (
              time.time()

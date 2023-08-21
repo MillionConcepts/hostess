@@ -59,11 +59,17 @@ class SituationApp(App):
         yield Pretty(APP_PROFILER, id="profiler-panel")
 
     def _handle_error(self, err: Exception, error_label: Widget):
+        if isinstance(err, TimeoutError):
+            error_label.update(
+                Text(f"status -- delayed", style="light_salmon3")
+            )
+            return
         if isinstance(err, ConnectionError):
             try:
                 self.port = get_port_from_shared_memory(self.station_name)
             except (FileNotFoundError, TypeError, ValueError) as ftve:
                 err = ftve
+
         error_label.update(
             Text(f"status: error -- {err}", style="bold red")
         )
