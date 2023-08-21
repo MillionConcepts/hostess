@@ -27,12 +27,12 @@ def get_situation(host, port):
         raise TimeoutError(f'response delayed')
     if response == 'connection refused':
         raise ConnectionError('connection refused')
-    if response == b'shutting down':
-        raise ConnectionError('station in shutdown mode')
     try:
         comm = read_comm(response)
     except TypeError:
         raise ValueError(f'bad response: {response[:128]}')
+    if comm['body'] == b'shutting down':
+        raise ConnectionError("station shutting down")
     if not isinstance(comm['body'], pro.PythonObject):
         raise ValueError(f'bad response: {comm["body"][:128]}')
     return unpack_obj(comm["body"])
@@ -106,12 +106,15 @@ def delegate_dict(ddict: Mapping) -> dict:
     if ddict.get('busy') is True:
         ddict['wait_time'] = str(out['wait_time']) + ' [busy]'
     for element_type in ('actors', 'sensors'):
-        if len(element_dict := ddict.get(element_type, {})) > 0:
-            out[element_type] = add_config_to_elements(
-                element_dict,
-                ddict.get('interface', {}),
-                ddict.get('cdict', {})
-            )
+        try:
+            if len(element_dict := ddict.get(element_type, {})) > 0:
+                out[element_type] = add_config_to_elements(
+                    element_dict,
+                    ddict.get('interface', {}),
+                    ddict.get('cdict', {})
+                )
+        except TypeError:
+            continue
         if element_type == 'sensors' and ddict.get('infocount') is not None:
             for k, v in ddict['infocount'].items():
                 if k in out[element_type]:
