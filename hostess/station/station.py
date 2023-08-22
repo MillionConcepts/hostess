@@ -39,15 +39,15 @@ class Station(bases.Node):
     """
 
     def __init__(
-            self,
-            host: str,
-            port: int,
-            name: str = "station",
-            n_threads: int = 8,
-            max_inbox_mb: float = 250,
-            logdir=Path(__file__).parent / ".nodelogs",
-            _is_process_owner=False,
-            **kwargs,
+        self,
+        host: str,
+        port: int,
+        name: str = "station",
+        n_threads: int = 8,
+        max_inbox_mb: float = 250,
+        logdir=Path(__file__).parent / ".nodelogs",
+        _is_process_owner=False,
+        **kwargs,
     ):
         super().__init__(
             host=host,
@@ -101,6 +101,7 @@ class Station(bases.Node):
             "name": instruction.action.name,
             "action_id": instruction.action.id,
             "description": dict(instruction.action.description),
+            "exception": None
         }
         self.outboxes[delegate].append(instruction)
 
@@ -113,7 +114,7 @@ class Station(bases.Node):
         )
 
     def shutdown_delegate(
-            self, delegate: str, how: Literal["stop", "kill"] = "stop"
+        self, delegate: str, how: Literal["stop", "kill"] = "stop"
     ):
         self.outboxes[delegate].append(make_instruction(how))
 
@@ -180,10 +181,10 @@ class Station(bases.Node):
             try:
                 instruction_id = int(name.replace("Instruction_", ""))
                 if self.tasks[instruction_id]["status"] not in (
-                        "success",
-                        "failure",
-                        "crash",
-                        "timeout",
+                    "success",
+                    "failure",
+                    "crash",
+                    "timeout",
                 ):
                     # don't override formally reported status
                     self.tasks[instruction_id]["status"] = state.lower()
@@ -206,6 +207,8 @@ class Station(bases.Node):
             task["start_time"] = completed["action"]["time"]["start"]
             task["end_time"] = completed["action"]["time"]["end"]
             task["duration"] = completed["action"]["time"]["duration"]
+            if task['exception'] is not None:
+                task['exception'] = exc_report(task['exception'])
         except KeyError:
             # TODO: an undesirable case, log
             pass
