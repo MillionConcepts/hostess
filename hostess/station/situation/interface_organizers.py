@@ -5,6 +5,7 @@ of a Station's situation dump.
 functions in this module should not interact with `textual`.
 """
 import datetime as dt
+import re
 import time
 from typing import Mapping
 
@@ -44,11 +45,12 @@ def add_config_to_elements(elements: dict, interface, cdict) -> dict[str]:
     for name, classname in elements.items():
         out[name] = {'class': classname}
         element_interface = keyfilter(
-            lambda k: k.split('_')[0] == name, interface
+            lambda k: re.match(rf"{name}(?!_\d).*", k),
+            interface
         )
         if len(element_interface) > 0:
             out[name]['interface'] = keymap(
-                lambda k: "_".join(k.split("_")[1:]), element_interface
+                lambda k: k.replace(f"{name}_", ""), element_interface
             )
         if (element_cdict := cdict.get(name)) is not None:
             out[name]['cdict'] = element_cdict
