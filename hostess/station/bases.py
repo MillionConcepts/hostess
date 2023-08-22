@@ -521,7 +521,10 @@ class Node(Matcher, ABC):
     def _get_config(self):
         props, params = {}, defaultdict(dict)
         for prop in self.interface:
-            props[prop] = getattr(self, prop)
+            try:
+                props[prop] = getattr(self, prop)
+            except AttributeError:
+                props[prop] = "UNINITIALIZED PROPERTY"
         for name, actor_cdict in self.params.items():
             for k, v in filter(lambda kv: kv[1] != (), actor_cdict.items()):
                 params[name][k] = self.cdict[name].get(k)
