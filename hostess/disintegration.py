@@ -19,11 +19,20 @@ from hostess.profilers import (
     identify
 )
 
-def rip_from_sequence(obj, ref):
-    if isinstance(ref, MutableMapping):
+
+def rip_from_sequence(obj, ref, doppelganger=None):
+    if isinstance(ref, set):
+        ref.remove(obj)
+    elif isinstance(ref, MutableMapping):
         iterator = iter(ref.items())
     elif isinstance(ref, MutableSequence):
         iterator = enumerate(ref)
+    elif isintance(ref, (Sequence, Mapping)):
+        if doppelganger is None:
+            return disintegrate(ref, [o for o in ref if o is not obj])
+        return disintegrate(
+                ref, [f if o is not obj else doppelganger for o in ref]
+            )
     else:
         return False
     index_vals = tuple(filter(lambda iv: iv[1] is obj, iterator))
@@ -33,29 +42,27 @@ def rip_from_sequence(obj, ref):
         ref.pop(index_val[0])
     return True
 
-def rip_from_attrs(obj, ref):
+
+def rip_from_attrs(obj, ref, doppelganger=None):
     if not hasattr(ref, "__dict__"):
         return False
     attrvals = tuple(filter(lambda kv: kv[1] is obj, ref.__dict__.items()))
-    if len(attrvals) == 0:
-        print('sorry')
-        return False
     try:
         for attrval in attrvals:
             ref.__dict__.pop(attrval[0])
-            setattr(ref, attrval[0], None)
+            ref.__dict__[attrval[0]] = doppelganger
+            setattr(ref, attrval[0], doppelganger)
     except AttributeError as ae:
         return False
     return True
 
 
-def disintegrate(obj):
+def disintegrate(obj, doppelganger=None):
     remaining = 0
     for ref in analyze_referrers(obj, filter_history=False, verbose=False)[0]:
-        print(type(ref))
-        if rip_from_sequence(obj, ref):
+        if rip_from_sequence(obj, ref, doppelganger):
             continue
-        if rip_from_attrs(obj, ref):
+        if rip_from_attrs(obj, ref, doppelganger):
             continue
         remaining += 1
     return remaining
