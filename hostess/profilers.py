@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import _ctypes
+from collections import defaultdict
 import gc
 import inspect
-from collections import defaultdict
+import re
 from typing import Mapping, Union
 
 from dustgoggles.func import zero
@@ -95,18 +96,37 @@ class PContext:
                 self.profiler.labels[self.label][monitor][quality] += value
 
 
-def filter_ipython_history(item):
-    if not isinstance(item, Mapping):
+def history_filter(glb, loc):
+    def filterref(item):
+        if item.__class__.__name__ == "ZMQShellDisplayHook":
+            return False
+        if item.__class__.__name__ == "ExecutionResult":
+            return False
+        if (item is glb) or (item is loc):
+            return False
+        try:
+            globalname = next(
+                filter(lambda kv: kv[1] is item, glb.items())
+            )[0]
+        except StopIteration:
+            return True
+        if re.match(r"_+(i{1,3})?\d?", globalname):
+            return False
+        if globalname in ("In", "Out", "_ih", "_oh", "_dh"):
+            return False
         return True
-    if item.get("__name__") == "__main__":
-        return False
-    if "_i" not in item.keys():
-        return True
-    return False
+
+    return filterref
 
 
 def analyze_references(
-    obj, method, filter_literal=True, filter_ipython=True, verbose=True
+    obj, 
+    method, 
+    filter_literal=True, 
+    filter_history=True, 
+    verbose=True,
+    glb=None,
+    loc=None,
 ):
     print_ = print if verbose is True else zero
     refs = method(obj)
@@ -114,8 +134,12 @@ def analyze_references(
         refs = tuple(
             filter(lambda ref: not isinstance(ref, (float, int, str)), refs)
         )
-    if filter_ipython is True:
-        refs = tuple(filter(filter_ipython_history, refs))
+    if filter_history is True:
+        if loc is None:
+            loc = inspect.currentframe().f_back.f_locals
+        if glb is None:
+            glb = inspect.currentframe().f_back.f_globals
+        refs = tuple(filter(history_filter(glb, loc), refs))
     extra_printables = [
         None if not isinstance(ref, tuple) else ref[0] for ref in refs
     ]
@@ -127,18 +151,30 @@ def analyze_references(
 
 
 def analyze_referents(
-    obj, filter_literal=True, filter_ipython=True, verbose=True
+    obj, filter_literal=True, filter_history=True, verbose=True
 ):
     return analyze_references(
-        obj, gc.get_referents, filter_literal, filter_ipython, verbose
+        obj, 
+        gc.get_referents, 
+        filter_literal, 
+        filter_history, 
+        verbose,
+        inspect.currentframe().f_back.f_globals,
+        inspect.currentframe().f_back.f_locals,
     )
 
 
 def analyze_referrers(
-    obj, filter_literal=True, filter_ipython=True, verbose=True
+    obj, filter_literal=True, filter_history=True, verbose=True
 ):
     return analyze_references(
-        obj, gc.get_referrers, filter_literal, filter_ipython, verbose
+        obj, 
+        gc.get_referrers, 
+        filter_literal, 
+        filter_history, 
+        verbose,
+        inspect.currentframe().f_back.f_globals,
+        inspect.currentframe().f_back.f_locals,
     )
 
 
@@ -175,8 +211,9 @@ def di(obj_id):
     return _ctypes.PyObj_FromPtr(obj_id)
 
 
-def describe_frame_contents(frame):
+def describe_frame_contents(frame=None):
     """describe the contents of a frame"""
+    frame = frame if frame is not None else inspect.currentframe()
     return {
         "filename": frame.f_code.co_filename,
         "lineno": frame.f_lineno,
