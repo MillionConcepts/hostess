@@ -8,7 +8,6 @@ dependencies:
   - dill
   - dustgoggles
   - fabric
-  - fire
   - invoke
   - more-itertools
   - pandas
@@ -21,7 +20,4 @@ dependencies:
   - pyyaml
   - requests
   - rich
-
-
-
-
+  - textual
