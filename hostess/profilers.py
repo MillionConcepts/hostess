@@ -5,6 +5,7 @@ import _ctypes
 from collections import defaultdict
 import gc
 import inspect
+from inspect import currentframe, getsourcelines, stack
 import re
 from typing import Mapping, Union
 
@@ -12,7 +13,7 @@ from dustgoggles.func import zero
 from pympler.asizeof import asizeof
 
 from hostess.monitors import make_stat_records, make_stat_printer, Stopwatch
-from hostess.utilities import mb
+from hostess.utilities import is_any, mb
 
 
 class Profiler:
@@ -96,13 +97,11 @@ class PContext:
                 self.profiler.labels[self.label][monitor][quality] += value
 
 
-def history_filter(glb, loc):
+def history_filter(glb):
     def filterref(item):
         if item.__class__.__name__ == "ZMQShellDisplayHook":
             return False
         if item.__class__.__name__ == "ExecutionResult":
-            return False
-        if (item is glb) or (item is loc):
             return False
         try:
             globalname = next(
@@ -123,10 +122,11 @@ def analyze_references(
     obj, 
     method, 
     filter_literal=True, 
-    filter_history=True, 
-    verbose=True,
+    filter_history=True,
+    filter_scopes=True,
+    verbose=False,
     glb=None,
-    loc=None,
+    excluded=None,
 ):
     print_ = print if verbose is True else zero
     refs = method(obj)
@@ -134,12 +134,17 @@ def analyze_references(
         refs = tuple(
             filter(lambda ref: not isinstance(ref, (float, int, str)), refs)
         )
+    if glb is None:
+        glb = currentframe().f_back.f_globals
     if filter_history is True:
-        if loc is None:
-            loc = inspect.currentframe().f_back.f_locals
-        if glb is None:
-            glb = inspect.currentframe().f_back.f_globals
-        refs = tuple(filter(history_filter(glb, loc), refs))
+        refs = tuple(filter(history_filter(glb), refs))
+    excluded = [] if excluded is None else excluded
+    # a source of horrible recursive confusion if not excluded
+    excluded += [currentframe().f_locals, currentframe().f_globals]
+    if filter_scopes is True:
+        excluded += [currentframe().f_back.f_locals]
+        excluded.append(glb)
+    refs = tuple(r for r in refs if not is_any(r, excluded))
     extra_printables = [
         None if not isinstance(ref, tuple) else ref[0] for ref in refs
     ]
@@ -151,42 +156,66 @@ def analyze_references(
 
 
 def analyze_referents(
-    obj, filter_literal=True, filter_history=True, verbose=True
+    obj, 
+    filter_literal=True, 
+    filter_history=True, 
+    filter_scopes=True,
+    verbose=False,
+    glb=None,
+    excluded=None,
 ):
+    if filter_scopes is True:
+        if excluded is None:
+            excluded = [currentframe().f_back.f_locals]
+    if glb is None:
+        glb = currentframe().f_back.f_globals
     return analyze_references(
         obj, 
         gc.get_referents, 
         filter_literal, 
         filter_history, 
+        filter_scopes,
         verbose,
-        inspect.currentframe().f_back.f_globals,
-        inspect.currentframe().f_back.f_locals,
+        glb,
+        excluded
     )
 
 
 def analyze_referrers(
-    obj, filter_literal=True, filter_history=True, verbose=True
+    obj, 
+    filter_literal=True, 
+    filter_history=True, 
+    filter_scopes=True,
+    verbose=False,
+    glb=None,
+    excluded=None,
 ):
+    if filter_scopes is True:
+        if excluded is None:
+            excluded = [currentframe().f_back.f_locals]
+    if glb is None:
+        glb = currentframe().f_back.f_globals
     return analyze_references(
         obj, 
         gc.get_referrers, 
         filter_literal, 
         filter_history, 
+        filter_scopes,
         verbose,
-        inspect.currentframe().f_back.f_globals,
-        inspect.currentframe().f_back.f_locals,
+        glb,
+        excluded
     )
 
 
 def lineno():
     """Returns the current line number in our program."""
-    return inspect.currentframe().f_back.f_lineno
+    return currentframe().f_back.f_lineno
 
 
 def def_lineno(obj):
     """Returns the line number where the object was defined."""
     try:
-        return inspect.getsourcelines(obj)[1]
+        return getsourcelines(obj)[1]
     except TypeError:
         return None
 
@@ -213,7 +242,7 @@ def di(obj_id):
 
 def describe_frame_contents(frame=None):
     """describe the contents of a frame"""
-    frame = frame if frame is not None else inspect.currentframe()
+    frame = frame if frame is not None else currentframe()
     return {
         "filename": frame.f_code.co_filename,
         "lineno": frame.f_lineno,
@@ -224,7 +253,7 @@ def describe_frame_contents(frame=None):
 
 def describe_stack_contents():
     """describe the contents of the stack"""
-    return tuple(map(describe_frame_contents, [s[0] for s in inspect.stack()]))
+    return tuple(map(describe_frame_contents, [s[0] for s in stack()]))
 
 
 DEFAULT_PROFILER = Profiler({'time': Stopwatch()})

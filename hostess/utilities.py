@@ -7,6 +7,7 @@ import logging
 import re
 import sys
 import time
+from operator import is_
 from functools import wraps
 from importlib import import_module
 from importlib.util import spec_from_file_location, module_from_spec
@@ -371,3 +372,9 @@ def yprint(obj, indent=0, replace_null=True, maxlen=256):
     return "\n".join(
         " " * indent + line[:maxlen] for line in text.splitlines()
     )
+
+
+
+def is_any(obj, coll):
+    return any(map(lambda item: is_(obj, item), coll))
+
