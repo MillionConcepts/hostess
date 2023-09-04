@@ -101,27 +101,6 @@ class PContext:
                 self.profiler.labels[self.label][monitor][quality] += value
 
 
-def history_filter(glb):
-    def filterref(item):
-        if item.__class__.__name__ == "ZMQShellDisplayHook":
-            return False
-        if item.__class__.__name__ == "ExecutionResult":
-            return False
-        try:
-            globalname = next(
-                filter(lambda kv: kv[1] is item, glb.items())
-            )[0]
-        except StopIteration:
-            return True
-        if re.match(r"_+(i{1,3})?\d?", globalname):
-            return False
-        if globalname in ("In", "Out", "_ih", "_oh", "_dh"):
-            return False
-        return True
-
-    return filterref
-
-
 def scopedicts(frame: FrameType) -> tuple[dict, dict, dict]:
     return (frame.f_locals, frame.f_globals, frame.f_builtins)
 
@@ -131,16 +110,18 @@ def val_ids(mapping):
 
 
 def namespace_ids(
-    frames: FrameType | Collection[FrameType] | None = None
+    frames: FrameType | Collection[FrameType] | None = None,
+    include_frame_ids=False
 ) -> set[int]:
     """
     find ids of all top-level objects in the combined namespace(s) of 
     a frame or frames
     """
-    frames = frames if frames is not None else currentframe().f_back
-    return set(
-        chain(*map(val_ids, chain(*map(scopedicts, listify(frames)))))
-    )
+    frames = listify(frames if frames is not None else currentframe().f_back)
+    ids_ = set(chain(*map(val_ids, chain(*map(scopedicts, frames)))))
+    if include_frame_ids is True:
+        ids_.update(map(id, frames))
+    return ids_
 
 
 def stack_scopedict_ids() -> set[int]:
@@ -228,9 +209,11 @@ LITERAL_TYPES = (
 )
 
 
-def yclept(obj: Any, terse=True) -> Refnom:
+def yclept(obj: Any, terse=True, stepback=1) -> Refnom:
     nytta  = []
-    frame = currentframe().f_back
+    frame = currentframe()
+    for _ in range(stepback):
+        frame = frame.f_back
     while frame is not None:
         rec = framerec(frame) | {'names': set()}
         if terse is True:
@@ -239,10 +222,32 @@ def yclept(obj: Any, terse=True) -> Refnom:
             for k, v in scope.items():
                 if obj is v:
                     rec['names'].add(k)
-        rec['names'] = tuple(rec['names'])
-        nytta.append(rec)
+        if len(rec['names']) > 0:
+            rec['names'] = tuple(rec['names'])
+            nytta.append(rec)
         frame = frame.f_back
     return identify(obj, maxlen=55, getsize=False), tuple(nytta)
+
+
+def history_filter(glb):
+    def filterref(item):
+        if item.__class__.__name__ == "ZMQShellDisplayHook":
+            return False
+        if item.__class__.__name__ == "ExecutionResult":
+            return False
+        try:
+            globalname = next(
+                filter(lambda kv: kv[1] is item, glb.items())
+            )[0]
+        except StopIteration:
+            return True
+        if re.match(r"_+(i{1,3})?\d?", globalname):
+            return False
+        if globalname in ("In", "Out", "_ih", "_oh", "_dh"):
+            return False
+        return True
+
+    return filterref
 
 
 def analyze_references(
@@ -253,36 +258,33 @@ def analyze_references(
     filter_scopedicts: bool = True,
     globals_: Optional[dict[str, Any]] = None,
     exclude_ids: Collection[int] = frozenset(),
-    exclude_frames: Collection[FrameType] = frozenset(),
     return_objects: bool = True
-) -> tuple[tuple[Refnom], tuple[Any]] | tuple[Refnom]:
+) -> tuple[tuple[Refnom], tuple[int]] | tuple[Refnom]:
+    # TODO: check for circular reference
     refs = method(obj)
+    f = currentframe()
     if filter_literal is True:
-        refs = tuple(
+        refs = list(
             filter(lambda ref: not isinstance(ref, LITERAL_TYPES), refs)
         )
     if filter_history is True:
         if globals_ is None:
             globals_ = currentframe().f_back.f_globals
-        refs = tuple(filter(history_filter(globals_), refs))
-    exclude_frames = set(exclude_frames)
+        refs = list(filter(history_filter(globals_), refs))
     exclude_ids = set(exclude_ids)
     # sources of horrible recursive confusion
-    exclude_frames.add(currentframe())
-    exclude_ids.update(map(id, exclude_frames))
     if filter_scopedicts is True:
         exclude_ids.update(stack_scopedict_ids())
-    else:
-        exclude_ids.update(scopedict_ids(exclude_frames))
-    exclude_ids.update(namespace_ids(exclude_frames))
-    refs = tuple(r for r in refs if id(r) not in exclude_ids)
+    exclude_ids.update(namespace_ids(include_frame_ids=True))
+    outrefs, refnoms = [], []
+    while len(refs) > 0:
+        if id(ref := refs.pop()) in exclude_ids:
+            continue
+        outrefs.append(ref)
+        refnoms.append(yclept(ref, stepback=2))
     if return_objects is True:
-        return gmap(yclept, refs), refs 
-    return gmap(yclept, refs)
-
-
-analyze_referents = partial(analyze_references, method=gc.get_referents)
-analyze_referrers = partial(analyze_references, method=gc.get_referrers)
+        return tuple(refnoms), tuple(outrefs) 
+    return tuple(refnoms)
 
 
 def di(obj_id):

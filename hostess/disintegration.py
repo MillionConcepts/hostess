@@ -19,13 +19,14 @@ from _pydevd_bundle.pydevd_suspended_frames import _ObjectVariable
 
 from hostess.monitors import memory
 from hostess.profilers import (
-    analyze_referents,
-    analyze_referrers,
+    analyze_references,
     describe_frame_contents, 
     describe_stack_contents, 
     di,
     identify,
-    yclept
+    yclept,
+    scopedict_ids,
+    namespace_ids
 )
 from hostess.utilities import is_any
 
@@ -45,7 +46,6 @@ class StillReferencedError(ValueError):
 
 ITERATIONS = [0]
 DEPTH = [0]
-YCLEPT = defaultdict(dict)
 
 
 def rip_from_collection(obj, ref, doppelganger=None):
@@ -106,16 +106,15 @@ def rip_from_collection(obj, ref, doppelganger=None):
         i = 0
         new = []
         for item in ref:
-            if item is obj:
+            if item is not obj:
+                new.append(item)
                 continue
-            new.append(item)
             i += 1
+            if doppelganger is not None:
+                new.append(doppelganger)
         if i == 0:
             return False
         new = ref.__class__(new)
-    YCLEPT[ITERATIONS[0]]['objrip'] = yclept(obj)
-    YCLEPT[ITERATIONS[0]]['ref'] = yclept(ref)
-    YCLEPT[ITERATIONS[0]]['new'] = yclept(new)
     return ref, new
 
 
@@ -137,28 +136,28 @@ def rip_from_attrs(obj, ref, doppelganger=None):
     return True
 
 
+# TODO, maybe: construct a tuple of 'preexisting'
+# gc-tracked ids at the top and always restrict to that?
+# would not have to do the exclude ids garbage 
 def disintegrate(
     obj: Any, 
     doppelganger: Any = None, 
     leftovers: Literal["ignore", "raise", "warn"] = "ignore",
     globals_: dict[str, Any] = None,
     exclude_ids: set[int] = frozenset(),
-    exclude_frames = frozenset()
 ) -> tuple[int, int]:
+    ### DEBUG ! !! 
     ITERATIONS[0] += 1
     DEPTH[0] += 1
-    YCLEPT[ITERATIONS[0]]['obj'] = yclept(obj)
-    YCLEPT[ITERATIONS[0]]['depth'] = DEPTH[0]
-    if doppelganger is not None:
-        YCLEPT[ITERATIONS[0]]['doppelganger'] = yclept(doppelganger)
-    else:
-        YCLEPT[ITERATIONS[0]]['doppelganger'] = None
-    if DEPTH[0] > 3:
-        print("BAILING OUT!!!")
-        return {'BAILOUT': True}
     print(
-        f"----ITERATION {ITERATIONS[0]} (d: {DEPTH[0]})----"
+        f"\n\n----ITERATION {ITERATIONS[0]} (d: {DEPTH[0]})----\n"
+        f"replacing {str(obj)[:20]} {id(obj)} with {str(doppelganger)[:20]} {id(doppelganger)}"
     )
+    if DEPTH[0] > 7:
+        raise ValueError
+    if ITERATIONS[0] > 10:
+        raise ValueError
+    ### /DEBUG (though we might actually want a less strict recursion check)
     # subtract 2 from getrefcount's output because one l
     # reference exists in this function's local scope and
     # one reference exists in getrefcount's local scope
@@ -174,71 +173,63 @@ def disintegrate(
             }
         finally:
             del obj
-    exclude_frames = set(exclude_frames)
-    # TODO: does forbidding objects in this frame prevent
-    #  finding cyclic references? and does _not_ forbidding
-    #  objects in this frame cause infinite loops?
-    #  and do we also need to explicitly add every object in refs / 
-    #  targets in the recursive disintegrate() loop below to prevent that?
-    exclude_frames.add(currentframe())
-    # if globals_ is None:
-    #     globals_ = currentframe().f_back.f_globals
-    succeeded, failed, targets = [], [], []
-    refnoms, refs = analyze_referrers(
+    exclude_ids = set(exclude_ids)
+    # TODO: does forbidding objects in this frame ever prevent
+    #  finding cyclic references? 
+    exclude_ids.update(scopedict_ids())
+    exclude_ids.update(namespace_ids(include_frame_ids=True))
+    succeeded, failed = [], []
+    refnoms, refs = analyze_references(
         obj, 
         filter_history=False,
         filter_scopedicts=False,
-        exclude_frames=exclude_frames,
+        exclude_ids=exclude_ids,
+        method=gc.get_referrers
     )
-    for refnom, ref in zip(refnoms, refs):
-        # TODO: is this really a problem?
-        if ref.__class__.__name__ == "_ObjectVariable":
-            print("---skipped _ObjectVariable---")
-            continue
+    for i in range(len(refnoms)):
+        # TODO, maybe: ignore uncollected frames rather than running the 
+        #  manual collect every time, slow
+        gc.collect()  
+        refnom, ref = refnoms[i], refs[i]
         ripped = rip_from_collection(obj, ref, doppelganger)
         if ripped is True:
             succeeded.append(refnom)
             continue
         if isinstance(ripped, tuple):
-            targets.append((ripped, refnom))
+            ripobj, ripdop = ripped
+            exclude_ids.update(namespace_ids())
+            res = disintegrate(
+                ripobj,
+                ripdop,
+                exclude_ids=exclude_ids,
+            )
+            # TODO: track what we recursed into
+            # refnom['success_ids'] = r[1]['id']
+            ### ! DEBUG ! ! !
+            DEPTH[0] -= 1  
+            if len(res['failed']) > 1:
+                failtype = f"failcount: {len(res['failed'])}"
+            elif res['untracked'] is True:
+                failtype = "not tracked"
+            # TODO: not sure how to determine the 'correct'
+            # number of references here. maybe have 
+            # analyze_references return the number of excluded
+            # refs or something, not counting the ones it internally
+            # excludes?
+            # elif res['refcount'] > 2:
+            #     failtype = f"refcount: {res['refcount']}"
+            else:
+                succeeded.append(refnom)
+                continue
+            print(f"failing with recursion on {str(ripobj)[:200]} ({failtype})")
+            ### /DEBUG
+            failed.append(refnom)
             continue
         if rip_from_attrs(obj, ref, doppelganger) is True:
             succeeded.append(refnom)
             continue
-        print(f"failing with no recursion on {refnom[0]['r']}!!!")
+        print(f"failing with no recursion on {str(ref)[:200]}!!!")
         failed.append(refnom)
-        del ripped
-    print(id(refs))
-    del refnoms, refs
-    while len(targets) > 0:
-        print([(id(t[0]), id(t[1])) for t in targets])
-        (target, doppelganger), refnom = targets.pop()
-        print(tuple(map(type, target)))
-        print(tuple(map(type, doppelganger)))      
-        res = disintegrate(
-            target,
-            doppelganger, 
-            exclude_frames=exclude_frames
-        )
-        if res.get("BAILOUT") is True:
-            return {
-                'BAILOUT': True, 
-                'succeeded': succeeded, 
-                'failed': failed
-            }
-        DEPTH[0] -= 1
-        del target, doppelganger
-        # we have an extra reference here in local scope
-        if len(res['failed']) > 1:
-            failtype = "failcount"
-        elif res['refcount'] > 2:
-            failtype = 'refcount'
-        else:
-            succeeded.append(refnom)
-            continue
-        print(f"failing with recursion on {refnom[0]['r']} ({failtype}) !!!")
-        failed.append(refnom)
-    del targets
     output = {
         "failed": failed, 
         "refcount": sys.getrefcount(obj) - 2,
@@ -250,20 +241,17 @@ def disintegrate(
         warnings.warn(
             "less than the expected number of references during closeout."
         )
-    try:
-        if (
-            (leftovers == "warn") 
-            and (len(output['failed']) + output['refcount'] > 0)
-        ):
-            warnings.warn("leftover references after disintegration")
-        if (
-            (leftovers == "raise") 
-            and (len(output['failed']) + output['refcount']  > 0)
-        ):
-            raise StillReferencedError
-        return output
-    finally:
-        del obj
+    if (
+        (leftovers == "warn") 
+        and (len(output['failed']) + output['refcount'] > 0)
+    ):
+        warnings.warn("leftover references after disintegration")
+    if (
+        (leftovers == "raise") 
+        and (len(output['failed']) + output['refcount']  > 0)
+    ):
+        raise StillReferencedError
+    return output
 
 
 def arbput(
