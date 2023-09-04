@@ -3,17 +3,21 @@ from __future__ import annotations
 
 import _ctypes
 from collections import defaultdict
+from functools import partial
 import gc
-import inspect
 from inspect import currentframe, getsourcelines, stack
+from itertools import chain
 import re
-from typing import Mapping, Union
+from types import EllipsisType, FrameType, NoneType, NotImplementedType
+from typing import Any, Callable, Collection, Mapping, Optional, Union
 
-from dustgoggles.func import zero
+from cytoolz import keyfilter, valmap
+from dustgoggles.func import gmap
+from dustgoggles.structures import listify
 from pympler.asizeof import asizeof
 
 from hostess.monitors import make_stat_records, make_stat_printer, Stopwatch
-from hostess.utilities import is_any, mb
+from hostess.utilities import mb
 
 
 class Profiler:
@@ -118,93 +122,41 @@ def history_filter(glb):
     return filterref
 
 
-def analyze_references(
-    obj, 
-    method, 
-    filter_literal=True, 
-    filter_history=True,
-    filter_scopes=True,
-    verbose=False,
-    glb=None,
-    excluded=None,
-):
-    print_ = print if verbose is True else zero
-    refs = method(obj)
-    if filter_literal is True:
-        refs = tuple(
-            filter(lambda ref: not isinstance(ref, (float, int, str)), refs)
-        )
-    if glb is None:
-        glb = currentframe().f_back.f_globals
-    if filter_history is True:
-        refs = tuple(filter(history_filter(glb), refs))
-    excluded = [] if excluded is None else excluded
-    # a source of horrible recursive confusion if not excluded
-    excluded += [currentframe().f_locals, currentframe().f_globals]
-    if filter_scopes is True:
-        excluded += [currentframe().f_back.f_locals]
-        excluded.append(glb)
-    refs = tuple(r for r in refs if not is_any(r, excluded))
-    extra_printables = [
-        None if not isinstance(ref, tuple) else ref[0] for ref in refs
-    ]
-    for ref, extra in zip(refs, extra_printables):
-        if extra is not None:
-            print_(id(ref), type(ref), id(extra), type(extra))
-        print_(id(ref), type(ref))
-    return refs, extra_printables
+def scopedicts(frame: FrameType) -> tuple[dict, dict, dict]:
+    return (frame.f_locals, frame.f_globals, frame.f_builtins)
 
 
-def analyze_referents(
-    obj, 
-    filter_literal=True, 
-    filter_history=True, 
-    filter_scopes=True,
-    verbose=False,
-    glb=None,
-    excluded=None,
-):
-    if filter_scopes is True:
-        if excluded is None:
-            excluded = [currentframe().f_back.f_locals]
-    if glb is None:
-        glb = currentframe().f_back.f_globals
-    return analyze_references(
-        obj, 
-        gc.get_referents, 
-        filter_literal, 
-        filter_history, 
-        filter_scopes,
-        verbose,
-        glb,
-        excluded
+def val_ids(mapping):
+    return set(map(id, mapping.values()))
+
+
+def namespace_ids(
+    frames: FrameType | Collection[FrameType] | None = None
+) -> set[int]:
+    """
+    find ids of all top-level objects in the combined namespace(s) of 
+    a frame or frames
+    """
+    frames = frames if frames is not None else currentframe().f_back
+    return set(
+        chain(*map(val_ids, chain(*map(scopedicts, listify(frames)))))
     )
 
 
-def analyze_referrers(
-    obj, 
-    filter_literal=True, 
-    filter_history=True, 
-    filter_scopes=True,
-    verbose=False,
-    glb=None,
-    excluded=None,
+def stack_scopedict_ids() -> set[int]:
+    """
+    return ids of all 'scopedicts' in stack. uses include: distinguishing 
+    references held by namespaces from references held by other objects; 
+    avoiding accidental 'direct' manipulation of namespaces.
+    """
+    return set(map(id, chain(*[scopedicts(s.frame) for s in stack()])))
+
+
+def scopedict_ids(
+    frames: FrameType | Collection[FrameType] | None = None
 ):
-    if filter_scopes is True:
-        if excluded is None:
-            excluded = [currentframe().f_back.f_locals]
-    if glb is None:
-        glb = currentframe().f_back.f_globals
-    return analyze_references(
-        obj, 
-        gc.get_referrers, 
-        filter_literal, 
-        filter_history, 
-        filter_scopes,
-        verbose,
-        glb,
-        excluded
-    )
+    frames = frames if frames is not None else currentframe().f_back
+    return set(map(id, chain(*map(scopedicts, listify(frames)))))
 
 
 def lineno():
@@ -220,24 +172,27 @@ def def_lineno(obj):
         return None
 
 
-def identify(obj, maxlen=25):
+IdentifyResult = dict[str, int | type | str]
+
+
+def identify(
+    obj: Any, 
+    maxlen: int = 25, 
+    getsize: bool = False
+) -> IdentifyResult:
     """identify an object"""
     identifiers = {
         "id": id(obj),
         "type": type(obj),
         "line": def_lineno(obj),
         "r": repr(obj)[:maxlen],
-        "size": mb(asizeof(obj), 2)
     }
+    if getsize is True:
+        identifiers["size"]: mb(asizeof(obj), 2)
     for attr in ("__name__", "__qualname__", "__module__"):
         if hasattr(obj, attr):
             identifiers[attr] = getattr(obj, attr)
     return identifiers
-
-
-def di(obj_id):
-    """backwards `id`. Use with care! Can segfault."""
-    return _ctypes.PyObj_FromPtr(obj_id)
 
 
 def describe_frame_contents(frame=None):
@@ -247,13 +202,173 @@ def describe_frame_contents(frame=None):
         "filename": frame.f_code.co_filename,
         "lineno": frame.f_lineno,
         "name": frame.f_code.co_name,
-        "locals": tuple(map(identify, frame.f_locals)),
+        "locals": valmap(identify, frame.f_locals),
     }
 
 
 def describe_stack_contents():
     """describe the contents of the stack"""
     return tuple(map(describe_frame_contents, [s[0] for s in stack()]))
+
+
+def framerec(frame: FrameType):
+    return {
+        'co_names': frame.f_code.co_names,
+        'func': frame.f_code.co_name,
+        'qual': frame.f_code.co_qualname,
+        'varnames': frame.f_code.co_varnames
+    }
+
+
+Refnom = tuple[
+    IdentifyResult, tuple[dict[str, tuple[str] | str]]
+]
+LITERAL_TYPES = (
+    str, float, int, bool, slice, EllipsisType, NoneType, NotImplementedType
+)
+
+
+def yclept(obj: Any, terse=True) -> Refnom:
+    nytta  = []
+    frame = currentframe().f_back
+    while frame is not None:
+        rec = framerec(frame) | {'names': set()}
+        if terse is True:
+            rec = keyfilter(lambda k: k in ('func', 'qual', 'names'), rec)
+        for scope in frame.f_locals, frame.f_globals, frame.f_builtins:
+            for k, v in scope.items():
+                if obj is v:
+                    rec['names'].add(k)
+        rec['names'] = tuple(rec['names'])
+        nytta.append(rec)
+        frame = frame.f_back
+    return identify(obj, maxlen=55, getsize=False), tuple(nytta)
+
+
+def analyze_references(
+    obj, 
+    method: Callable[[Any], Collection], 
+    filter_literal: bool = True, 
+    filter_history: bool = True,
+    filter_scopedicts: bool = True,
+    globals_: Optional[dict[str, Any]] = None,
+    exclude_ids: Collection[int] = frozenset(),
+    exclude_frames: Collection[FrameType] = frozenset(),
+    return_objects: bool = True
+) -> tuple[tuple[Refnom], tuple[Any]] | tuple[Refnom]:
+    refs = method(obj)
+    if filter_literal is True:
+        refs = tuple(
+            filter(lambda ref: not isinstance(ref, LITERAL_TYPES), refs)
+        )
+    if filter_history is True:
+        if globals_ is None:
+            globals_ = currentframe().f_back.f_globals
+        refs = tuple(filter(history_filter(globals_), refs))
+    exclude_frames = set(exclude_frames)
+    exclude_ids = set(exclude_ids)
+    # sources of horrible recursive confusion
+    exclude_frames.add(currentframe())
+    exclude_ids.update(map(id, exclude_frames))
+    if filter_scopedicts is True:
+        exclude_ids.update(stack_scopedict_ids())
+    else:
+        exclude_ids.update(scopedict_ids(exclude_frames))
+    exclude_ids.update(namespace_ids(exclude_frames))
+    refs = tuple(r for r in refs if id(r) not in exclude_ids)
+    if return_objects is True:
+        return gmap(yclept, refs), refs 
+    return gmap(yclept, refs)
+
+
+analyze_referents = partial(analyze_references, method=gc.get_referents)
+analyze_referrers = partial(analyze_references, method=gc.get_referrers)
+
+
+def di(obj_id):
+    """backwards `id`. Use with care! Can segfault."""
+    return _ctypes.PyObj_FromPtr(obj_id)
+
+
+
+class Aint:
+    """
+    note: not reliably monadic for all primitive types, e.g. bool
+    """
+    def __init__(self, obj):
+        if isinstance(obj, Aint):
+            self.__obj = obj.__obj
+        else:
+            self.__obj = obj
+
+    def __repr__(self):
+        return f"Aint({self.__obj.__repr__()})"
+
+    def __str__(self):
+        return self.__repr__()
+
+    __add__ = lambda z, i: Aint(z.__obj + i)
+    __radd__ = lambda z, i: Aint(i + z.__obj)
+    __sub__ = lambda z, i: Aint(z.__obj - i)
+    __rsub__ = lambda z, i: Aint(i - z.__obj)
+    __truediv__ = lambda z, i: Aint(z.__obj / i)
+    __rtruediv__ = lambda z, i: Aint(i / z.__obj)
+    __floordiv__ = lambda z, i: Aint(z.__obj // i)
+    __rfloordiv__ = lambda z, i: Aint(i // z.__obj)
+    __mod__ = lambda z, i: Aint(z.__obj % i)
+    __rmod__ = lambda z, i: Aint(i % z.__obj)
+    __abs__ = lambda z: Aint(abs(z.__obj))
+    __eq__ = lambda z, i: z.__obj == i
+    __gt__ = lambda z, i: z.__obj > i
+    __lt__ = lambda z, i: z.__obj < i
+    __ge__ = lambda z, i: z.__obj >= i
+    __le__ = lambda z, i: z.__obj <= i
+    __bool__ = lambda z: bool(z.__obj)
+    # spooky!
+    __hash__ = lambda z: hash(z.__obj)
+
+
+def t_analyze_references_1():
+    def f1(num):
+        x1 = Aint(num)
+        xtup = (x1,)
+        return f2(x1)
+
+    def f2(y1):
+        y2 = y1 + 1
+        ytup = (y1, y2)
+        return f3(y1, y2)
+
+    def f3(z1, z2):
+        z3 = z1 + z2
+        ztup = (z1, z2, z3)
+        return (
+            gmap(analyze_referrers, ztup), 
+            analyze_referents(ztup),
+            analyze_referents(z1)
+        )
+
+    z1_z2_z3_referrers, ztup_referents, z1_referents = f1(1)
+    meta0 = z1_z2_z3_referrers[0][1]
+    assert len(meta0) == 3
+    meta0_f = [meta0[i][0] for i in range(3)]
+    meta0_names = [
+        meta_f[0]['names'][0] for meta_f in meta0_f
+    ]
+    assert meta0_names == ['xtup', 'ytup', 'ztup']
+    assert meta0[2][1]['r'] == '(Aint(1), Aint(2), Aint(3))'
+    meta1 = z1_z2_z3_referrers[1][1]
+    assert len(meta1) == 2
+    meta1_f = [meta1[i][0] for i in range(2)]
+    meta1_names = [
+        meta_f[0]['names'][0] for meta_f in meta1_f
+    ]
+    assert meta1_names == ['ytup', 'ztup']
+    assert z1_referents == ((), ())
+    assert set(
+        chain(map(lambda rec: rec['names'][0], ztup_referents[1][2][0]))
+    ) == {'x1', 'y1', 'z1'}
+
 
 
 DEFAULT_PROFILER = Profiler({'time': Stopwatch()})
