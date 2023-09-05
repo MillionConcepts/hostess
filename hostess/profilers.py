@@ -2,12 +2,10 @@
 from __future__ import annotations
 
 import _ctypes
+import re
 from collections import defaultdict
-from functools import partial
-import gc
 from inspect import currentframe, getsourcelines, stack
 from itertools import chain
-import re
 from types import EllipsisType, FrameType, NoneType, NotImplementedType
 from typing import Any, Callable, Collection, Mapping, Optional, Union
 
@@ -202,7 +200,7 @@ def framerec(frame: FrameType):
 
 
 Refnom = tuple[
-    IdentifyResult, tuple[dict[str, tuple[str] | str]]
+    IdentifyResult, list[dict[str, tuple[str] | str | set[str]]]
 ]
 LITERAL_TYPES = (
     str, float, int, bool, slice, EllipsisType, NoneType, NotImplementedType
@@ -210,7 +208,7 @@ LITERAL_TYPES = (
 
 
 def yclept(obj: Any, terse=True, stepback=1) -> Refnom:
-    nytta  = []
+    nytta = []
     frame = currentframe()
     for _ in range(stepback):
         frame = frame.f_back
@@ -226,7 +224,7 @@ def yclept(obj: Any, terse=True, stepback=1) -> Refnom:
             rec['names'] = tuple(rec['names'])
             nytta.append(rec)
         frame = frame.f_back
-    return identify(obj, maxlen=55, getsize=False), tuple(nytta)
+    return identify(obj, maxlen=55, getsize=False), nytta
 
 
 def history_filter(glb):
@@ -292,14 +290,15 @@ def analyze_references(
     return list(refnoms)
 
 
+# noinspection PyUnresolvedReferences
 def di(obj_id):
     """backwards `id`. Use with care! Can segfault."""
     return _ctypes.PyObj_FromPtr(obj_id)
 
 
-
 class Aint:
     """
+    acts arithmetically like obj, but ain't actually it.
     note: not reliably monadic for all primitive types, e.g. bool
     """
     def __init__(self, obj):
@@ -375,7 +374,6 @@ def t_analyze_references_1():
     assert set(
         chain(map(lambda rec: rec['names'][0], ztup_referents[1][2][0]))
     ) == {'x1', 'y1', 'z1'}
-
 
 
 DEFAULT_PROFILER = Profiler({'time': Stopwatch()})
