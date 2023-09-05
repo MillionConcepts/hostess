@@ -165,8 +165,6 @@ def _kidnap_and_replace_immutables(
         permit_ids.update(result["permit_ids"])
         if len(result["failure"]) > 1:
             failtype = f"failcount: {len(result['failure'])}"
-        elif result["untracked"] is True:
-            failtype = "not tracked"
         # TODO: not sure how to determine the 'correct'
         #  number of references here. maybe have analyze_references return the
         #  number of excluded refs or something, not counting the ones it
@@ -268,11 +266,8 @@ def disintegrate(
         "failure": [],
         "start_refcount": sys.getrefcount(obj) - 2,
         "permit_ids": permit_ids,
+        "tracked": gc.is_tracked(obj)
     }
-    if not gc.is_tracked(obj):
-        if _debug is True:
-            print("¡object is untracked!")
-        return out | {"untracked": True}
     refnoms, refs = analyze_references(
         obj,
         filter_history=False,
@@ -297,7 +292,7 @@ def disintegrate(
     )
     out["success"] += res["success"]
     out["failure"] += res["failure"]
-    out |= {"refcount": sys.getrefcount(obj) - 2, "untracked": False}
+    out |= {"refcount": sys.getrefcount(obj) - 2}
     if out["refcount"] < 0:
         warnings.warn(
             "less than the expected number of references during closeout."
