@@ -164,7 +164,7 @@ def identify(
         "id": id(obj),
         "type": type(obj),
         "line": def_lineno(obj),
-        "r": repr(obj)[:maxlen],
+        "r": str(obj)[:maxlen],
     }
     if getsize is True:
         identifiers["size"]: mb(asizeof(obj), 2)
