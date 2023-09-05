@@ -258,15 +258,18 @@ def analyze_references(
     filter_scopedicts: bool = True,
     globals_: Optional[dict[str, Any]] = None,
     exclude_ids: Collection[int] = frozenset(),
+    exclude_types: Collection[type] = (),
+    permit_ids: Collection[int] | None = None,
     return_objects: bool = True
-) -> tuple[tuple[Refnom], tuple[int]] | tuple[Refnom]:
+) -> tuple[list[Refnom], list[Any]] | list[Refnom]:
     # TODO: check for circular reference
     refs = method(obj)
     f = currentframe()
     if filter_literal is True:
-        refs = list(
-            filter(lambda ref: not isinstance(ref, LITERAL_TYPES), refs)
-        )
+        exclude_types = list(exclude_types) + list(LITERAL_TYPES)
+    refs = list(
+        filter(lambda ref: not isinstance(ref, exclude_types), refs)
+    )
     if filter_history is True:
         if globals_ is None:
             globals_ = currentframe().f_back.f_globals
@@ -280,11 +283,13 @@ def analyze_references(
     while len(refs) > 0:
         if id(ref := refs.pop()) in exclude_ids:
             continue
+        if permit_ids is not None and id(ref) not in permit_ids:
+            continue
         outrefs.append(ref)
         refnoms.append(yclept(ref, stepback=2))
     if return_objects is True:
-        return tuple(refnoms), tuple(outrefs) 
-    return tuple(refnoms)
+        return list(refnoms), list(outrefs) 
+    return list(refnoms)
 
 
 def di(obj_id):
