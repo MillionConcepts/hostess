@@ -50,7 +50,16 @@ def resect_from_mutable_collection(obj, ref, doppelganger=None):
             raise NoTargetError
         if doppelganger is not None:
             ref.add(doppelganger)
-    elif isinstance(ref, MutableSequence):
+    elif hasattr(ref, 'items'):
+        to_pop = tuple(filter(lambda kv: is_any(obj, kv), ref.items()))
+        if len(to_pop) == 0:
+            return False
+        for item in to_pop:
+            if doppelganger is not None:
+                ref[item[0]] = doppelganger
+            else:
+                ref.pop(item[0])
+    elif hasattr(ref, 'pop'):
         indices = tuple(filter(lambda iv: iv[1] is obj, enumerate(ref)))
         indices = [index[0] for index in indices]
         if len(indices) == 0:
@@ -142,22 +151,20 @@ def _kidnap_and_replace_immutables(
     new_doppelganger_ids = set()
     for refnom, ref in immutables:
         # gc.collect()  # probably with ignoring FrameType we don't need this
-        if ref not in permit_ids:
+        if id(ref) not in permit_ids:
             continue  # replaced by a doppelganger down below!
         new_doppelganger = doppelgangerize_immutable(obj, ref, doppelganger)
         permit_ids.add(id(new_doppelganger))
         permit_ids.remove(id(ref))
         new_doppelganger_ids.add(id(new_doppelganger))
-        result = disintegrate(ref, new_doppelganger, permit_ids, _debug)
+        result = disintegrate(ref, new_doppelganger, permit_ids, _debug=_debug)
         if _debug is True:
             DEPTH[0] -= 1
             print(f"----BOUNCE TO DEPTH {DEPTH[0]}----")
         # TODO: probably redundant
         permit_ids.update(result["permit_ids"])
-        # TODO: checks for any new doppelgangers _should_ be handled at lower
-        #  levels -- verify
-        if len(result["failed"]) > 1:
-            failtype = f"failcount: {len(result['failed'])}"
+        if len(result["failure"]) > 1:
+            failtype = f"failcount: {len(result['failure'])}"
         elif result["untracked"] is True:
             failtype = "not tracked"
         # TODO: not sure how to determine the 'correct'
@@ -243,14 +250,14 @@ def disintegrate(
         ITERATIONS[0] += 1
         DEPTH[0] += 1
         print(
-            f"\n\n----ITERATION {ITERATIONS[0]} (d: {DEPTH[0]})----\n"
+            f"\n----ITERATION {ITERATIONS[0]} (d: {DEPTH[0]})----\n"
             f"replacing {str(obj)[:20]} {id(obj)} with "
             f"{str(doppelganger)[:20]} {id(doppelganger)}"
         )
-        if DEPTH[0] > 5:
+        if DEPTH[0] > 8:
             print("¡BAILING FOR DEPTH!")
             raise BailoutError
-        if ITERATIONS[0] > 15:
+        if ITERATIONS[0] > 30:
             print("¡BAILING FOR ITERATIONS!")
             raise BailoutError
     # subtract 2 from getrefcount's output because one reference exists in
@@ -274,7 +281,6 @@ def disintegrate(
         method=gc.get_referrers,
         exclude_types=(FrameType,),
     )
-    print(f"n_refs={len(refs)}")
     # simpler case
     immutables, res = _resect_from_mutables(obj, doppelganger, refnoms, refs)
     out["success"] += res["success"]

@@ -264,9 +264,9 @@ def analyze_references(
     refs = method(obj)
     f = currentframe()
     if filter_literal is True:
-        exclude_types = list(exclude_types) + list(LITERAL_TYPES)
+        exclude_types = tuple(exclude_types) + tuple(LITERAL_TYPES)
     refs = list(
-        filter(lambda ref: not isinstance(ref, exclude_types), refs)
+        filter(lambda r: not isinstance(r, exclude_types), refs)
     )
     if filter_history is True:
         if globals_ is None:
