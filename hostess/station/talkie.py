@@ -20,11 +20,6 @@ from hostess.utilities import (
 )
 
 
-# acknowledgement, end-of-message, start-of-header codes
-# one-byte-wide codes for Message type of comm body.
-# "none" means the comm body is not a serialized protobuf Message.
-
-
 class TCPTalk:
     """lightweight multithreaded tcp server."""
 
