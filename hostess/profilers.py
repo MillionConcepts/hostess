@@ -2,15 +2,14 @@
 from __future__ import annotations
 
 import _ctypes
-import re
 from collections import defaultdict
 from inspect import currentframe, getsourcelines, stack
 from itertools import chain
+import re
 from types import EllipsisType, FrameType, NoneType, NotImplementedType
 from typing import Any, Callable, Collection, Mapping, Optional, Union
 
 from cytoolz import keyfilter, valmap
-from dustgoggles.func import gmap
 from dustgoggles.structures import listify
 from pympler.asizeof import asizeof
 
@@ -190,7 +189,10 @@ def describe_stack_contents():
     return tuple(map(describe_frame_contents, [s[0] for s in stack()]))
 
 
-def framerec(frame: FrameType):
+def _yclept_framerec(frame: FrameType):
+    """
+    return terse information about a frame's name and contents. for yclept.
+    """
     return {
         'co_names': frame.f_code.co_names,
         'func': frame.f_code.co_name,
@@ -208,23 +210,49 @@ LITERAL_TYPES = (
 
 
 def yclept(obj: Any, terse=True, stepback=1) -> Refnom:
+    """
+    Find basic identifiers for obj, along with any names for obj in all frames
+    in stack, starting stepback frames back from the frame of this function.
+    Args:
+        obj (object): object to name
+        terse (bool): include extended information in output?
+        stepback (int): how many frames to step back (from the frame of this
+        function) before looking for obj?
+    """
     nytta = []
     frame = currentframe()
     for _ in range(stepback):
         frame = frame.f_back
     while frame is not None:
-        rec = framerec(frame) | {'names': set()}
+        rec = _yclept_framerec(frame) | {'names': [], 'scopes': []}
         if terse is True:
             rec = keyfilter(lambda k: k in ('func', 'qual', 'names'), rec)
-        for scope in frame.f_locals, frame.f_globals, frame.f_builtins:
-            for k, v in scope.items():
-                if obj is v:
-                    rec['names'].add(k)
+        for scopename in ("locals", "globals", "builtins"):
+            for varname, reference in getattr(frame, f"f_{scopename}").items():
+                if obj is reference:
+                    rec['names'].append(varname)
+                    rec['scopes'].append(scopename)
         if len(rec['names']) > 0:
             rec['names'] = tuple(rec['names'])
+            rec['scopes'] = tuple(rec['scopes'])
             nytta.append(rec)
         frame = frame.f_back
     return identify(obj, maxlen=55, getsize=False), nytta
+
+
+def _filter_types(
+    refs: list, permit: Collection[type], exclude: Collection[type]
+) -> list:
+    outrefs = []
+    while len(refs) > 0:
+        ref = refs.pop()
+        reftype = type(ref)
+        if reftype in exclude:
+            continue
+        if len(permit) > 0 and (reftype not in permit):
+            continue
+        outrefs.append(ref)
+    return outrefs
 
 
 def history_filter(glb):
@@ -248,132 +276,113 @@ def history_filter(glb):
     return filterref
 
 
-def analyze_references(
-    obj, 
-    method: Callable[[Any], Collection], 
-    filter_literal: bool = True, 
-    filter_history: bool = True,
-    filter_scopedicts: bool = True,
-    globals_: Optional[dict[str, Any]] = None,
-    exclude_ids: Collection[int] = frozenset(),
-    exclude_types: Collection[type] = (),
-    permit_ids: Collection[int] | None = None,
-    return_objects: bool = True
-) -> tuple[list[Refnom], list[Any]] | list[Refnom]:
-    # TODO: check for circular reference
-    refs = method(obj)
-    f = currentframe()
-    if filter_literal is True:
-        exclude_types = tuple(exclude_types) + tuple(LITERAL_TYPES)
-    refs = list(
-        filter(lambda r: not isinstance(r, exclude_types), refs)
-    )
-    if filter_history is True:
-        if globals_ is None:
-            globals_ = currentframe().f_back.f_globals
-        refs = list(filter(history_filter(globals_), refs))
-    exclude_ids = set(exclude_ids)
-    # sources of horrible recursive confusion
-    if filter_scopedicts is True:
-        exclude_ids.update(stack_scopedict_ids())
-    exclude_ids.update(namespace_ids(include_frame_ids=True))
+def _filter_history(refs: list, globals_: Optional[dict]):
+    if globals_ is None:
+        globals_ = currentframe().f_back.f_back.f_globals
+    refs = list(filter(history_filter(globals_), refs))
+    return refs
+
+
+def _filter_ids(
+    refs: list, exclude: Collection[int], permit: Collection[int]
+) -> tuple[list[Any], list[Refnom]]:
     outrefs, refnoms = [], []
     while len(refs) > 0:
-        if id(ref := refs.pop()) in exclude_ids:
+        if id(ref := refs.pop()) in exclude:
             continue
-        if permit_ids is not None and id(ref) not in permit_ids:
+        if (len(permit) > 0) and id(ref) not in permit:
             continue
         outrefs.append(ref)
         refnoms.append(yclept(ref, stepback=2))
+    return refnoms, outrefs
+
+
+def analyze_references(
+    obj: Any,
+    method: Callable[[Any], Collection],
+    *,
+    filter_primitive: bool = True,
+    filter_history: bool = True,
+    filter_scopedict: bool = True,
+    filter_reflexive: bool = True,
+    exclude_ids: Collection[int] = frozenset(),
+    exclude_types: Collection[type] = frozenset(),
+    permit_ids: Collection[int] = frozenset(),
+    permit_types: Collection[type] = frozenset(),
+    globals_: Optional[dict[str, Any]] = None,
+    return_objects: bool = True
+) -> tuple[list[Refnom], list[Any]] | list[Refnom]:
+    """
+    analyze 'references' to or from obj. designed, but not limited to,
+    analyzing references tracked by the garbage collector.
+    Notes:
+        1) This function is only completely compatible with CPython.
+        2) All 'exclude', 'permit', and 'filter' operations are implicitly
+            connected by boolean AND. Represented as a predicate:
+            (~PRIMITIVE(REF) | ~FILTER_PRMITIVE)
+            & (~HISTORY(REF) | ~FILTER_HISTORY)
+            & (~SCOPEDICT(REF) | ~FILTER_SCOPEDICT)
+            & ((ID(REF) != ID(OBJ)) | ~FILTER_REFLEXIVE)
+            & ~(ID(REF) ∈ EXCLUDE_IDS)
+            & (ID(REF) ∈ PERMIT_IDS | PERMIT_IDS = ∅)
+            & ~(TYPE(REF) ∈ EXCLUDE_TYPES)
+            & (TYPE(REF) ∈ PERMIT_TYPES | PERMIT_TYPES = ∅)
+        3) references from obj to itself are never included. This may change
+           in the future.
+    Args:
+        obj: object of referential analysis
+        method: Function whose return values define 'references' of
+            obj. gc.get_referents and gc.get_referrers are the intended and
+            tested values.
+        filter_primitive: ignore 'primitive' (str, bool, &c) objects?
+        filter_history: attempt to ignore 'history' objects (intended for
+            ipython)?
+        filter_scopedict: ignore _direct_ references to the locals, globals,
+            and builtins dicts of all frames in stack (_not_ the values of
+            these dictionaries?)
+        filter_reflexive: ignore references from obj to itself?
+        exclude_ids: denylist of reference ids.
+        exclude_types: denylist of reference types.
+        permit_ids: allowlist of reference ids.
+        permit_types: allowlist of reference types.
+        return_objects: return objects in set of references, or only
+            descriptions of those objects?
+        globals_: optional dictionary of globals to use in filtering.
+            currently only used in history filtering. If this argument is None,
+            history filtering uses the globals of the calling frame.
+    """
+    refs = list(method(obj))
+    exclude_types, permit_types = set(exclude_types), set(permit_types)
+    if filter_primitive is True:
+        exclude_types.update(LITERAL_TYPES)
+    # type exclusions are easier to perform here. id exclusions need to come
+    # at the end of the function in order to filter the objects in this
+    # namespace.
+    if len(exclude_types) + len(permit_types) > 0:
+        refs = _filter_types(refs, exclude_types, permit_types)
+    if filter_history is True:
+        refs = _filter_history(refs, globals_)
+    exclude_ids = set(exclude_ids)
+    if filter_scopedict is True:
+        exclude_ids.update(stack_scopedict_ids())
+    # the frame of this function, along with all objects in its namespace, are
+    # always excluded from analysis -- with the exception of obj if
+    # filter_reflexive is False.
+    exclude_ids.update(namespace_ids(include_frame_ids=True))
+    # do this via the negative because id(obj) should be in namespace_ids()
+    if filter_reflexive is False:
+        exclude_ids.difference_update({id(obj)})
+    # TODO, maybe -- consider also allowing arguments to this function
+    refnoms, outrefs = _filter_ids(refs, exclude_ids, permit_ids)
     if return_objects is True:
-        return list(refnoms), list(outrefs) 
-    return list(refnoms)
+        return refnoms, outrefs
+    return refnoms
 
 
 # noinspection PyUnresolvedReferences
-def di(obj_id):
+def di(obj_id: int) -> Any:
     """backwards `id`. Use with care! Can segfault."""
     return _ctypes.PyObj_FromPtr(obj_id)
-
-
-class Aint:
-    """
-    acts arithmetically like obj, but ain't actually it.
-    note: not reliably monadic for all primitive types, e.g. bool
-    """
-    def __init__(self, obj):
-        if isinstance(obj, Aint):
-            self.__obj = obj.__obj
-        else:
-            self.__obj = obj
-
-    def __repr__(self):
-        return f"Aint({self.__obj.__repr__()})"
-
-    def __str__(self):
-        return self.__repr__()
-
-    __add__ = lambda z, i: Aint(z.__obj + i)
-    __radd__ = lambda z, i: Aint(i + z.__obj)
-    __sub__ = lambda z, i: Aint(z.__obj - i)
-    __rsub__ = lambda z, i: Aint(i - z.__obj)
-    __truediv__ = lambda z, i: Aint(z.__obj / i)
-    __rtruediv__ = lambda z, i: Aint(i / z.__obj)
-    __floordiv__ = lambda z, i: Aint(z.__obj // i)
-    __rfloordiv__ = lambda z, i: Aint(i // z.__obj)
-    __mod__ = lambda z, i: Aint(z.__obj % i)
-    __rmod__ = lambda z, i: Aint(i % z.__obj)
-    __abs__ = lambda z: Aint(abs(z.__obj))
-    __eq__ = lambda z, i: z.__obj == i
-    __gt__ = lambda z, i: z.__obj > i
-    __lt__ = lambda z, i: z.__obj < i
-    __ge__ = lambda z, i: z.__obj >= i
-    __le__ = lambda z, i: z.__obj <= i
-    __bool__ = lambda z: bool(z.__obj)
-    # spooky!
-    __hash__ = lambda z: hash(z.__obj)
-
-
-def t_analyze_references_1():
-    def f1(num):
-        x1 = Aint(num)
-        xtup = (x1,)
-        return f2(x1)
-
-    def f2(y1):
-        y2 = y1 + 1
-        ytup = (y1, y2)
-        return f3(y1, y2)
-
-    def f3(z1, z2):
-        z3 = z1 + z2
-        ztup = (z1, z2, z3)
-        return (
-            gmap(analyze_referrers, ztup), 
-            analyze_referents(ztup),
-            analyze_referents(z1)
-        )
-
-    z1_z2_z3_referrers, ztup_referents, z1_referents = f1(1)
-    meta0 = z1_z2_z3_referrers[0][1]
-    assert len(meta0) == 3
-    meta0_f = [meta0[i][0] for i in range(3)]
-    meta0_names = [
-        meta_f[0]['names'][0] for meta_f in meta0_f
-    ]
-    assert meta0_names == ['xtup', 'ytup', 'ztup']
-    assert meta0[2][1]['r'] == '(Aint(1), Aint(2), Aint(3))'
-    meta1 = z1_z2_z3_referrers[1][1]
-    assert len(meta1) == 2
-    meta1_f = [meta1[i][0] for i in range(2)]
-    meta1_names = [
-        meta_f[0]['names'][0] for meta_f in meta1_f
-    ]
-    assert meta1_names == ['ytup', 'ztup']
-    assert z1_referents == ((), ())
-    assert set(
-        chain(map(lambda rec: rec['names'][0], ztup_referents[1][2][0]))
-    ) == {'x1', 'y1', 'z1'}
 
 
 DEFAULT_PROFILER = Profiler({'time': Stopwatch()})
