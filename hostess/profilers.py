@@ -166,7 +166,7 @@ def identify(
         "r": str(obj)[:maxlen],
     }
     if getsize is True:
-        identifiers["size"]: mb(asizeof(obj), 2)
+        identifiers["size"] = mb(asizeof(obj), 2)
     for attr in ("__name__", "__qualname__", "__module__"):
         if hasattr(obj, attr):
             identifiers[attr] = getattr(obj, attr)
@@ -226,7 +226,9 @@ def yclept(obj: Any, terse=True, stepback=1) -> Refnom:
     while frame is not None:
         rec = _yclept_framerec(frame) | {'names': [], 'scopes': []}
         if terse is True:
-            rec = keyfilter(lambda k: k in ('func', 'qual', 'names'), rec)
+            rec = keyfilter(
+                lambda k: k in ('func', 'qual', 'names', 'scopes'), rec
+            )
         for scopename in ("locals", "globals", "builtins"):
             for varname, reference in getattr(frame, f"f_{scopename}").items():
                 if obj is reference:
@@ -284,7 +286,7 @@ def _filter_history(refs: list, globals_: Optional[dict]):
 
 
 def _filter_ids(
-    refs: list, exclude: Collection[int], permit: Collection[int]
+    refs: list, permit: Collection[int], exclude: Collection[int]
 ) -> tuple[list[Any], list[Refnom]]:
     outrefs, refnoms = [], []
     while len(refs) > 0:
@@ -316,6 +318,11 @@ def analyze_references(
     analyze 'references' to or from obj. designed, but not limited to,
     analyzing references tracked by the garbage collector.
     Notes:
+        1) TAKE SPECIAL CARE WHEN DECORATING THIS FUNCTION OR CALLING IT FROM
+            A LAMBDA FUNCTION OR GENERATOR EXPRESSION, NO MATTER HOW HARMLESS-
+            LOOKING. These operations may add references that are difficult to
+            recognize or interpret. Calls that do not add context are much
+            safer.
         1) This function is only completely compatible with CPython.
         2) All 'exclude', 'permit', and 'filter' operations are implicitly
             connected by boolean AND. Represented as a predicate:
@@ -359,7 +366,7 @@ def analyze_references(
     # at the end of the function in order to filter the objects in this
     # namespace.
     if len(exclude_types) + len(permit_types) > 0:
-        refs = _filter_types(refs, exclude_types, permit_types)
+        refs = _filter_types(refs, permit_types, exclude_types)
     if filter_history is True:
         refs = _filter_history(refs, globals_)
     exclude_ids = set(exclude_ids)
@@ -373,7 +380,7 @@ def analyze_references(
     if filter_reflexive is False:
         exclude_ids.difference_update({id(obj)})
     # TODO, maybe -- consider also allowing arguments to this function
-    refnoms, outrefs = _filter_ids(refs, exclude_ids, permit_ids)
+    refnoms, outrefs = _filter_ids(refs, permit_ids, exclude_ids)
     if return_objects is True:
         return refnoms, outrefs
     return refnoms

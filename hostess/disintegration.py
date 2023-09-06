@@ -185,7 +185,7 @@ def _check_doppelgangers(
     refnoms, referencing_doppelgangers = analyze_references(
         obj,
         filter_history=False,
-        filter_scopedicts=False,
+        filter_scopedict=False,
         permit_ids=new_doppelganger_ids,
         method=gc.get_referrers,
     )
@@ -271,7 +271,7 @@ def disintegrate(
     refnoms, refs = analyze_references(
         obj,
         filter_history=False,
-        filter_scopedicts=False,
+        filter_scopedict=False,
         permit_ids=permit_ids,
         method=gc.get_referrers,
         exclude_types=(FrameType,),
