@@ -10,7 +10,6 @@ from types import EllipsisType, FrameType, NoneType, NotImplementedType
 from typing import Any, Callable, Collection, Mapping, Optional, Union
 
 from cytoolz import keyfilter, valmap
-from dustgoggles.structures import listify
 from pympler.asizeof import asizeof
 
 from hostess.monitors import make_stat_records, make_stat_printer, Stopwatch
@@ -98,43 +97,100 @@ class PContext:
                 self.profiler.labels[self.label][monitor][quality] += value
 
 
-def scopedicts(frame: FrameType) -> tuple[dict, dict, dict]:
-    return (frame.f_locals, frame.f_globals, frame.f_builtins)
+def scopedicts(
+    frame: FrameType, scopes=('locals', 'globals', 'builtins')
+) -> tuple[dict, ...]:
+    """
+    WARNING: caller is responsible for clearing references to locals, etc.
+    """
+    outscopes = []
+    for scope in scopes:
+        outscopes.append(getattr(frame, f"f_{scope}"))
+    return tuple(outscopes)
 
 
 def val_ids(mapping):
     return set(map(id, mapping.values()))
 
 
+def _maybe_release_locals(localdict, frame):
+    """
+    the locals dict of the top-level module frame is the
+    same as its globals dict, and retrieving it from the frame here
+    gives us the actual dict. we do NOT want to delete all members
+    of the top-level module frame here.
+    conversely, locals dicts retrieved from lower frames are just
+    copies. modifying them will not affect the locals available in
+    those frames. HOWEVER, references to everything in those copies
+    will hang around forever until _that_ frame fully dies, and
+    clearing the copy is the only reliable way to prevent that from
+    happening.
+    """
+    if frame.f_code.co_name != "<module>":
+        localdict.clear()
+        return True
+    return False
+
+
 def namespace_ids(
     frames: FrameType | Collection[FrameType] | None = None,
-    include_frame_ids=False
+    include_frame_ids=False,
 ) -> set[int]:
     """
     find ids of all top-level objects in the combined namespace(s) of 
     a frame or frames
     """
-    frames = listify(frames if frames is not None else currentframe().f_back)
-    ids_ = set(chain(*map(val_ids, chain(*map(scopedicts, frames)))))
+    if frames is None:
+        frames = [currentframe().f_back]
+    ids = set()
+    for frame in frames:
+        localdict, globaldict, builtindict = scopedicts(frame)
+        ids.update(chain(*map(val_ids, (localdict, globaldict, builtindict))))
+        _maybe_release_locals(localdict, frame)
     if include_frame_ids is True:
-        ids_.update(map(id, frames))
-    return ids_
+        ids.update(map(id, frames))
+    return ids
 
 
-def stack_scopedict_ids() -> set[int]:
-    """
-    return ids of all 'scopedicts' in stack. uses include: distinguishing 
-    references held by namespaces from references held by other objects; 
-    avoiding accidental 'direct' manipulation of namespaces.
-    """
-    return set(map(id, chain(*[scopedicts(s.frame) for s in stack()])))
+def _add_scopedict_ids(frame, ids, lids, scopenames):
+    sdicts = {
+        k: v for k, v in zip(scopenames, scopedicts(frame, scopenames))
+    }
+    for k, v in sdicts.items():
+        sid = id(v)
+        ids.add(sid)
+        if k == "locals":
+            if _maybe_release_locals(v, frame) is True:
+                lids.add(sid)
 
 
 def scopedict_ids(
-    frames: FrameType | Collection[FrameType] | None = None
+    frames: FrameType | Collection[FrameType] | None = None,
+    *,
+    getstack=False,
+    scopenames=('locals', 'globals', 'builtins'),
+    distinguish_locals=True
 ):
-    frames = frames if frames is not None else currentframe().f_back
-    return set(map(id, chain(*map(scopedicts, listify(frames)))))
+    """
+    return ids of all 'scopedicts' (locals, globals, builtins) in frames (by
+    default, just the caller's frame.)
+    if getstack is True, ignore the frames argument and instead look at
+    all levels of the stack above the caller's frame.
+    uses include: distinguishing references held by
+    namespaces from references held by other objects; avoiding accidental
+    'direct' manipulation of namespaces.
+    if distinguish_locals is True, return a tuple containing all ids and just
+    locals ids below top level
+    """
+    if getstack is True:
+        frames = [s.frame for s in stack()[:-2]]
+    frames = frames if frames is not None else [currentframe().f_back]
+    ids, lids = set(), set()
+    for frame in frames:
+        _add_scopedict_ids(frame, ids, lids, scopenames)
+    if distinguish_locals is True:
+        return ids, lids
+    return ids
 
 
 def lineno():
@@ -175,13 +231,16 @@ def identify(
 
 def describe_frame_contents(frame=None):
     """describe the contents of a frame"""
-    frame = frame if frame is not None else currentframe()
-    return {
-        "filename": frame.f_code.co_filename,
-        "lineno": frame.f_lineno,
-        "name": frame.f_code.co_name,
-        "locals": valmap(identify, frame.f_locals),
-    }
+    frame = frame if frame is not None else currentframe().f_back
+    try:
+        return {
+            "filename": frame.f_code.co_filename,
+            "lineno": frame.f_lineno,
+            "name": frame.f_code.co_name,
+            "locals": valmap(identify, frame.f_locals),
+        }
+    finally:
+        _maybe_release_locals(frame.f_locals, frame)
 
 
 def describe_stack_contents():
@@ -209,6 +268,13 @@ LITERAL_TYPES = (
 )
 
 
+def _add_varnames(obj, sdict, rec, scopename):
+    for varname, reference in sdict.items():
+        if obj is reference:
+            rec['names'].append(varname)
+            rec['scopes'].append(scopename)
+
+
 def yclept(obj: Any, terse=True, stepback=1) -> Refnom:
     """
     Find basic identifiers for obj, along with any names for obj in all frames
@@ -229,31 +295,50 @@ def yclept(obj: Any, terse=True, stepback=1) -> Refnom:
             rec = keyfilter(
                 lambda k: k in ('func', 'qual', 'names', 'scopes'), rec
             )
-        for scopename in ("locals", "globals", "builtins"):
-            for varname, reference in getattr(frame, f"f_{scopename}").items():
-                if obj is reference:
-                    rec['names'].append(varname)
-                    rec['scopes'].append(scopename)
+        localdict, globaldict, builtindict = scopedicts(frame)
+        _add_varnames(obj, globaldict, rec, "globals")
+        _add_varnames(obj, builtindict, rec, "builtins")
+        # the locals dict of the top-level module frame is the
+        # same as its globals dict, and retrieving it from the frame here
+        # gives us the actual dict. we do NOT want to delete all members
+        # of the top-level module frame here.
+        # conversely, locals dicts retrieved from lower frames are just
+        # copies. modifying them will not affect the locals available in
+        # those frames. HOWEVER, references to everything in those copies
+        # will hang around forever until _that_ frame fully dies, and
+        # clearing the copy is the only reliable way to prevent that from
+        # happening.
+        if frame.f_code.co_name != "<module>":
+            # don't bother adding redundant local varnames at top level
+            _add_varnames(obj, localdict, rec, "locals")
+            localdict.clear()  # see _maybe_release_locals
+        del globaldict, localdict, builtindict
         if len(rec['names']) > 0:
             rec['names'] = tuple(rec['names'])
             rec['scopes'] = tuple(rec['scopes'])
             nytta.append(rec)
         frame = frame.f_back
-    return identify(obj, maxlen=55, getsize=False), nytta
+    res = identify(obj, maxlen=55, getsize=False), nytta
+    del obj  # explicitly releasing obj clears ref faster
+    return res
 
 
 def _filter_types(
-    refs: list, permit: Collection[type], exclude: Collection[type]
+    refs: list,
+    permit: Collection[type],
+    exclude: Collection[type],
+    lids: Collection[int]
 ) -> list:
     outrefs = []
-    while len(refs) > 0:
-        ref = refs.pop()
+    for ref in refs:
         reftype = type(ref)
-        if reftype in exclude:
-            continue
-        if len(permit) > 0 and (reftype not in permit):
-            continue
-        outrefs.append(ref)
+        try:
+            assert reftype not in exclude
+            assert not (len(permit) > 0 and (reftype not in permit))
+            outrefs.append(ref)
+        except AssertionError:
+            if id(ref) in lids:
+                ref.clear()
     return outrefs
 
 
@@ -274,31 +359,58 @@ def history_filter(glb):
         if globalname in ("In", "Out", "_ih", "_oh", "_dh"):
             return False
         return True
-
     return filterref
 
 
-def _filter_history(refs: list, globals_: Optional[dict]):
+def _filter_history(
+    refs: list, globals_: Optional[dict], lids: Collection[int]
+):
     if globals_ is None:
         globals_ = currentframe().f_back.f_back.f_globals
-    refs = list(filter(history_filter(globals_), refs))
-    return refs
+    outrefs, hfilt = [], history_filter(globals_)
+    for ref in refs:
+        if history_filter(globals_):
+            outrefs.append(ref)
+        elif id(ref) in lids:
+            ref.clear()
+    return outrefs
 
 
 def _filter_ids(
-    refs: list, permit: Collection[int], exclude: Collection[int]
+    refs: list,
+    permit: Collection[int],
+    exclude: Collection[int],
+    lids: Collection[int]
 ) -> tuple[list[Any], list[Refnom]]:
     outrefs, refnoms = [], []
-    while len(refs) > 0:
-        if id(ref := refs.pop()) in exclude:
-            continue
-        if (len(permit) > 0) and id(ref) not in permit:
-            continue
-        outrefs.append(ref)
-        refnoms.append(yclept(ref, stepback=2))
+    for ref in refs:
+        try:
+            assert id(ref := refs.pop()) not in exclude
+            assert (len(permit) == 0) or (id(ref) in permit)
+            outrefs.append(ref)
+            refnoms.append(yclept(ref, stepback=2))
+        except AssertionError:
+            if id(ref) in lids:
+                ref.clear()
     return refnoms, outrefs
 
 
+def _get_referencing_scopedicts(obj, existing_ids):
+    outscopes = []
+    # if you do NOT slice the stack to -2, it will create a reference cycle
+    # from the local namespace of the caller to itself, preventing it from ever
+    # being garbage collected.
+    for scopedict in chain(*[scopedicts(s.frame) for s in stack()[:-2]]):
+        if id(scopedict) in existing_ids:
+            continue
+        if id(obj) in map(id, scopedict.values()):
+            outscopes.append(scopedict)
+    return outscopes
+
+
+# TODO, maybe: option to explicitly check variables of higher level namespaces
+#  for references to obj (not references from those namespaces to obj, but to
+#  other members of the namespaces)
 def analyze_references(
     obj: Any,
     method: Callable[[Any], Collection],
@@ -312,7 +424,7 @@ def analyze_references(
     permit_ids: Collection[int] = frozenset(),
     permit_types: Collection[type] = frozenset(),
     globals_: Optional[dict[str, Any]] = None,
-    return_objects: bool = True
+    return_objects: bool = False
 ) -> tuple[list[Refnom], list[Any]] | list[Refnom]:
     """
     analyze 'references' to or from obj. designed, but not limited to,
@@ -359,28 +471,34 @@ def analyze_references(
             history filtering uses the globals of the calling frame.
     """
     refs = list(method(obj))
+    objid = id(obj)
     exclude_types, permit_types = set(exclude_types), set(permit_types)
+    del obj  # explicitly releasing obj clears reference from frame faster
     if filter_primitive is True:
         exclude_types.update(LITERAL_TYPES)
+    # ensure we can always clear copies of locals dicts we might have received
+    # from the method(obj) call
+    sids, lids = scopedict_ids(getstack=True, distinguish_locals=True)
     # type exclusions are easier to perform here. id exclusions need to come
     # at the end of the function in order to filter the objects in this
     # namespace.
     if len(exclude_types) + len(permit_types) > 0:
-        refs = _filter_types(refs, permit_types, exclude_types)
+        refs = _filter_types(refs, permit_types, exclude_types, lids)
     if filter_history is True:
-        refs = _filter_history(refs, globals_)
+        refs = _filter_history(refs, globals_, lids)
     exclude_ids = set(exclude_ids)
     if filter_scopedict is True:
-        exclude_ids.update(stack_scopedict_ids())
+        exclude_ids.update(sids)
     # the frame of this function, along with all objects in its namespace, are
-    # always excluded from analysis -- with the exception of obj if
-    # filter_reflexive is False.
+    # always excluded from analysis
     exclude_ids.update(namespace_ids(include_frame_ids=True))
-    # do this via the negative because id(obj) should be in namespace_ids()
+    # do this via the negative in case a copy of obj was hanging around here
+    # somehow
     if filter_reflexive is False:
-        exclude_ids.difference_update({id(obj)})
-    # TODO, maybe -- consider also allowing arguments to this function
-    refnoms, outrefs = _filter_ids(refs, permit_ids, exclude_ids)
+        exclude_ids.difference_update({objid})
+    # TODO, maybe -- consider also allowing arguments to this function to be
+    #  included in analysis
+    refnoms, outrefs = _filter_ids(refs, permit_ids, exclude_ids, lids)
     if return_objects is True:
         return refnoms, outrefs
     return refnoms

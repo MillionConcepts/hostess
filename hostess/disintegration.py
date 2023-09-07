@@ -17,7 +17,7 @@ import warnings
 
 from dustgoggles.test_utils import random_nested_dict
 
-from hostess.profilers import analyze_references
+from hostess.profilers import analyze_references, scopedict_ids, yclept
 from hostess.utilities import is_any
 
 
@@ -157,7 +157,13 @@ def _kidnap_and_replace_immutables(
         permit_ids.add(id(new_doppelganger))
         permit_ids.remove(id(ref))
         new_doppelganger_ids.add(id(new_doppelganger))
-        result = disintegrate(ref, new_doppelganger, permit_ids, _debug=_debug)
+        result = disintegrate(
+            ref,
+            new_doppelganger,
+            permit_ids,
+            _debug=_debug,
+            return_permit_ids=True
+        )
         if _debug is True:
             DEPTH[0] -= 1
             print(f"----BOUNCE TO DEPTH {DEPTH[0]}----")
@@ -184,19 +190,21 @@ def _check_doppelgangers(
 ):
     refnoms, referencing_doppelgangers = analyze_references(
         obj,
+        gc.get_referrers,
         filter_history=False,
         filter_scopedict=False,
         permit_ids=new_doppelganger_ids,
-        method=gc.get_referrers,
+        return_objects=True
     )
+    if len(referencing_doppelgangers) == 0:
+        return {'success': [], 'failure': []}
     # note that we have no particular expectation that any of the new
     # doppelgangers will refer to obj -- the object a doppelganger replaced
     # may have only contained a reference in a containing object that has
     # already been removed, etc. referencing_doppelgangers may be an empty
     # list, and that's fine.
-    if len(referencing_doppelgangers) == 0:
-        return {'success': [], 'failure': []}
-    for refnom, ref in referencing_doppelgangers:
+    for i in range(len(refnoms)):
+        refnom, ref = refnoms[i], referencing_doppelgangers[i]
         # a doppelganger should only ever be an immutable collection
         if not isinstance(ref, Collection):
             raise TypeError(f"Non-Collection doppelganger of type {type(ref)}")
@@ -216,6 +224,8 @@ def _check_doppelgangers(
 
 def _resect_from_mutables(obj, doppelganger, refnoms, refs):
     immutables, results = [], {'success': [], 'failure': []}
+    print('resecting from mutables')
+    print(refnoms)
     for i in range(len(refnoms)):
         refnom, ref = refnoms[i], refs[i]
         try:
@@ -235,15 +245,30 @@ def _resect_from_mutables(obj, doppelganger, refnoms, refs):
     return immutables, results
 
 
+def get_stack_local_names(obj):
+    framerecs = []
+    _, nytta = yclept(obj, stepback=3)
+    for framerec in nytta:
+        print(framerec)
+        names = []
+        for name, scope in zip(framerec['names'], framerec['scopes']):
+            if scope != 'locals':
+                continue
+            names.append(name)
+        if len(names) > 0:
+            del framerec['scopes']
+            framerecs.append(framerec | {'names': names})
+    return framerecs
+
+
 def disintegrate(
     obj: Any,
     doppelganger: Any = None,
     permit_ids: set[int] = None,
     leftovers: Literal["ignore", "raise", "warn"] = "ignore",
-    _debug=False
+    _debug=False,
+    return_permit_ids=False
 ) -> dict:
-    if permit_ids is None:
-        permit_ids = get_tracked_ids()
     if _debug is True:
         ITERATIONS[0] += 1
         DEPTH[0] += 1
@@ -258,14 +283,25 @@ def disintegrate(
         if ITERATIONS[0] > 30:
             print("¡BAILING FOR ITERATIONS!")
             raise BailoutError
-    # subtract 2 from getrefcount's output because one reference exists in
-    # this function's local scope and one reference exists in getrefcount's
-    # local scope
+    if permit_ids is None:  # should only ever be true at top recursion level
+        permit_ids = get_tracked_ids()
+    # similarly, do not try to disintegrate references from locals dicts below
+    # top level
+    _, lids = scopedict_ids(
+        scopenames=('locals',), getstack=True, distinguish_locals=True
+    )
+    permit_ids.difference_update(lids)
+    # # subtract 2 from getrefcount's output because one reference exists in
+    # # this function's local scope and one reference exists in getrefcount's
+    # # local scope
     out = {
         "success": [],
         "failure": [],
         "start_refcount": sys.getrefcount(obj) - 2,
-        "permit_ids": permit_ids,
+        # check to see what higher levels of the stack contain obj in frame
+        # locals namespace. it is not possible to delete local references below
+        # top level from other frames, so this may be useful information
+        "local_refs": get_stack_local_names(obj),
         "tracked": gc.is_tracked(obj)
     }
     refnoms, refs = analyze_references(
@@ -275,6 +311,7 @@ def disintegrate(
         permit_ids=permit_ids,
         method=gc.get_referrers,
         exclude_types=(FrameType,),
+        return_objects=True
     )
     # simpler case
     immutables, res = _resect_from_mutables(obj, doppelganger, refnoms, refs)
@@ -287,11 +324,12 @@ def disintegrate(
     out["success"] += res["success"]
     out["failure"] += res["failure"]
     # check new doppelgangers for presence of obj at top level
-    res = _check_doppelgangers(
-        obj, doppelganger, new_doppelganger_ids, permit_ids, _debug
-    )
-    out["success"] += res["success"]
-    out["failure"] += res["failure"]
+    if len(new_doppelganger_ids) > 0:
+        res = _check_doppelgangers(
+            obj, doppelganger, new_doppelganger_ids, permit_ids, _debug
+        )
+        out["success"] += res["success"]
+        out["failure"] += res["failure"]
     out |= {"refcount": sys.getrefcount(obj) - 2}
     if out["refcount"] < 0:
         warnings.warn(
@@ -305,6 +343,16 @@ def disintegrate(
         len(out["failed"]) + out["refcount"] > 0
     ):
         raise StillReferencedError
+    if return_permit_ids is True:
+        out |= {'permit_ids': permit_ids}
+    if ITERATIONS[0] == 4 and DEPTH[0] == 1:
+        for r in gc.get_referrers(obj):
+            print(yclept(r))
+            try:
+                r.clear()
+                print('called clear')
+            except AttributeError as ae:
+                print(ae)
     return out
 
 
