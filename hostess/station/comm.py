@@ -9,9 +9,12 @@ from google.protobuf.message import Message, DecodeError
 from hostess.station.proto import station_pb2 as hostess_proto
 from hostess.station.proto_utils import m2d
 
+# acknowledgement, end-of-message, start-of-header codes
 HOSTESS_ACK = b"\06hostess"
 HOSTESS_EOM = b"\03hostess"
 HOSTESS_SOH = b"\01hostess"
+# one-byte-wide codes for Message type of comm body.
+# "none" means the comm body is not a serialized protobuf Message.
 CODE_TO_MTYPE = MPt(
     {0: "none", 1: "Update", 2: "Instruction", 3: "PythonObject"}
 )

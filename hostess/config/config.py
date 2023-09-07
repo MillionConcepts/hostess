@@ -1,5 +1,5 @@
 """
-desired settings should be placed in hostess/user_config/user_conifg.py.
+desired settings should be placed in hostess/user_config/user_config.py.
 this example_config module is never referenced by anything.
 """
 import getpass

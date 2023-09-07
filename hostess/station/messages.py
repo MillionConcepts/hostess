@@ -3,19 +3,18 @@
 from __future__ import annotations
 
 import datetime as dt
+from itertools import accumulate
+from functools import cached_property, cache
 import json
+from operator import add, attrgetter
 import random
 import struct
 import sys
-from functools import cached_property, cache
-from itertools import accumulate
-from operator import add, attrgetter
 from types import MappingProxyType as MPt, NoneType
 from typing import Optional, Any, Literal, Mapping, MutableMapping
 
-import dill
-import numpy as np
 from cytoolz import groupby
+import dill
 from dustgoggles.func import gmap
 from dustgoggles.structures import dig_for_values
 from google.protobuf.internal.well_known_types import Duration, Timestamp
@@ -26,8 +25,8 @@ from google.protobuf.pyext._message import (
     RepeatedScalarContainer,
 )
 from more_itertools import split_when, all_equal
+import numpy as np
 
-from hostess.profilers import DEFAULT_PROFILER
 from hostess.station.comm import make_comm
 from hostess.station.proto import station_pb2 as pro
 from hostess.station.proto_utils import (
@@ -83,16 +82,6 @@ def obj2scanf(obj) -> tuple[str, Optional[str]]:
     return "".join(f"{char[0]}" for char in chars), chars[0][1]
 
 
-def make_action(description=None, **fields):
-    """construct a default pro.Action message"""
-    if fields.get("id") is None:
-        fields["id"] = random.randint(int(1e7), int(1e8))
-    action = pro.Action(description=description, **fields)
-    if (action.WhichOneof("call") is None) and (description is None):
-        raise TypeError("must pass a description or command message.")
-    return action
-
-
 def default_arg_packing(kwargs: dict[str, Any]) -> list[pro.PythonObject]:
     """
     pack a kwarg dict into a list of pro.PythonObjects to be inserted into a
@@ -111,26 +100,36 @@ def pack_obj(obj: Any, name: str = "") -> pro.PythonObject:
     default function for serializing an in-memory object as a pro.PythonObject
     Message.
     """
-    with DEFAULT_PROFILER.context('packing'):
-        if isinstance(obj, pro.PythonObject):
-            return obj
-        if isinstance(obj, (str, bytes, int, float)):
-            scanf, chartype = obj2scanf(obj)
-            if isinstance(obj, str):
-                obj = obj.encode("utf-8")
-            elif isinstance(obj, NoneType):
-                obj = b"\x00"
-            obj = pro.PythonObject(
-                name=name,
-                scanf=scanf,
-                chartype=chartype,
-                value=struct.pack(scanf, obj),
-            )
-        else:
-            obj = pro.PythonObject(
-                name=name, serialization="dill", value=dill.dumps(obj)
-            )
+    if isinstance(obj, pro.PythonObject):
         return obj
+    if isinstance(obj, (str, bytes, int, float)):
+        scanf, chartype = obj2scanf(obj)
+        if isinstance(obj, str):
+            obj = obj.encode("utf-8")
+        elif isinstance(obj, NoneType):
+            obj = b"\x00"
+        obj = pro.PythonObject(
+            name=name,
+            scanf=scanf,
+            chartype=chartype,
+            value=struct.pack(scanf, obj),
+        )
+    else:
+        obj = pro.PythonObject(
+            name=name, serialization="dill", value=dill.dumps(obj)
+        )
+    return obj
+
+
+# TODO: optional base64 encoding for some channels
+def make_action(description=None, **fields):
+    """construct a default pro.Action message"""
+    if fields.get("id") is None:
+        fields["id"] = random.randint(int(1e7), int(1e8))
+    action = pro.Action(description=description, **fields)
+    if (action.WhichOneof("call") is None) and (description is None):
+        raise TypeError("must pass a description or command message.")
+    return action
 
 
 def make_function_call_action(
