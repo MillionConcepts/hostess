@@ -3,7 +3,6 @@ import time
 from functools import partial
 from itertools import chain
 
-from dustgoggles.func import gmap
 import numpy as np
 
 from hostess.monitors import Stopwatch
@@ -73,9 +72,18 @@ def test_analyze_references_2():
         ztup = (z1, z2, z3)
         zer = []
         for z in ztup:
-            zer.append(analyze_references(z, method=gc.get_referrers))
-        ztr = analyze_references(ztup, method=gc.get_referents)
-        z1r = analyze_references(z1, method=gc.get_referents)
+            zer.append(
+                analyze_references(
+                    z,
+                    method=gc.get_referrers,
+                    return_objects=True)
+            )
+        ztr = analyze_references(
+            ztup, method=gc.get_referents, return_objects=True
+        )
+        z1r = analyze_references(
+            z1, method=gc.get_referents, return_objects=True
+        )
         return zer, ztr, z1r
 
     z1_z2_z3_referrers, ztup_referents, z1_referents = f1(1)
@@ -108,6 +116,6 @@ def test_analyze_references_2():
 
 test_identify()
 test_analyze_references_1()
-test_analyze_references_2()
 test_di()
+test_analyze_references_2()
 test_profiler()
