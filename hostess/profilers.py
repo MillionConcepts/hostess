@@ -183,7 +183,7 @@ def scopedict_ids(
     locals ids below top level
     """
     if getstack is True:
-        frames = [s.frame for s in stack()[:-2]]
+        frames = [s.frame for s in stack()[:-1]]
     frames = frames if frames is not None else [currentframe().f_back]
     ids, lids = set(), set()
     for frame in frames:
@@ -385,7 +385,7 @@ def _filter_ids(
     outrefs, refnoms = [], []
     for ref in refs:
         try:
-            assert id(ref := refs.pop()) not in exclude
+            assert id(ref) not in exclude
             assert (len(permit) == 0) or (id(ref) in permit)
             outrefs.append(ref)
             refnoms.append(yclept(ref, stepback=2))
