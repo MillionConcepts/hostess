@@ -137,7 +137,7 @@ def make_level_table(treeframe):
     ]
     for level in levels:
         table = treeframe.pivot_table(
-            values="size", index=level, aggfunc=[sum, len]
+            values="size", index=level, aggfunc=["sum", len]
         )
         table["level"] = level
         table.columns = ["size", "count", "level"]
