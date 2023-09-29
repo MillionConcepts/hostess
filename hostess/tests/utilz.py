@@ -3,6 +3,13 @@ from typing import Any, Callable
 from cytoolz import identity
 
 
+# NOTE: this is used as a target by a test that only references it by name,
+#  so even though it isn't directly called anywhere in the library, don't
+#  remove it.
+def return_this(this):
+    return this
+
+
 def defwrap(defline: str, source: str) -> str:
     """properly indent source code under a def statement"""
     indented = "\n".join([f"\t{line}" for line in source.splitlines()])
