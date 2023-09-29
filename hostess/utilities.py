@@ -323,7 +323,7 @@ def trywrap(func, name):
                 "name": name,
                 "retval": retval,
                 "time": dt.datetime.now(),
-            } | exc_report(exception, 0)
+            } | exc_report(exception)
 
     return trywrapped
 

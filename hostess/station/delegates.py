@@ -144,11 +144,11 @@ class Delegate(bases.Node):
             # TODO: accomplish this with a wrapper
             if exception is not None:
                 try:
-                    self._log(action | exc_report(exception, 0))
+                    self._log(action | exc_report(exception))
                 except Exception as ex:
                     # TODO: not sure what is causing this sometimes
                     self._log(
-                        action | exc_report(ex, 0),
+                        action | exc_report(ex),
                         underlying_exception=exception,
                         status="exc_report failure"
                     )
@@ -231,7 +231,7 @@ class Delegate(bases.Node):
         except Exception as ex:
             self._log("exit report failed", exception=ex)
         self._log(
-            exc_report(exception, 0), status="crashed", category="exit"
+            exc_report(exception), status="crashed", category="exit"
         )
         # wait to send exit report
         if 'exit_report' in self.threads:
@@ -240,18 +240,18 @@ class Delegate(bases.Node):
 
     def _send_exit_report(self, exception=None):
         """
-        send Update to Station informing it that the delegate is exiting, and why.
+        send Update to Station informing it that Delegate is exiting (and why).
         """
         self.state = "crashed" if exception is not None else "shutdown"
         msg = self._base_message(reason='exiting')
         if exception is not None:
             try:
                 info = pro.Update(
-                    info=[pack_obj(exc_report(exception, 0), "exception")]
+                    info=[pack_obj(exc_report(exception), "exception")]
                 )
             except Exception as ex:
                 info = pro.Update(
-                    info=[pack_obj(exc_report(ex, 0)), "exception"]
+                    info=[pack_obj(exc_report(ex)), "exception"]
                 )
             msg.MergeFrom(info)
         self.talk_to_station(msg)

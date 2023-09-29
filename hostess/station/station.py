@@ -128,7 +128,7 @@ class Station(bases.Node):
             # TODO: _plausibly_ log this?
             return
         except (AttributeError, KeyError) as ex:
-            self._log(exc_report(ex, 0), category=category)
+            self._log(exc_report(ex), category=category)
             return
         self._log(
             obj,
@@ -291,7 +291,7 @@ class Station(bases.Node):
             time.sleep(0.1)
         if exception is not None:
             self._log(
-                exc_report(exception, 0), status="crashed", category="exit"
+                exc_report(exception), status="crashed", category="exit"
             )
         else:
             self._log("exiting", status="graceful", category="exit")
@@ -434,7 +434,7 @@ class Station(bases.Node):
             self._record_message(box, msg, pos)
             return box[pos].comm, f"sent instruction {box[pos].id}"
         except Exception as ex:
-            self._log(exc_report(ex, 0), category="comms")
+            self._log(exc_report(ex), category="comms")
             return b"response failure", "failed to respond"
         finally:
             self.locked = False
