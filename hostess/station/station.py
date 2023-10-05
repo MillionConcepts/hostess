@@ -474,6 +474,10 @@ class Station(bases.Node):
         delegatelist. may also launch locally or in a non-daemonized
         subprocess.
         """
+        if not self._Node__started:
+            raise ValueError(
+                "cannot launch delegates from an unstarted station"
+            )
         # TODO: option to specify remote host and run this using SSH (update
         #  relaunch_delegate as well when adding this feature)
         if host != "localhost":
