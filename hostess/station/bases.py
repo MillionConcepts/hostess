@@ -133,6 +133,7 @@ class Matcher(AttrConsumer, ABC):
             self.actors[name] = element
         elif issubclass(cls, Sensor):
             self.sensors[name] = element
+            element.set_poll_nonsticky(self.poll)
         else:
             raise TypeError(f"{cls} is not a valid subelement for this class.")
         self.cdict[name], self.params[name] = element.config, element.params
@@ -150,6 +151,7 @@ class Sensor(Matcher, ABC):
 
     def __init__(self):
         super().__init__()
+        self.interface = self.interface + self.class_interface
         if "sources" in dir(self):
             raise TypeError("bad configuration: can't nest Sources.")
         props, self.actors = [], {}
@@ -208,11 +210,25 @@ class Sensor(Matcher, ABC):
     def __repr__(self):
         return self.__str__()
 
+    def _get_poll(self) -> Optional[float]:
+        return self._poll
+
+    def _set_poll(self, pollrate: float):
+        self._poll = pollrate
+        self.has_individual_pollrate = True
+
+    def set_poll_nonsticky(self, pollrate: float):
+        self._poll = pollrate
+
+    poll = property(_get_poll, _set_poll)
+    _poll = None
+    has_individual_pollrate = False
     base_config = MPt({})
     checker: Callable
     actions: tuple[type[Actor]] = ()
     loggers: tuple[type[Actor]] = ()
     name: str
+    class_interface = ("poll",)
     interface = ()
 
 
@@ -242,6 +258,7 @@ class Actor(ABC):
 
     name: str
     config: Mapping
+    class_interface = ()
     interface = ()
     actortype: str
     owner = None

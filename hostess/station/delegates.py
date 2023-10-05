@@ -80,13 +80,14 @@ class Delegate(bases.Node):
             f"{self.station[0]}_{self.station[1]}_{self.name}_"
             f"{self.logid}.log",
         )
-        self.init_params = {"n_threads": n_threads,
-                            "poll": poll,
-                            "timeout": timeout,
-                            "logdir": logdir,
-                            "update_interval": update_interval,
-                            "_is_process_owner": _is_process_owner
-                            }
+        self.init_params = {
+            "n_threads": n_threads,
+            "poll": poll,
+            "timeout": timeout,
+            "logdir": logdir,
+            "update_interval": update_interval,
+            "_is_process_owner": _is_process_owner
+        }
 
     def _sensor_loop(self, sensor: bases.Sensor):
         """
@@ -100,7 +101,7 @@ class Delegate(bases.Node):
                 # noinspection PyPropertyAccess
                 if not self.locked:
                     sensor.check(self)
-                time.sleep(self.poll)
+                time.sleep(sensor.poll)
         except Exception as ex:
             exception = ex
         finally:
