@@ -58,7 +58,12 @@ class Station(bases.Node):
             **kwargs,
         )
         self.max_inbox_mb = max_inbox_mb
-        self.events, self.delegates, self.relaunched, self.tasks = [], [], [], {}
+        self.events, self.delegates, self.relaunched, self.tasks = (
+            [],
+            [],
+            [],
+            {},
+        )
         self.outboxes = defaultdict(Mailbox)
         self.tendtime, self.reset_tend = timeout_factory(False)
         self.last_handler = None
@@ -101,7 +106,7 @@ class Station(bases.Node):
             "name": instruction.action.name,
             "action_id": instruction.action.id,
             "description": dict(instruction.action.description),
-            "exception": None
+            "exception": None,
         }
         self.outboxes[delegate].append(instruction)
 
@@ -174,8 +179,8 @@ class Station(bases.Node):
             "busy": message["state"]["busy"],
             "host": message["delegateid"]["host"],
             "running": message.get("running", []),
-            "infocount": message['state'].get('infocount', {}),
-            "init_params": message["state"]["init_params"]
+            "infocount": message["state"].get("infocount", {}),
+            "init_params": message["state"]["init_params"],
         }
         for name, state in message["state"]["threads"].items():
             try:
@@ -207,8 +212,8 @@ class Station(bases.Node):
             task["start_time"] = completed["action"]["time"]["start"]
             task["end_time"] = completed["action"]["time"]["end"]
             task["duration"] = completed["action"]["time"]["duration"]
-            if task['exception'] is not None:
-                task['exception'] = exc_report(task['exception'])
+            if task["exception"] is not None:
+                task["exception"] = exc_report(task["exception"])
         except KeyError:
             # TODO: an undesirable case, log
             pass
@@ -290,9 +295,7 @@ class Station(bases.Node):
                 break
             time.sleep(0.1)
         if exception is not None:
-            self._log(
-                exc_report(exception), status="crashed", category="exit"
-            )
+            self._log(exc_report(exception), status="crashed", category="exit")
         else:
             self._log("exiting", status="graceful", category="exit")
 
@@ -485,11 +488,11 @@ class Station(bases.Node):
         if any(n["name"] == name for n in self.delegates):
             raise ValueError("can't launch a delegate with a duplicate name")
         kwargs = {
-             "station_address": (self.host, self.port),
-             "name": name,
-             "elements": elements,
-             "update_interval": update_interval,
-         } | kwargs
+            "station_address": (self.host, self.port),
+            "name": name,
+            "elements": elements,
+            "update_interval": update_interval,
+        } | kwargs
         delegateinfo = blank_delegateinfo() | {
             "name": name,
             "inferred_status": "initializing",
@@ -514,8 +517,10 @@ class Station(bases.Node):
             self.shutdown_delegate(name, "stop")
             waiting, unwait = timeout_factory(timeout=20)
             self._check_delegates()
-            while self.get_delegate(name)["inferred_status"] not in ("shutdown",
-                                                                     "crashed"):
+            while self.get_delegate(name)["inferred_status"] not in (
+                "shutdown",
+                "crashed",
+            ):
                 try:
                     waiting()
                 except TimeoutError:
@@ -526,8 +531,8 @@ class Station(bases.Node):
         elements = []
         elements_dict = dict(delegate["actors"]) | dict(delegate["sensors"])
         for k in elements_dict.keys():
-            cls = elements_dict[k].split('.')[-1]
-            mod = elements_dict[k].removesuffix['.' + cls]
+            cls = elements_dict[k].split(".")[-1]
+            mod = elements_dict[k].removesuffix["." + cls]
             elements = elements + [(mod, cls)]
         elements = tuple(elements)
         host = "localhost"
@@ -539,13 +544,18 @@ class Station(bases.Node):
             context = "local"
         self.delegates.remove(delegate)
         self.relaunched.append(delegate)
-        self.launch_delegate(name, elements, host=host, context=context, **delegate[
-            "init_params"])
+        self.launch_delegate(
+            name,
+            elements,
+            host=host,
+            context=context,
+            **delegate["init_params"],
+        )
 
     def save_port_to_shared_memory(self, address: Optional[str] = None):
         from dustgoggles.codex.implements import Sticky
         from dustgoggles.codex.memutilz import (
-            deactivate_shared_memory_resource_tracker
+            deactivate_shared_memory_resource_tracker,
         )
 
         deactivate_shared_memory_resource_tracker()
@@ -572,13 +582,13 @@ def blank_delegateinfo():
     }
 
 
-def get_port_from_shared_memory(memory_address='station'):
+def get_port_from_shared_memory(memory_address="station"):
     from dustgoggles.codex.implements import Sticky
     from dustgoggles.codex.memutilz import (
-        deactivate_shared_memory_resource_tracker
+        deactivate_shared_memory_resource_tracker,
     )
 
     deactivate_shared_memory_resource_tracker()
     if (port := Sticky(f"{memory_address}-port-report").read()) is None:
-        raise FileNotFoundError('no port at address')
+        raise FileNotFoundError("no port at address")
     return port
