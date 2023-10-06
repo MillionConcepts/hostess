@@ -263,30 +263,38 @@ class RunCommand:
     def bind(self, *args, **kwargs):
         self.args, self.kwargs = args, kwargs
 
-    def cstring(self, *args, **kwargs):
+    def cstring(self, *args, args_at_end=False, **kwargs):
         args = self.args + args
         kwargs = keyfilter(
-            lambda k: not k.startswith("_"), self.kwargs | kwargs
-        )
+            lambda k: not k.startswith("_"),  self.kwargs | kwargs
+)
         astring = " ".join(args)
-        if len(kwargs) > 0:
-            kstring = "--" + " --".join(
-                [f"{k}={v}" for k, v in kwargs.items()]
-            )
-        else:
-            kstring = ""
+        kstring = ""
+        for k, v in kwargs.items():
+            k = k.strip("_").replace("_", "-")
+            if v is True:
+                if len(k) == 1:
+                    kstring += f" -{k}"
+                else:
+                    kstring += f" --{k}"
+            elif len(k) == 1:
+                kstring += f" -{k} {v}"
+            else:
+                kstring += f" --{k}={v}"
         cstring = self.command
-        for s in (astring, kstring):
+        order = (kstring, astring) if args_at_end else (kstring, astring)
+        for s in order:
             cstring = cstring + f" {s}" if s != "" else cstring
         return cstring
 
     def __call__(
         self, *args, **kwargs
     ) -> Optional["Processlike"]:
-        rkwargs = keyfilter(lambda k: k.startswith("_"), self.kwargs | kwargs)
-        kwargs = keyfilter(
-            lambda k: not k.startswith("_"), self.kwargs | kwargs
+        rkwargs = keyfilter(
+            lambda k: k.startswith("_") and not k.strip("_").isnumeric(),
+            self.kwargs | kwargs
         )
+        kwargs = keyfilter(lambda k: k not in rkwargs, self.kwargs | kwargs)
         replace_aliases(
             rkwargs,
             {
@@ -307,7 +315,9 @@ class RunCommand:
         # by Invoke, but Invoke does not offer completion handling except
         # via the more complex Watcher system.
         dcallback = rkwargs.pop("_done", None)
-        cstring = self.cstring(*args, **kwargs)
+        cstring = self.cstring(
+            *args, args_at_end=rkwargs.pop("_args_at_end", False), **kwargs
+        )
         if cstring == "":
             raise ValueError("no command specified.")
         if rkwargs.pop("_viewer", False) is True:

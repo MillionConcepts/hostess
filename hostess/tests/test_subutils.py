@@ -26,4 +26,3 @@ def test_viewer_2():
 
 test_viewer_1()
 test_viewer_2()
-
