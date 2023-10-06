@@ -269,7 +269,12 @@ class RunCommand:
             lambda k: not k.startswith("_"), self.kwargs | kwargs
         )
         astring = " ".join(args)
-        kstring = " --".join([f"{k}={v}" for k, v in kwargs.items()])
+        if len(kwargs) > 0:
+            kstring = "--" + " --".join(
+                [f"{k}={v}" for k, v in kwargs.items()]
+            )
+        else:
+            kstring = ""
         cstring = self.command
         for s in (astring, kstring):
             cstring = cstring + f" {s}" if s != "" else cstring
@@ -315,7 +320,7 @@ class RunCommand:
             )
         else:
             rkwargs = {k[1:]: v for k, v in rkwargs.items()}
-            output = self.runclass(self.ctx).run(cstring, **(rkwargs | kwargs))
+            output = self.runclass(self.ctx).run(cstring, **rkwargs)
         # disowned case
         if output is None:
             return
