@@ -263,7 +263,7 @@ class RunCommand:
     def bind(self, *args, **kwargs):
         self.args, self.kwargs = args, kwargs
 
-    def cstring(self, *args, args_at_end=False, **kwargs):
+    def cstring(self, *args, args_at_end=True, **kwargs):
         args = self.args + args
         kwargs = keyfilter(
             lambda k: not k.startswith("_"),  self.kwargs | kwargs
@@ -316,7 +316,7 @@ class RunCommand:
         # via the more complex Watcher system.
         dcallback = rkwargs.pop("_done", None)
         cstring = self.cstring(
-            *args, args_at_end=rkwargs.pop("_args_at_end", False), **kwargs
+            *args, args_at_end=rkwargs.pop("_args_at_end", True), **kwargs
         )
         if cstring == "":
             raise ValueError("no command specified.")
