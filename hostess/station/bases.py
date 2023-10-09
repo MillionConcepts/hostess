@@ -227,6 +227,9 @@ class Sensor(Matcher, ABC):
     def set_poll_nonsticky(self, pollrate: float):
         self._poll = pollrate
 
+    def close(self):
+        pass
+
     poll = property(_get_poll, _set_poll)
     _poll = None
     has_individual_pollrate = False

@@ -103,6 +103,7 @@ class Delegate(bases.Node):
         except Exception as ex:
             exception = ex
         finally:
+            sensor.close()
             return {
                 "name": sensor.name,
                 "signal": self.signals.get(sensor.name),
