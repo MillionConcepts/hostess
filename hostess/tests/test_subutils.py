@@ -24,5 +24,41 @@ def test_viewer_2():
     assert viewer.stderr == []
 
 
-test_viewer_1()
-test_viewer_2()
+# test_viewer_1()
+# test_viewer_2()
+from pathlib import Path
+
+ra=1
+dec = 1
+xylist_path="xylist.fits"
+image_width=100
+image_height=100
+output_path = "./here"
+crpix_x = 50
+crpix_y = 50
+radius = 5
+solve_process = Viewer.from_command(
+    "solve-field",
+    xylist_path,
+    overwrite=True,
+    no_plots=True,
+    dir_=output_path,
+    width=image_width,
+    height=image_height,
+    scale_units="arcsecperpix",
+    scale_low=1.0,
+    scale_high=1.6,
+    N="none",
+    U="none",
+    axy=f"a{Path(xylist_path).name}",
+    B="none",
+    M="none",
+    R="none",
+    temp_axy=True,
+    _3=ra,
+    _4=dec,
+    crpix_x=crpix_x,
+    crpix_y=crpix_y,
+    radius=5,
+)
+a = 1

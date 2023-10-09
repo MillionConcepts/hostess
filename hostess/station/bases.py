@@ -12,6 +12,7 @@ from abc import ABC
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from itertools import chain
+from pathlib import Path
 from random import shuffle
 from types import MappingProxyType as MPt
 from typing import Any, Callable, Mapping, Union, Optional, Literal, Collection
@@ -118,7 +119,13 @@ class Matcher(AttrConsumer, ABC):
     def filter_actors_by_category(self, actortype):
         if actortype is None:
             return list(self.actors.values())
-        return [r for r in self.actors.values() if r.actortype == actortype]
+        filtered = []
+        for r in self.actors.values():
+            if r.actortype == actortype:
+                filtered.append(r)
+            elif isinstance(r.actortype, tuple) and actortype in r.actortype:
+                filtered.append(r)
+        return filtered
 
     def add_element(self, cls: Union[type[Actor], type[Sensor]], name=None):
         """
@@ -377,15 +384,15 @@ class Node(Matcher, ABC):
         poll: float = 0.08,
         timeout: int = 10,
         _is_process_owner=False,
+        logdir: Path = Path(__file__).parent / "logs",
     ):
         super().__init__()
         self.host, self.port = host, port
         self.params, self.name = {}, name
         self.cdict, self.threads, self.actors, self.sensors = {}, {}, {}, {}
         self._lock = threading.Lock()
-        # TODO: do this better
-        os.makedirs("logs", exist_ok=True)
-        # self.logfile = f"logs/{self.name}_{filestamp()}.csv"
+        self.logdir = logdir
+        self.logdir.mkdir(exist_ok=True)
         for element in elements:
             self.add_element(element)
         self.n_threads = n_threads
@@ -566,3 +573,4 @@ class Node(Matcher, ABC):
     server_events = None
     state = "stopped"
     _ackcheck: Optional[Callable] = None
+    logfile: Path

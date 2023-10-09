@@ -55,6 +55,7 @@ class Station(bases.Node):
             name=name,
             n_threads=n_threads,
             can_receive=True,
+            logdir=logdir,
             **kwargs,
         )
         self.max_inbox_mb = max_inbox_mb
@@ -492,6 +493,7 @@ class Station(bases.Node):
             "name": name,
             "elements": elements,
             "update_interval": update_interval,
+            "logdir": self.logdir,
         } | kwargs
         delegateinfo = blank_delegateinfo() | {
             "name": name,

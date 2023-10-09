@@ -24,6 +24,7 @@ from hostess.station.messages import pack_obj, task_msg, unpack_obj
 from hostess.station.proto_utils import make_timestamp, enum
 from hostess.station.talkie import stsend, timeout_factory
 from hostess.station.comm import read_comm
+from hostess.utilities import filestamp
 
 ConfigParamType = Literal["config_property", "config_dict"]
 
@@ -39,7 +40,6 @@ class Delegate(bases.Node):
         timeout=10,
         update_interval=10,
         start=False,
-        # TODO: something better
         logdir=Path(__file__).parent / ".nodelogs",
         _is_process_owner=False
     ):
@@ -47,7 +47,7 @@ class Delegate(bases.Node):
         configurable remote processor for hostess network. can gather data
         and/or execute actions based on the elements attached to it.
 
-        station: (hostname, port) of supervising Station
+        station_address: (hostname, port) of supervising Station
         name: identifying name for delegate
         n_threads: max threads in executor
         elements: Sensors or Actors to add to delegate at creation.
@@ -62,7 +62,8 @@ class Delegate(bases.Node):
             start=start,
             poll=poll,
             timeout=timeout,
-            _is_process_owner=_is_process_owner
+            _is_process_owner=_is_process_owner,
+            logdir=logdir
         )
         self.update_interval = update_interval
         self.actionable_events, self.infocount = [], defaultdict(int)
@@ -70,15 +71,12 @@ class Delegate(bases.Node):
         self.actions = {}
         self.instruction_queue = []
         self.update_timer, self.reset_update_timer = timeout_factory(False)
-        self.logdir = logdir
-        self.logdir.mkdir(exist_ok=True)
-        # TODO: hacky temp log thing, do it better
         self.logid = f"{str(random.randint(0, 10000)).zfill(5)}"
         # TODO: add local hostname of delegate
         self.logfile = Path(
             self.logdir,
-            f"{self.station[0]}_{self.station[1]}_{self.name}_"
-            f"{self.logid}.log",
+            f"{self.station[0]}_"
+            f"{self.station[1]}_{self.name}_{filestamp()}.log"
         )
         self.init_params = {
             "n_threads": n_threads,
