@@ -19,6 +19,7 @@ from typing import Any, Callable, Mapping, Union, Optional, Literal, Collection
 
 import yaml
 from cytoolz import valmap
+from dustgoggles.dynamic import exc_report
 
 # noinspection PyProtectedMember
 from google.protobuf.pyext._message import Message
@@ -26,7 +27,7 @@ from google.protobuf.pyext._message import Message
 from hostess.station.handlers import flatten_for_json, json_sanitize
 from hostess.station.proto_utils import enum
 from hostess.station.talkie import TCPTalk
-from hostess.utilities import configured, logstamp, yprint
+from hostess.utilities import configured, logstamp, yprint, filestamp
 
 
 class AttrConsumer:
@@ -387,27 +388,42 @@ class Node(Matcher, ABC):
         poll: float = 0.08,
         timeout: int = 10,
         _is_process_owner=False,
-        logdir: Path = Path(__file__).parent / "logs",
+        **extra_attrs
     ):
         super().__init__()
+        # attributes unique to subclass but necessary for this step of
+        # initialization, mostly related to logging
+        for k, v in extra_attrs.items():
+            setattr(self, k, v)
         self.host, self.port = host, port
         self.params, self.name = {}, name
-        self.cdict, self.threads, self.actors, self.sensors = {}, {}, {}, {}
-        self._lock = threading.Lock()
-        self.logdir = logdir
-        self.logdir.mkdir(exist_ok=True)
-        for element in elements:
-            self.add_element(element)
-        self.n_threads = n_threads
-        self.exc = ThreadPoolExecutor(n_threads)
-        self.can_receive = can_receive
-        self.poll, self.timeout, self.signals = poll, timeout, {}
-        self.__is_process_owner = _is_process_owner
-        self.is_shut_down = False
-        self.exception = None
-        atexit.register(self.exc.shutdown, wait=False, cancel_futures=True)
-        if start is True:
-            self.start()
+        self.init_time = filestamp()
+        self._set_logfile()
+        try:
+            self.logfile.parent.mkdir(exist_ok=True, parents=True)
+            self._log("initializing", category="system")
+            self.cdict, self.actors, self.sensors = {}, {}, {}
+            self.threads, self._lock = {}, threading.Lock()
+            for element in elements:
+                self.add_element(element)
+            self.n_threads = n_threads
+            self.exc = ThreadPoolExecutor(n_threads)
+            self.can_receive = can_receive
+            self.poll, self.timeout, self.signals = poll, timeout, {}
+            self.__is_process_owner = _is_process_owner
+            self.is_shut_down = False
+            self.exception = None
+            atexit.register(
+                self.exc.shutdown, wait=False, cancel_futures=True
+            )
+            if start is True:
+                self.start()
+        except Exception as ex:
+            self._log(
+                "initialization failed", exception=ex, category="system"
+            )
+
+
 
     def restart_server(self):
         """
@@ -436,13 +452,18 @@ class Node(Matcher, ABC):
         else:
             self.server, self.server_events, self.inbox = None, None, None
 
+    def _set_logfile(self):
+        raise NotImplementedError
+
     def start(self):
         if self.__started is True:
             raise EnvironmentError("Node already started.")
+        self._log("starting", category="system")
         self.restart_server()
         self.threads["main"] = self.exc.submit(self._start)
         self.__started = True
         self.state = "nominal"
+        self._log("completed start", category="system")
 
     def nodeid(self):
         """basic identifying information for node."""
@@ -451,6 +472,16 @@ class Node(Matcher, ABC):
             "pid": os.getpid(),
             "host": socket.gethostname(),
         }
+
+    def add_element(self, cls: Union[type[Actor], type[Sensor]], name=None):
+        logname = name if name is not None else cls.name
+        self._log(
+            f"adding element", cls=str(cls), name=logname, category="system"
+        )
+        super().add_element(cls, name)
+        self._log(
+            f"added element", cls=str(cls), name=logname, category="system"
+        )
 
     def busy(self):
         """are we too busy to do new stuff?"""
@@ -471,13 +502,21 @@ class Node(Matcher, ABC):
     def shutdown(self, exception=None, instruction=None):
         self.locked = True
         self.state = "shutdown" if exception is None else "crashed"
+        self._log(
+            'beginning shutdown',
+            category='system',
+            state=self.state,
+            exception=exception
+        )
         self.signals["main"] = 1
         try:
             self._shutdown(exception=exception)
         except Exception as ex:
-            self._log("shutdown exception", exception=ex)
+            self._log(
+                "shutdown exception", exception=ex, category='system'
+            )
         self.is_shut_down = True
-        self._log("shutdown complete")
+        self._log("shutdown complete", category='system')
 
     def _start(self):
         """
@@ -535,7 +574,12 @@ class Node(Matcher, ABC):
         return self.__str__()
 
     def _log(self, event, **extra_fields):
-        logdict = valmap(json_sanitize, {"time": logstamp()} | extra_fields)
+        exkeys = [
+            k for k, v in extra_fields.items() if isinstance(v, Exception)
+        ]
+        for k in exkeys:
+            extra_fields |= exc_report(extra_fields.pop(k))
+        logdict = valmap(json_sanitize, {"time": logstamp(3)} | extra_fields)
         if isinstance(event, (dict, Message)):
             # TODO, maybe: still want an event key?
             logdict |= flatten_for_json(event)

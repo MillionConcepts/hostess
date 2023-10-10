@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections import defaultdict
 import datetime as dt
 from pathlib import Path
-import random
 import socket
 import sys
 import time
@@ -29,7 +28,8 @@ from hostess.station.messages import (
 import hostess.station.proto.station_pb2 as pro
 from hostess.station.proto_utils import enum
 from hostess.station.talkie import timeout_factory
-from hostess.subutils import RunCommand
+from hostess.subutils import RunCommand, Viewer
+from hostess.utilities import filestamp
 
 
 class Station(bases.Node):
@@ -68,11 +68,14 @@ class Station(bases.Node):
         self.outboxes = defaultdict(Mailbox)
         self.tendtime, self.reset_tend = timeout_factory(False)
         self.last_handler = None
-        # TODO: share log id -- or another identifier, like init time --
-        #   between station and delegate
-        self.logid = f"{str(random.randint(0, 10000)).zfill(5)}"
-        self.logfile = Path(logdir, f"{host}_{port}_station_{self.logid}.log")
         self.__is_process_owner = _is_process_owner
+        self._log("completed initialization", category="system")
+
+    def _set_logfile(self):
+        self.logfile = Path(
+            self.logdir,
+            f"{self.init_time}_station_{self.host}_{self.port}.log"
+        )
 
     def set_delegate_properties(self, delegate: str, **propvals):
         # TODO: update delegate info record if relevant
@@ -168,6 +171,13 @@ class Station(bases.Node):
             delegate = blank_delegateinfo()
             self.delegates.append(delegate)
         message = unpack_message(message)
+        if delegate['reported_status'] == 'no_report':
+            self._log(
+                "first message from delegate",
+                name=delegate['name'],
+                category="comms",
+                direction="recv"
+            )
         delegate |= {
             "last_seen": dt.datetime.fromisoformat(message["time"]),
             "wait_time": 0,
@@ -241,17 +251,35 @@ class Station(bases.Node):
         for op in ("wilco", "state", "info", "report"):
             try:
                 getattr(self, f"_handle_{op}")(message)
-            except NotImplementedError:
-                # TODO: plausibly some logging
-                pass
             except Exception as ex:
-                print("bad handling", op, ex)
+                self._log(
+                    "bad message handling",
+                    category="comms",
+                    direction="recv",
+                    exception=ex,
+                    op=op
+                )
+
+    @property
+    def running_delegates(self):
+        return [
+            n for n in self.delegates
+            if n['inferred_status'] not in ('missing', 'shutdown', 'crashed')
+        ]
+
+    @property
+    def unfinished_delegates(self):
+        unfinished = []
+        for n in filter(lambda x: "obj" in x, self.delegates):
+            if any(map(lambda t: t.running(), n["obj"].threads.values())):
+                unfinished.append(n)
+        return unfinished
 
     def _shutdown(self, exception: Optional[Exception] = None):
         """shut down the Station."""
-        self.state = "shutdown" if exception is None else "crashed"
+        # TODO: add some internal logging here when nodes fail to
+        #  shut down or respond in a timely fashion
         self.exception = exception
-        self._log("beginning shutdown", category="exit")
         # clear outbox etc.
         for k in self.outboxes.keys():
             self.outboxes[k] = Mailbox()
@@ -263,26 +291,31 @@ class Station(bases.Node):
         # this will also ensure we get all exit reports from newly-shutdown
         # delegates
         self._check_delegates()
-        while any(
-            n["inferred_status"] not in ("missing", "shutdown", "crashed")
-            for n in self.delegates
-        ):
+        while len(self.running_delegates) > 0:
             try:
                 waiting()
             except TimeoutError:
+                self._log(
+                    "delegate_shutdown_timeout",
+                    category="system",
+                    running=[n['name'] for n in self.running_delegates]
+                )
                 break
             time.sleep(0.1)
             self._check_delegates()
         unwait()
         # ensure local delegate threads are totally shut down
-        still_running = None
-        while still_running is not False:
-            still_running = False
-            for n in filter(lambda x: "obj" in x, self.delegates):
-                if any(map(lambda t: t.running(), n["obj"].threads.values())):
-                    still_running = True
+        while len(self.unfinished_delegates) > 0:
             time.sleep(0.1)
-            waiting()
+            try:
+                waiting()
+            except TimeoutError:
+                self._log(
+                    "local_delegate_thread_shutdown_timeout",
+                    category="system",
+                    running=[n['name'] for n in self.unfinished_delegates]
+                )
+                break
         # shut down the server etc.
         # TODO: this is a little messy because of the discrepancy in thread
         #  and signal names. maybe unify this somehow.
@@ -293,14 +326,11 @@ class Station(bases.Node):
             try:
                 waiting()
             except TimeoutError:
+                self._log("self_server_shutdown_timeout", category="system")
                 break
             time.sleep(0.1)
-        if exception is not None:
-            self._log(exc_report(exception), status="crashed", category="exit")
-        else:
-            self._log("exiting", status="graceful", category="exit")
-
         if self.__is_process_owner:
+            self._log("shutdown complete, exiting process", category='system')
             sys.exit()
 
     def _main_loop(self):
@@ -320,17 +350,27 @@ class Station(bases.Node):
     def _check_delegates(self):
         now = dt.datetime.now(tz=dt.timezone.utc)
         for n in self.delegates:
+            # shared kwargs for those status changes we want to log
+            lkwargs = {
+                'event': 'delegate_status',
+                'category': 'system',
+                'name': n['name']
+            }
             if n["reported_status"] in ("shutdown", "crashed"):
                 n["inferred_status"] = n["reported_status"]
+                self._log(status=n['reported_status'], **lkwargs)
                 continue
-            if n["reported_status"] == "initializing":
+            if n["reported_status"] == "no_report":
                 n["wait_time"] = (now - n["init_time"]).total_seconds()
             else:
                 n["wait_time"] = (now - n["last_seen"]).total_seconds()
             # adding 5 seconds here as grace for network lag spikes
             if n["wait_time"] > 10 * n["update_interval"] + 5:
+                if n['inferred_status'] != 'missing':
+                    self._log(status='missing', **lkwargs)
                 n["inferred_status"] = "missing"
             elif n["wait_time"] > 3 * n["update_interval"]:
+                # don't care about logging delays
                 n["inferred_status"] = "delayed"
             else:
                 n["inferred_status"] = n["reported_status"]
@@ -454,15 +494,14 @@ class Station(bases.Node):
             print_result=True,
         )
         if context == "daemon":
-            output = RunCommand(endpoint, _disown=True)()
+            RunCommand(endpoint, _disown=True)()
         elif context == "subprocess":
-            output = RunCommand(endpoint, _asynchronous=True)()
+            RunCommand(endpoint, _asynchronous=True)()
         else:
             raise ValueError(
                 f"unsupported context {context}. Supported contexts are "
                 f"'daemon', 'subprocess', and 'local'."
             )
-        return output
 
     def launch_delegate(
         self,
@@ -472,7 +511,7 @@ class Station(bases.Node):
         update_interval=0.1,
         context="daemon",
         **kwargs,
-    ):
+    ) -> Optional[bases.Node]:
         """
         launch a delegate, by default daemonized, and add it to the
         delegatelist. may also launch locally or in a non-daemonized
@@ -493,23 +532,35 @@ class Station(bases.Node):
             "name": name,
             "elements": elements,
             "update_interval": update_interval,
-            "logdir": self.logdir,
+            "loginfo": {
+                # must pass logdir as a string -- delegate is not initialized
+                # yet, so this is inserted directly into generated source code
+                'logdir': str(self.logdir), 'init_time': self.init_time
+            }
         } | kwargs
         delegateinfo = blank_delegateinfo() | {
             "name": name,
             "inferred_status": "initializing",
             "update_interval": update_interval,
         }
-        if context == "local":
-            # mostly for debugging / dev purposes
-            from hostess.station.delegates import launch_delegate
-
-            output = launch_delegate(is_local=True, **kwargs)
-            delegateinfo["obj"] = output
-        else:
-            output = self._launch_delegate_in_subprocess(context, kwargs)
-        self.delegates.append(delegateinfo)
-        return output
+        # kwargs for logging launch
+        lkwargs = {'name': name, 'elements': elements, 'category': 'system'}
+        self._log("init delegate launch", **lkwargs)
+        try:
+            if context == "local":
+                # mostly for debugging / dev purposes
+                from hostess.station.delegates import launch_delegate
+                output = launch_delegate(is_local=True, **kwargs)
+                delegateinfo["obj"] = output
+            else:
+                output = self._launch_delegate_in_subprocess(context, kwargs)
+            self.delegates.append(delegateinfo)
+            self._log("launched delegate", **lkwargs)
+            return output
+        except Exception as ex:
+            self._log(
+                'delegate launch fail', **lkwargs, **exc_report(ex)
+             )
 
     def relaunch_delegate(self, name):
         delegate = self.get_delegate(name)
@@ -575,7 +626,8 @@ class Station(bases.Node):
 def blank_delegateinfo():
     return {
         "last_seen": None,
-        "reported_status": "initializing",
+        "reported_status": "no_report",
+        "inferred_status": "initializing",
         "init_time": dt.datetime.now(dt.timezone.utc),
         "wait_time": 0,
         "running": [],

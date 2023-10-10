@@ -17,19 +17,21 @@ from hostess.utilities import timeout_factory
 def test_shutdown():
     host, port = "localhost", random.randint(10000, 20000)
     station = Station(host, port)
+    station.start()
     writer = station.launch_delegate(
         "null", context="local", update_interval=0.1
     )
-    station.start()
     station.shutdown()
     assert all(thread.done() for thread in writer.threads.values())
     assert all(thread.done() for thread in station.threads.values())
-    # TODO: test logging
+    station.logfile.unlink()
+    writer.logfile.unlink()
 
 
 def test_actions_1():
     host, port = "localhost", random.randint(10000, 20000)
     station = Station(host, port, name='test_actions_1_station', poll=0.02)
+    station.start()
     writer = station.launch_delegate(
         "test_actions_1_writer",
         elements=[("hostess.station.actors", "FileWriter")],
@@ -37,7 +39,6 @@ def test_actions_1():
         context="local",
         update_interval=0.05,
     )
-    station.start()
     station.set_delegate_properties(
         "test_actions_1_writer", filewrite_file="test.txt"
     )
@@ -47,6 +48,7 @@ def test_actions_1():
         instruction = make_instruction("do", action=action)
         station.queue_task("test_actions_1_writer", instruction)
     waiting, _ = timeout_factory(timeout=20)
+    success = False
     try:
         while len(station.inbox.completed) < 25:
             waiting()
@@ -64,13 +66,15 @@ def test_actions_1():
             # do we have the expected content in the file?
             with open("test.txt") as stream:
                 assert stream.read() == "xyzzy" * 25
-            # leave logs if the test failed, delete otherwise
-            writer.logfile.unlink(missing_ok=True)
-            station.logfile.unlink(missing_ok=True)
+        success = True
     finally:
         # clean up
         station.shutdown()
         Path("test.txt").unlink(missing_ok=True)
+        # delete logs if the test was successful
+        if success is True:
+            writer.logfile.unlink(missing_ok=True)
+            station.logfile.unlink(missing_ok=True)
 
 
 def test_application_1():
@@ -170,7 +174,7 @@ def test_missing():
         'normal_node',
         elements=[('hostess.station.tests.testing_actors', 'NormalActor')],
         update_interval=0.01,
-        # context='local'
+        context='subprocess'
     )
     time.sleep(0.5)
     try:

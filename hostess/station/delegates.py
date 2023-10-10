@@ -1,32 +1,31 @@
 from __future__ import annotations
 
-import json
 import random
 import sys
 import time
 from collections import defaultdict
 from itertools import count
 from pathlib import Path
-from pickle import PicklingError
-from types import ModuleType
-from typing import Union, Literal, Optional, Type, Any
+from types import MappingProxyType as MPt, ModuleType
+from typing import Union, Literal, Optional, Type, Any, Mapping
 
 from dustgoggles.dynamic import exc_report
 from dustgoggles.structures import rmerge
-from google.protobuf.json_format import MessageToDict, Parse
 from google.protobuf.message import Message
 
 import hostess.station.proto.station_pb2 as pro
-from hostess.monitors import ticked, DEFAULT_TICKER
 from hostess.station import bases
 from hostess.station.bases import Sensor, Actor
+from hostess.station.comm import read_comm
 from hostess.station.messages import pack_obj, task_msg, unpack_obj
 from hostess.station.proto_utils import make_timestamp, enum
 from hostess.station.talkie import stsend, timeout_factory
-from hostess.station.comm import read_comm
 from hostess.utilities import filestamp
 
 ConfigParamType = Literal["config_property", "config_dict"]
+GENERIC_LOGINFO = MPt(
+    {'logdir': Path(__file__).parent / ".nodelogs"}
+)
 
 
 class Delegate(bases.Node):
@@ -35,13 +34,13 @@ class Delegate(bases.Node):
         station_address: tuple[str, int],
         name: str,
         elements: tuple[Union[type[bases.Sensor], type[bases.Actor]]] = (),
-        n_threads=4,
-        poll=0.08,
-        timeout=10,
-        update_interval=10,
-        start=False,
-        logdir=Path(__file__).parent / ".nodelogs",
-        _is_process_owner=False
+        n_threads: int = 4,
+        poll: float = 0.08,
+        timeout: int = 10,
+        update_interval: float = 10,
+        start: bool = False,
+        loginfo: Optional[Mapping[str]] = MPt({}),
+        _is_process_owner: bool = False
     ):
         """
         configurable remote processor for hostess network. can gather data
@@ -63,29 +62,33 @@ class Delegate(bases.Node):
             poll=poll,
             timeout=timeout,
             _is_process_owner=_is_process_owner,
-            logdir=logdir
+            logdir=loginfo.get('logdir', GENERIC_LOGINFO['logdir']),
+            loginfo=loginfo,
+            station=station_address
         )
         self.update_interval = update_interval
         self.actionable_events, self.infocount = [], defaultdict(int)
-        self.station = station_address
+
         self.actions = {}
         self.instruction_queue = []
         self.update_timer, self.reset_update_timer = timeout_factory(False)
-        self.logid = f"{str(random.randint(0, 10000)).zfill(5)}"
         # TODO: add local hostname of delegate
-        self.logfile = Path(
-            self.logdir,
-            f"{self.station[0]}_"
-            f"{self.station[1]}_{self.name}_{filestamp()}.log"
-        )
         self.init_params = {
             "n_threads": n_threads,
             "poll": poll,
             "timeout": timeout,
-            "logdir": logdir,
+            "logdir": self.logdir,
+            "logfile": self.logfile,
             "update_interval": update_interval,
             "_is_process_owner": _is_process_owner
         }
+
+    def _set_logfile(self):
+        self.logfile = Path(
+            self.logdir,
+            f"{self.loginfo.get('init_time', self.init_time)}_{self.name}_"
+            f"{self.station[0]}_{self.station[1]}.log"
+        )
 
     def _sensor_loop(self, sensor: bases.Sensor):
         """
@@ -143,17 +146,14 @@ class Delegate(bases.Node):
                 continue
             # TODO: accomplish this with a wrapper
             if exception is not None:
-                try:
-                    self._log(action | exc_report(exception))
-                except Exception as ex:
-                    # TODO: not sure what is causing this sometimes
-                    self._log(
-                        action | exc_report(ex),
-                        underlying_exception=exception,
-                        status="exc_report failure"
-                    )
+                self._log(
+                    action,
+                    exception=exception,
+                    status="failed",
+                    category="action"
+                )
             else:
-                self._log(action)
+                self._log(action, status="completed", category="action")
             # TODO: determine if we should reset update timer here
             response = self._report_on_action(action)
             # TODO: error handling
@@ -214,7 +214,6 @@ class Delegate(bases.Node):
 
     def _shutdown(self, exception: Optional[Exception] = None):
         """shut down the delegate"""
-        self._log("beginning shutdown", status=self.state, category="exit")
         # divorce oneself from actors and acts, from events and instructions
         self.actions, self.actionable_events = {}, []
         # TODO, maybe: try to kill child processes (can't in general kill
@@ -229,14 +228,12 @@ class Delegate(bases.Node):
                 self._send_exit_report, exception
             )
         except Exception as ex:
-            self._log("exit report failed", exception=ex)
-        self._log(
-            exc_report(exception), status="crashed", category="exit"
-        )
+            self._log("exit report failed", exception=ex, category="system")
         # wait to send exit report
         if 'exit_report' in self.threads:
             while self.threads['exit_report'].running():
                 time.sleep(0.1)
+        self._log("completed shutdown", category="system")
 
     def _send_exit_report(self, exception=None):
         """
@@ -398,16 +395,13 @@ class Delegate(bases.Node):
     def talk_to_station(self, message):
         """send a Message to the Station and queue any returned Instruction."""
         response = self._trysend(message)
-        # TODO: log
-        if response in ('timeout', 'connection refused'):
-            self._log(message, status=response, category="comms", direction="recv")
-            return response
-        status = self._interpret_response(response)
-        if status == "err":
+        if response not in ('timeout', 'connection refused'):
+            response = self._interpret_response(response)
+        if response in ('err', 'timeout', 'connection_refused'):
             self._log(
-                message, status=status, category="comms", direction="recv"
+                message, status=response, category="comms", direction="recv"
             )
-        return status
+        return response
 
     def _running_actions_message(self):
         running = filter(
@@ -472,6 +466,9 @@ class Delegate(bases.Node):
         if category is not None:
             self.infocount[category] += 1
         self.actionable_events.append(event)
+
+    station: tuple[str, int]
+    loginfo: Mapping[str]
 
 
 class HeadlessDelegate(Delegate):
