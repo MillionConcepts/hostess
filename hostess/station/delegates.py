@@ -179,10 +179,13 @@ class Delegate(bases.Node):
             info.append(self.actionable_events.pop())
             if i == max_notes - 1:
                 break
+        self._log(
+            "sending info", info=info, category="comms", direction="send"
+        )
         message.MergeFrom(pro.Update(info=[pack_obj(i) for i in info]))
         response = self.talk_to_station(message)
-        # TODO: perhaps there's a better way to track this outboxing...
-        #  I'd rather not do it with a mailbox object, I want it to be
+        # TODO: perhaps there's a better way to track this 'outbox'...
+        #  but I'd rather not do it with a mailbox object, I want it to be
         #  quicker/more ephemeral
         if response in ("err", "connection refused", "timeout"):
             self.actionable_events += info
@@ -233,7 +236,6 @@ class Delegate(bases.Node):
         if 'exit_report' in self.threads:
             while self.threads['exit_report'].running():
                 time.sleep(0.1)
-        self._log("completed shutdown", category="system")
 
     def _send_exit_report(self, exception=None):
         """

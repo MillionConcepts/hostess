@@ -137,7 +137,7 @@ class Station(bases.Node):
             # TODO: _plausibly_ log this?
             return
         except (AttributeError, KeyError) as ex:
-            self._log(exc_report(ex), category=category)
+            self._log("match crash", **exc_report(ex), category=category)
             return
         self._log(
             obj,
@@ -174,7 +174,7 @@ class Station(bases.Node):
         if delegate['reported_status'] == 'no_report':
             self._log(
                 "first message from delegate",
-                name=delegate['name'],
+                delname=delegate['name'],
                 category="comms",
                 direction="recv"
             )
@@ -544,7 +544,7 @@ class Station(bases.Node):
             "update_interval": update_interval,
         }
         # kwargs for logging launch
-        lkwargs = {'name': name, 'elements': elements, 'category': 'system'}
+        lkwargs = {'delname': name, 'elements': elements, 'category': 'system'}
         self._log("init delegate launch", **lkwargs)
         try:
             if context == "local":
