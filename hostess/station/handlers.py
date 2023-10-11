@@ -4,7 +4,7 @@ from __future__ import annotations
 import datetime as dt
 import os
 from pathlib import Path
-from typing import Optional, Union, Any
+from typing import Optional, Union, Any, Mapping, Collection
 
 from cytoolz import valmap
 from google.protobuf.message import Message
@@ -118,23 +118,61 @@ def watch_dir(
     return current, list(set(current).difference(contents))
 
 
-def json_sanitize(value: Any, maxlen: int = 128):
+SKIPKEYS = frozenset(
+    {
+        'delegateid',
+        'state',
+        'running',
+        'arguments',
+        'localcall',
+        'data',
+        'result',
+        'config'
+    }
+)
+
+
+def json_sanitize(
+    value: Any,
+    maxlen: int = 128,
+    maxdepth: int = 1,
+    skipkeys: Collection[str] = SKIPKEYS,
+    depth: int = 0,
+    skip: bool = False
+):
+    if skip is True:
+        return "<skipped>"
     if isinstance(value, (int, float)):
         return value
+    elif isinstance(value, bytes):
+        value = "<binary>"
     if isinstance(value, str):
-        value = value[:maxlen]
+        value = str(value[:maxlen])
+    elif isinstance(value, Mapping):
+        if depth > maxdepth:
+            value = "<skipped mapping at max log depth>"
+        else:
+            return {
+                json_sanitize(k): json_sanitize(
+                    v, maxlen, maxdepth, skipkeys, depth + 1, k in skipkeys
+                )
+                for k, v in value.items()
+            }
+    elif isinstance(value, Collection):
+        return [json_sanitize(e) for e in value]
     else:
         value = repr(value)
     return value[:maxlen]
 
 
 def flatten_for_json(
-    event: Union[Message, dict], maxlen: int = 128
+    event: Union[Message, dict],
+    maxlen: int = 128,
+    maxdepth: int = 3,
+    skipkeys: Collection[str] = SKIPKEYS
 ) -> dict:
-    """very simple, semi-placeholder log-formatting function."""
+    """simple log-formatting function."""
     # TODO: if this ends up being unperformant with huge messages, do something
     if isinstance(event, Message):
         event = m2d(event)
-    return valmap(curry(json_sanitize, maxlen=maxlen), event)
-
-
+    return json_sanitize(event, maxlen, maxdepth, skipkeys)

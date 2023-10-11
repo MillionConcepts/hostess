@@ -285,24 +285,46 @@ class Delegate(bases.Node):
             action.execute(self, instruction, key=key, noid=noid)
 
     def _configure_from_instruction(self, instruction: Message):
+        cp_for_log, cd_for_log = {}, {}
         for param in instruction.config:
             if enum(param, "paramtype") == "config_property":
                 try:
-                    setattr(self, param.value.name, unpack_obj(param.value))
+                    unpacked = unpack_obj(param.value)
+                    setattr(self, param.value.name, unpacked)
+                    cp_for_log[param.value.name] = unpacked
                 except AttributeError:
+                    self._log(
+                        "missing config property",
+                        name=param.value.name,
+                        category="system"
+                    )
                     raise bases.DoNotUnderstand(
                         f"no property {param.value.name}"
                     )
             elif enum(param, "paramtype") == "config_dict":
-                self.cdict = rmerge(self.cdict, unpack_obj(param.value))
+                unpacked = unpack_obj(param.value)
+                self.cdict = rmerge(self.cdict, unpacked)
+                cd_for_log |= unpacked
             else:
                 raise bases.DoNotUnderstand("unknown ConfigParamType")
+        self._log(
+            "configured from instruction",
+            category="system",
+            configuration=(cp_for_log | cd_for_log)
+        )
 
     def _handle_instruction(self, instruction: Message):
         """interpret, reply to, and execute (if relevant) an Instruction."""
         status, err = "wilco", None
         try:
             bases.validate_instruction(instruction)
+            # TODO: this might be too verbose
+            self._log(
+                "received instruction",
+                content=instruction,
+                category='comms',
+                direction='recv'
+            )
             if enum(instruction, "type") == "configure":
                 self._configure_from_instruction(instruction)
             # TODO, maybe: different kill behavior.
@@ -322,7 +344,6 @@ class Delegate(bases.Node):
             else:
                 err = dne
         finally:
-            self._log(instruction, category='comms', direction='recv')
             # don't duplicate exit report behavior
             if enum(instruction, "type") in ("stop", "kill"):
                 return self.shutdown()

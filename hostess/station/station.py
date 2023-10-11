@@ -444,7 +444,12 @@ class Station(bases.Node):
                 return self._situation_comm(), "sent situation"
             if comm["err"]:
                 # TODO: log this and send did-not-understand
-                self._log("failed to decode", type="comms", conn=_conn)
+                self._log(
+                    "failed to decode",
+                    category="comms",
+                    direction="recv",
+                    conn=_conn
+                )
                 return make_comm(b"bad decode"), "notified sender bad decode"
             incoming = comm["body"]
             try:
