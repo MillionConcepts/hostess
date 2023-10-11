@@ -26,7 +26,7 @@ m2d = google.protobuf.json_format.MessageToDict
 
 
 def proto_formatdict(
-    proto: Message | Descriptor
+    proto: Union[Message, Descriptor]
 ) -> dict[str, Union[dict, str]]:
     """
     return a (possibly nested) dict showing the legal fields of a protobuf
@@ -70,7 +70,7 @@ def make_timestamp(datetime: Optional[dt.datetime] = None) -> Timestamp:
     return timestamp
 
 
-def enum(message: Message, field: str) -> str | int:
+def enum(message: Message, field: str) -> Union[str, int]:
     """get the string value of an enum field in a message."""
     for desc, val in message.ListFields():
         if desc.enum_type is None:

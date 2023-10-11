@@ -1,17 +1,18 @@
 from __future__ import annotations
 
-from collections import defaultdict
 import datetime as dt
-from pathlib import Path
 import socket
 import sys
 import time
+from collections import defaultdict
+from pathlib import Path
 from typing import Literal, Mapping, Optional, Any
 
 from dustgoggles.dynamic import exc_report
 from dustgoggles.func import gmap, filtern
 from google.protobuf.message import Message
 
+import hostess.station.proto.station_pb2 as pro
 from hostess.caller import generic_python_endpoint
 from hostess.station import bases
 from hostess.station.bases import NoMatchingDelegate
@@ -25,11 +26,9 @@ from hostess.station.messages import (
     Msg,
     unpack_message,
 )
-import hostess.station.proto.station_pb2 as pro
 from hostess.station.proto_utils import enum
 from hostess.station.talkie import timeout_factory
-from hostess.subutils import RunCommand, Viewer
-from hostess.utilities import filestamp
+from hostess.subutils import RunCommand
 
 
 class Station(bases.Node):

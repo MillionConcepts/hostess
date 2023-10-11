@@ -133,7 +133,7 @@ def _maybe_release_locals(localdict, frame):
 
 
 def namespace_ids(
-    frames: FrameType | Collection[FrameType] | None = None,
+    frames: Union[FrameType, Collection[FrameType], None] = None,
     include_frame_ids=False,
 ) -> set[int]:
     """
@@ -165,7 +165,7 @@ def _add_scopedict_ids(frame, ids, lids, scopenames):
 
 
 def scopedict_ids(
-    frames: FrameType | Collection[FrameType] | None = None,
+    frames: Union[FrameType, Collection[FrameType], None] = None,
     *,
     getstack=False,
     scopenames=('locals', 'globals', 'builtins'),
@@ -206,7 +206,7 @@ def def_lineno(obj):
         return None
 
 
-IdentifyResult = dict[str, int | type | str]
+IdentifyResult = dict[str, Union[int, type, str]]
 
 
 def identify(
@@ -261,7 +261,7 @@ def _yclept_framerec(frame: FrameType):
 
 
 Refnom = tuple[
-    IdentifyResult, list[dict[str, tuple[str] | str | set[str]]]
+    IdentifyResult, list[dict[str, Union[tuple[str], str, set[str]]]]
 ]
 LITERAL_TYPES = (
     str, float, int, bool, slice, EllipsisType, NoneType, NotImplementedType
@@ -425,7 +425,7 @@ def analyze_references(
     permit_types: Collection[type] = frozenset(),
     globals_: Optional[dict[str, Any]] = None,
     return_objects: bool = False
-) -> tuple[list[Refnom], list[Any]] | list[Refnom]:
+) -> Union[tuple[list[Refnom], list[Any]], list[Refnom]]:
     """
     analyze 'references' to or from obj. designed, but not limited to,
     analyzing references tracked by the garbage collector.

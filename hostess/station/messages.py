@@ -11,7 +11,7 @@ import random
 import struct
 import sys
 from types import MappingProxyType as MPt, NoneType
-from typing import Optional, Any, Literal, Mapping, MutableMapping
+from typing import Optional, Any, Literal, Mapping, MutableMapping, Union
 
 from cytoolz import groupby
 import dill
@@ -135,7 +135,7 @@ def make_action(description=None, **fields):
 def make_function_call_action(
     func: str,
     module: Optional[str] = None,
-    kwargs: list[pro.PythonObject] | Mapping[str, Any] = MPt({}),
+    kwargs: list[Union[pro.PythonObject], Mapping[str, Any]] = MPt({}),
     context: Literal["thread", "process", "detached"] = "thread",
     **action_fields,
 ) -> pro.Action:
@@ -296,7 +296,7 @@ class Mailbox:
 
     # TODO: improve efficiency with caching or something
 
-    def __init__(self, messages: MutableMapping[int, Msg] | None = None):
+    def __init__(self, messages: Optional[MutableMapping[int, Msg]] = None):
         messages = {} if messages is None else messages
         if not isinstance(messages, MutableMapping):
             raise TypeError
@@ -314,7 +314,7 @@ class Mailbox:
                 break
 
     @staticmethod
-    def maybe_construct_msg(thing: dict | Message):
+    def maybe_construct_msg(thing: Union[dict, Message]):
         # 'outbox' case
         if isinstance(thing, Message):
             return Msg(thing)
@@ -369,7 +369,7 @@ class Mailbox:
     wilco = property(_get_wilco)
 
 
-def unpack_message(msg: Message | RepeatedCompositeContainer):
+def unpack_message(msg: Union[Message, RepeatedCompositeContainer]):
     if isinstance(msg, RepeatedCompositeContainer):
         formatted = []
         for i in msg:
@@ -406,7 +406,7 @@ def unpack_message(msg: Message | RepeatedCompositeContainer):
             formatted[k] = element.ToJsonString()
         elif ("ListFields" in dir(element)) and (element.ListFields() == []):
             continue
-        elif isinstance(element, Message | RepeatedCompositeContainer):
+        elif isinstance(element, Union[Message, RepeatedCompositeContainer]):
             formatted[k] = unpack_message(element)
         else:
             formatted[k] = element

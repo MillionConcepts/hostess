@@ -47,7 +47,11 @@ class SSH(RunCommand):
     """wrapper for managed command execution via fabric.Connection"""
 
     def __init__(
-        self, command="", conn: Connection = None, key: str = None, **kwargs
+        self,
+        command="",
+        conn: Optional[Connection] = None,
+        key: Optional[str] = None,
+        **kwargs
     ):
         if conn is None:
             raise TypeError("a Connection must be provided")

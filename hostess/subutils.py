@@ -6,7 +6,7 @@ from contextlib import redirect_stdout, redirect_stderr
 from functools import partial, wraps
 from multiprocessing import Process, Pipe
 from typing import Optional, Literal, Mapping, Collection, Hashable, Any, \
-    Callable, MutableMapping, MutableSequence
+    Callable, MutableMapping, MutableSequence, Union
 
 import invoke
 from cytoolz import keyfilter, identity
@@ -82,7 +82,7 @@ def dispatch_callback(
 
 def done_callback(
     dispatch: "Dispatcher",
-    runner: invoke.runners.Result | invoke.runners.Runner
+    runner: Union[invoke.runners.Result, invoke.runners.Runner]
 ) -> Future:
     """simple dispatcher callback for invoke.runner / result completion"""
     def callback():
@@ -267,7 +267,7 @@ class RunCommand:
         args = self.args + args
         kwargs = keyfilter(
             lambda k: not k.startswith("_"),  self.kwargs | kwargs
-)
+        )
         astring = " ".join(args)
         kstring = ""
         for k, v in kwargs.items():
@@ -639,4 +639,4 @@ def run(*args, **kwargs):
     return RunCommand(*args, **kwargs)().stdout
 
 
-Processlike = Viewer | invoke.runners.Runner | invoke.runners.Result
+Processlike = Union[Viewer, invoke.runners.Runner, invoke.runners.Result]

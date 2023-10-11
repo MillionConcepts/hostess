@@ -281,7 +281,9 @@ def clean_process_records(
             time.sleep(poll_delay)
 
 
-def run(cmd: str, _shell="bash", _viewer=False, **kwargs) -> Viewer | str:
+def run(
+    cmd: str, _shell="bash", _viewer=False, **kwargs
+) -> Union[Viewer, str]:
     """
     run the literal text of cmd in the specified shell using `sh`.
     provides more control than os.system and creates less hassle than

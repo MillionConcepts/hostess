@@ -492,7 +492,6 @@ class TimeSwitcher:
         return self.__repr__()
 
 
-
 class Ticker:
 
     def __init__(self):
@@ -521,5 +520,6 @@ def ticked(func, label, ticker):
         return func(*args, **kwargs)
 
     return tickoff
+
 
 DEFAULT_TICKER = Ticker()

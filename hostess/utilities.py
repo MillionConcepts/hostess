@@ -60,7 +60,9 @@ def gb(b, round_to=2):
 
 # noinspection PyUnresolvedReferences,PyProtectedMember
 def infer_stream_length(
-    stream: _io.BufferedReader | _io.BinaryIO | Path | str | requests.Response,
+    stream: Union[
+        _io.BufferedReader, _io.BinaryIO, Path, str, requests.Response
+    ],
 ) -> Optional[int]:
     """
     attempts to infer the size of a potential read from an object.

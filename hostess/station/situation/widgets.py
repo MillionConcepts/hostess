@@ -1,5 +1,5 @@
 """widgets and other `textual` interaction for the situation frontend."""
-from typing import Mapping, Sequence, Callable, Optional
+from typing import Mapping, Sequence, Callable, Optional, Union
 
 from cytoolz import partition
 from textual._loop import loop_last
@@ -58,7 +58,7 @@ def populate_dropnodes(node, items, max_items):
 
 
 def populate_children_from_dict(
-    node: TreeNode, obj: list | tuple | dict, max_items: Optional[int]
+    node: TreeNode, obj: Union[list, tuple, dict], max_items: Optional[int]
 ) -> None:
     """warning: expects a SortingTree as parent of the TreeNode."""
     if isinstance(obj, (list, tuple)):

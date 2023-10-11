@@ -462,7 +462,9 @@ class Delegate(bases.Node):
             msg.MergeFrom(pro.Update(info=[pack_obj(err)]))
         self.talk_to_station(msg)
 
-    def add_actionable_event(self, event, category: str | Sensor = None):
+    def add_actionable_event(
+        self, event, category: Optional[Union[str, Sensor]] = None
+    ):
         if isinstance(category, Sensor):
             category = category.name
         if category is not None:
@@ -509,7 +511,7 @@ def launch_delegate(
     delegate: Delegate = cls(station_address, name, **init_kwargs)
     for emod_name, ecls_name in elements:
         emodule: ModuleType = import_module(emod_name)
-        ecls: Type[Actor | Sensor] = getattr(emodule, ecls_name)
+        ecls: Type[Union[Actor, Sensor]] = getattr(emodule, ecls_name)
         delegate.add_element(ecls)
     # TODO: config-on-launch
     delegate.start()

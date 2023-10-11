@@ -8,7 +8,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
 from itertools import cycle, chain
-from typing import Optional, Callable
+from typing import Optional, Callable, Union
 
 from hostess.station.comm import make_comm, read_header, read_comm
 from hostess.station.messages import Mailbox
@@ -355,7 +355,7 @@ class TCPTalk:
             event, status = f"read {nbytes}", f"decode error;{type(ex)};{ex}"
         return stream, event, status
 
-    def _check_peerage(self, key: selectors.SelectorKey | socket.socket):
+    def _check_peerage(self, key: Union[selectors.SelectorKey, socket.socket]):
         """check already-peered lock."""
         try:
             if hasattr(key, "fileobj"):

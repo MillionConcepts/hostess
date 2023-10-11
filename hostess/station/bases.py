@@ -355,7 +355,7 @@ def inc_name(name: str, config: Mapping[str]) -> str:
     return name
 
 
-def element_dict(elements: Collection[Actor | Sensor]) -> dict[str, str]:
+def element_dict(elements: Collection[Union[Actor, Sensor]]) -> dict[str, str]:
     """sensor title formatter for identify_elements or similar tasks"""
     return {
         k: f"{v.__class__.__module__}.{v.__class__.__name__}"
@@ -422,8 +422,6 @@ class Node(Matcher, ABC):
             self._log(
                 "initialization failed", exception=ex, category="system"
             )
-
-
 
     def restart_server(self):
         """

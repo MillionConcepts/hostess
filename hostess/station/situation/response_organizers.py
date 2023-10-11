@@ -7,7 +7,7 @@ from copy import deepcopy
 from inspect import getsource
 import re
 from types import FunctionType
-from typing import Callable, Any
+from typing import Callable, Any, Union
 
 from dustgoggles.func import gmap
 from dustgoggles.structures import dig_and_edit, valonly
@@ -74,7 +74,7 @@ def sourcerec(obj: Any) -> dict[str, str]:
     }
 
 
-def callable_info(obj: Any) -> dict[str, str] | tuple[dict[str, str]]:
+def callable_info(obj: Any) -> Union[dict[str, str], tuple[dict[str, str]]]:
     if callable(obj):
         return sourcerec(obj)
     if "__iter__" in dir(obj):
