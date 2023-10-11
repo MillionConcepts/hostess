@@ -30,6 +30,10 @@ from hostess.station.talkie import TCPTalk
 from hostess.utilities import configured, logstamp, yprint, filestamp
 
 
+class ConsumedAttributeError(AttributeError):
+    pass
+
+
 class AttrConsumer:
     """
     implements functionality for "consuming" the attributes of associated
@@ -69,7 +73,10 @@ class AttrConsumer:
         if attr == "attrefs":
             return super().__setattr__(attr, value)
         if (ref := self.attrefs.get(attr)) is not None:
-            return setattr(ref[0], ref[1], value)
+            try:
+                return setattr(ref[0], ref[1], value)
+            except AttributeError as ae:
+                raise ConsumedAttributeError(str(ae))
         return super().__setattr__(attr, value)
 
     def __dir__(self):

@@ -15,7 +15,7 @@ from google.protobuf.message import Message
 
 import hostess.station.proto.station_pb2 as pro
 from hostess.station import bases
-from hostess.station.bases import Sensor, Actor
+from hostess.station.bases import Sensor, Actor, ConsumedAttributeError
 from hostess.station.comm import read_comm
 from hostess.station.messages import pack_obj, task_msg, unpack_obj
 from hostess.station.proto_utils import make_timestamp, enum
@@ -292,11 +292,21 @@ class Delegate(bases.Node):
                     unpacked = unpack_obj(param.value)
                     setattr(self, param.value.name, unpacked)
                     cp_for_log[param.value.name] = unpacked
+                except ConsumedAttributeError as cae:
+                    self._log(
+                        "error setting interface property",
+                        name=param.value.name,
+                        category="system",
+                        exception=cae
+                    )
+                    raise bases.DoNotUnderstand(
+                        f"error setting property: {cae}"
+                    )
                 except AttributeError:
                     self._log(
-                        "missing config property",
+                        "missing requested interface property",
                         name=param.value.name,
-                        category="system"
+                        category="system",
                     )
                     raise bases.DoNotUnderstand(
                         f"no property {param.value.name}"

@@ -142,6 +142,8 @@ def json_sanitize(
 ):
     if skip is True:
         return "<skipped>"
+    if isinstance(value, Message):
+        value = m2d(value)
     if isinstance(value, (int, float)):
         return value
     elif isinstance(value, bytes):
