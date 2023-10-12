@@ -38,15 +38,15 @@ class Station(bases.Node):
     """
 
     def __init__(
-        self,
-        host: str,
-        port: int,
-        name: str = "station",
-        n_threads: int = 8,
-        max_inbox_mb: float = 250,
-        logdir=Path(__file__).parent / ".nodelogs",
-        _is_process_owner=False,
-        **kwargs,
+            self,
+            host: str,
+            port: int,
+            name: str = "station",
+            n_threads: int = 8,
+            max_inbox_mb: float = 250,
+            logdir=Path(__file__).parent / ".nodelogs",
+            _is_process_owner=False,
+            **kwargs,
     ):
         super().__init__(
             host=host,
@@ -122,7 +122,7 @@ class Station(bases.Node):
         )
 
     def shutdown_delegate(
-        self, delegate: str, how: Literal["stop", "kill"] = "stop"
+            self, delegate: str, how: Literal["stop", "kill"] = "stop"
     ):
         self.outboxes[delegate].append(make_instruction(how))
 
@@ -131,7 +131,7 @@ class Station(bases.Node):
     #  make a more unified interface.
     def match_and_execute(self, obj: Any, category: str):
         try:
-            actions = self.match(obj, category)
+            actors = self.match(obj, category)
         except bases.NoActorForEvent:
             # TODO: _plausibly_ log this?
             return
@@ -141,21 +141,39 @@ class Station(bases.Node):
         self._log(
             obj,
             category=category,
-            matches=[a.name for a in actions],
+            matches=[a.name for a in actors],
         )
-        for action in actions:
+        for actor in actors:
             try:
-                action.execute(self, obj)
+                actor.execute(self, obj)
             except NoMatchingDelegate:
-                self._log("no delegate for action", action=action)
+                self._log(
+                    "no delegate for action", actor=actor, category=category
+                )
+            except Exception as ex:
+                self._log(
+                    "execution failure",
+                    actor=actor,
+                    category=category, exception
+                    =ex
+                )
 
     def _handle_info(self, message: Message):
         """
         check info received in a Message against the Station's 'info' Actors,
         and execute any relevant actions (most likely constructing
         Instructions).
+        if message is an exit report, also always log its info.
         """
         notes = gmap(unpack_obj, message.info)
+        if enum(message, 'reason') == 'exiting':
+            self._log(
+                "received exit report",
+                delname=message.delegateid.name,
+                reason=enum(message.state, 'status'),
+                exception=notes
+            )
+            return
         for note in notes:
             self.match_and_execute(note, "info")
 
@@ -196,10 +214,10 @@ class Station(bases.Node):
             try:
                 instruction_id = int(name.replace("Instruction_", ""))
                 if self.tasks[instruction_id]["status"] not in (
-                    "success",
-                    "failure",
-                    "crash",
-                    "timeout",
+                        "success",
+                        "failure",
+                        "crash",
+                        "timeout",
                 ):
                     # don't override formally reported status
                     self.tasks[instruction_id]["status"] = state.lower()
@@ -356,8 +374,9 @@ class Station(bases.Node):
                 'name': n['name']
             }
             if n["reported_status"] in ("shutdown", "crashed"):
+                if n["reported_status"] != n['inferred_status']:
+                    self._log(status=n['reported_status'], **lkwargs)
                 n["inferred_status"] = n["reported_status"]
-                self._log(status=n['reported_status'], **lkwargs)
                 continue
             if n["reported_status"] == "no_report":
                 n["wait_time"] = (now - n["init_time"]).total_seconds()
@@ -389,7 +408,7 @@ class Station(bases.Node):
         box[pos].sent = True
 
     def _select_outgoing_message(
-        self, delegatename
+            self, delegatename
     ) -> tuple[Optional[Mailbox], Optional[pro.Instruction], Optional[int]]:
         """
         pick outgoing message, if one exists for this delegate.
@@ -508,13 +527,13 @@ class Station(bases.Node):
             )
 
     def launch_delegate(
-        self,
-        name,
-        elements=(),
-        host="localhost",
-        update_interval=0.1,
-        context="daemon",
-        **kwargs,
+            self,
+            name,
+            elements=(),
+            host="localhost",
+            update_interval=0.1,
+            context="daemon",
+            **kwargs,
     ) -> Optional[bases.Node]:
         """
         launch a delegate, by default daemonized, and add it to the
@@ -532,16 +551,16 @@ class Station(bases.Node):
         if any(n["name"] == name for n in self.delegates):
             raise ValueError("can't launch a delegate with a duplicate name")
         kwargs = {
-            "station_address": (self.host, self.port),
-            "name": name,
-            "elements": elements,
-            "update_interval": update_interval,
-            "loginfo": {
-                # must pass logdir as a string -- delegate is not initialized
-                # yet, so this is inserted directly into generated source code
-                'logdir': str(self.logdir), 'init_time': self.init_time
-            }
-        } | kwargs
+                     "station_address": (self.host, self.port),
+                     "name": name,
+                     "elements": elements,
+                     "update_interval": update_interval,
+                     "loginfo": {
+                         # must pass logdir as a string -- delegate is not initialized
+                         # yet, so this is inserted directly into generated source code
+                         'logdir': str(self.logdir), 'init_time': self.init_time
+                     }
+                 } | kwargs
         delegateinfo = blank_delegateinfo() | {
             "name": name,
             "inferred_status": "initializing",
@@ -564,7 +583,7 @@ class Station(bases.Node):
         except Exception as ex:
             self._log(
                 'delegate launch fail', **lkwargs, **exc_report(ex)
-             )
+            )
 
     def relaunch_delegate(self, name):
         delegate = self.get_delegate(name)
@@ -575,8 +594,8 @@ class Station(bases.Node):
             waiting, unwait = timeout_factory(timeout=20)
             self._check_delegates()
             while self.get_delegate(name)["inferred_status"] not in (
-                "shutdown",
-                "crashed",
+                    "shutdown",
+                    "crashed",
             ):
                 try:
                     waiting()

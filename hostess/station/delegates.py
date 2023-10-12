@@ -250,7 +250,7 @@ class Delegate(bases.Node):
                 )
             except Exception as ex:
                 info = pro.Update(
-                    info=[pack_obj(exc_report(ex)), "exception"]
+                    info=[pack_obj(exc_report(ex), "exception")]
                 )
             msg.MergeFrom(info)
         self.talk_to_station(msg)
