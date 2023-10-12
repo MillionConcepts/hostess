@@ -11,6 +11,7 @@ import threading
 from abc import ABC
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from itertools import chain
 from pathlib import Path
 from random import shuffle
@@ -167,8 +168,6 @@ class Sensor(Matcher, ABC):
     def __init__(self):
         super().__init__()
         self.interface = self.interface + self.class_interface
-        if "sources" in dir(self):
-            raise TypeError("bad configuration: can't nest Sources.")
         props, self.actors = [], {}
         checkp = inspect.getfullargspec(self.check).kwonlyargs
         self.config = {"check": {k: None for k in checkp}}
@@ -202,16 +201,27 @@ class Sensor(Matcher, ABC):
             raise TypeError("cannot add Sensors to a Sensor.")
         self.associate_actor(cls, name)
 
+    def _log(self, *args, **kwargs):
+        return self.owner._log(
+            *args, category="sensor", sensor=self.name, **kwargs
+        )
+
     def check(self, node, **check_kwargs):
-        self.memory, events = self.checker(self.memory, **check_kwargs)
-        for event in events:
-            try:
-                actors = self.match(event)
+        step = "check"  # for error logging
+        try:
+            self.memory, events = self.checker(self.memory, **check_kwargs)
+            for event in events:
+                try:
+                    step = "match"
+                    actors = self.match(event)
+                except NoActorForEvent:
+                    continue
                 for actor in actors:
+                    step = f"execute {actor.name}"
                     # kwargs propagate to individual actors via `self.config`
                     actor.execute(node, event)
-            except NoActorForEvent:
-                continue
+        except Exception as ex:
+            self._log("check failure", step=step, exception=ex)
 
     def __str__(self):
         pstring = f"{type(self).__name__} ({self.name})\n"
@@ -423,6 +433,10 @@ class Node(Matcher, ABC):
             atexit.register(
                 self.exc.shutdown, wait=False, cancel_futures=True
             )
+            if self.__is_process_owner is True:
+                atexit.register(
+                    partial(self._log, "shutdown complete", category="system")
+                )
             if start is True:
                 self.start()
         except Exception as ex:
@@ -504,7 +518,7 @@ class Node(Matcher, ABC):
         """subclasses must define a way to shut down"""
         raise NotImplementedError
 
-    def shutdown(self, exception=None, instruction=None):
+    def shutdown(self, exception=None):
         self.locked = True
         self.state = "shutdown" if exception is None else "crashed"
         self._log(
@@ -521,7 +535,6 @@ class Node(Matcher, ABC):
                 "shutdown exception", exception=ex, category='system'
             )
         self.is_shut_down = True
-        self._log("shutdown complete", category='system')
 
     def _start(self):
         """

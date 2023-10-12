@@ -135,7 +135,7 @@ def make_action(description=None, **fields):
 def make_function_call_action(
     func: str,
     module: Optional[str] = None,
-    kwargs: list[Union[pro.PythonObject], Mapping[str, Any]] = MPt({}),
+    kwargs: Union[list[pro.PythonObject], Mapping[str, Any]] = MPt({}),
     context: Literal["thread", "process", "detached"] = "thread",
     **action_fields,
 ) -> pro.Action:
