@@ -282,7 +282,7 @@ class RunCommand:
             else:
                 kstring += f" --{k}={v}"
         cstring = self.command
-        order = (kstring, astring) if args_at_end else (kstring, astring)
+        order = (kstring, astring) if args_at_end else (astring, kstring)
         for s in order:
             cstring = cstring + f" {s}" if s != "" else cstring
         return cstring
