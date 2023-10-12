@@ -154,8 +154,8 @@ class Station(bases.Node):
                 self._log(
                     "execution failure",
                     actor=actor,
-                    category=category, exception
-                    =ex
+                    category=category,
+                    exception=ex
                 )
 
     def _handle_info(self, message: Message):
@@ -556,9 +556,11 @@ class Station(bases.Node):
                      "elements": elements,
                      "update_interval": update_interval,
                      "loginfo": {
-                         # must pass logdir as a string -- delegate is not initialized
-                         # yet, so this is inserted directly into generated source code
-                         'logdir': str(self.logdir), 'init_time': self.init_time
+                         # must pass logdir as a string -- delegate is not
+                         # initialized yet, so this is inserted directly into
+                         # generated source code
+                         'logdir': str(self.logdir),
+                         'init_time': self.init_time
                      }
                  } | kwargs
         delegateinfo = blank_delegateinfo() | {
