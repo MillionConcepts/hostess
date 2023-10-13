@@ -3,6 +3,8 @@ import shutil
 import time
 from pathlib import Path
 
+import numpy as np
+
 from hostess.station.actors import InstructionFromInfo
 from hostess.station.messages import (
     make_action,
@@ -136,12 +138,11 @@ def test_application_1():
     station.start()
 
     # launch the nodes as daemonic processes
-    station.launch_delegate("watcher", **watcher_launch_spec, update_interval=0.5, context='local')
+    station.launch_delegate("watcher", **watcher_launch_spec, update_interval=0.5)
     station.launch_delegate(
         "thumbnail",
         **thumbnail_launch_spec,
         update_interval=0.5,
-        context="local"
     )
     # configure the watcher delegate
     station.set_delegate_properties("watcher", **watcher_config_spec)
@@ -191,7 +192,52 @@ def test_missing():
         station.shutdown()
 
 
+def test_echo_numpy():
+    """test a numpy array roundtrip."""
+    def echo_numpy_instruction(array: np.ndarray):
+        action = make_function_call_action(
+            func="identity",
+            module="cytoolz",
+            kwargs={'x': array},
+            context="thread"
+        )
+        return make_instruction("do", action=action)
+
+    host, port = "localhost", random.randint(10000, 20000)
+    station = Station(host, port)
+    station.start()
+    try:
+        station.launch_delegate(
+            "echo",
+            elements=[("hostess.station.actors", "FuncCaller")],
+            context="local"
+        )
+        randarray = np.frombuffer(
+            random.randbytes(1024),
+            dtype=[("x", "u1", 4), ("y", "f4", 3), ("z", "U4")]
+        )
+        while np.isnan(randarray['y']).any():
+            randarray = np.frombuffer(
+                random.randbytes(1024),
+                dtype=[("x", "u1", 4), ("y", "f4", 3), ("z", "U4")]
+            )
+        instruction = echo_numpy_instruction(randarray)
+        station.queue_task("echo", instruction)
+        waiting, _ = timeout_factory(timeout=5)
+        task = tuple(station.tasks.values())[0]
+        while task['status'] not in ('success', 'crash'):
+            waiting()
+            time.sleep(0.05)
+        if task['status'] != 'success':
+            raise ValueError(f"failed task: {task['exception']}")
+        echoed = station.inbox.completed[0].completed['action']['result']
+        assert (echoed == randarray).all()
+    finally:
+        station.shutdown()
+
+
 test_shutdown()
 test_actions_1()
 test_missing()
 test_application_1()
+test_echo_numpy()

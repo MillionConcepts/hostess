@@ -20,9 +20,10 @@ message PythonObject {
   oneof format {
     string scanf = 3;
     Serialization serialization = 4;
+    string dtype = 5;
   }
-  CharType chartype = 5;
-  Compression compression = 6;
+  CharType chartype = 6;
+  Compression compression = 7;
 }
 
 /* pipe is the entirety of a multi-action task. note that a task may simply consist

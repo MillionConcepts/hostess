@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from ast import literal_eval
 from itertools import accumulate
 from functools import cached_property, cache
 import json
@@ -102,23 +103,30 @@ def pack_obj(obj: Any, name: str = "") -> pro.PythonObject:
     """
     if isinstance(obj, pro.PythonObject):
         return obj
-    if isinstance(obj, (str, bytes, int, float)):
+    elif isinstance(obj, NoneType):
+        (scanf, chartype), obj = obj2scanf(obj), b"\x00"
+    elif isinstance(obj, (str, bytes, int, float)):
         scanf, chartype = obj2scanf(obj)
         if isinstance(obj, str):
             obj = obj.encode("utf-8")
-        elif isinstance(obj, NoneType):
-            obj = b"\x00"
-        obj = pro.PythonObject(
-            name=name,
-            scanf=scanf,
-            chartype=chartype,
-            value=struct.pack(scanf, obj),
-        )
+    elif isinstance(obj, np.ndarray):
+        dtype = str(obj.dtype)
+        if dtype == 'object' or ", 'O', " in dtype:
+            # object dtype does not have stable byte-level representation
+            return pro.PythonObject(
+                name=name, serialization="dill", value=dill.dumps(obj)
+            )
+        return pro.PythonObject(name=name, dtype=dtype, value=obj.tobytes())
     else:
-        obj = pro.PythonObject(
+        return pro.PythonObject(
             name=name, serialization="dill", value=dill.dumps(obj)
         )
-    return obj
+    return pro.PythonObject(
+        name=name,
+        scanf=scanf,
+        chartype=chartype,
+        value=struct.pack(scanf, obj),
+    )
 
 
 # TODO: optional base64 encoding for some channels
@@ -182,6 +190,10 @@ def unpack_obj(obj: pro.PythonObject) -> Any:
         value = json.loads(obj.value)
     elif enum(obj, "serialization") == "dill":
         value = dill.loads(obj.value)
+    elif obj.dtype:
+        value = np.frombuffer(
+            obj.value, dtype=np.dtype(literal_eval(obj.dtype))
+        )
     elif obj.scanf:
         unpacked = struct.unpack(obj.scanf, obj.value)
         if any(isinstance(v, bytes) for v in unpacked):
