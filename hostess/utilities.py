@@ -1,22 +1,40 @@
 """generic utility objects for hostess"""
+from __future__ import annotations
+
 import _io
 import datetime as dt
 import logging
 import re
+import sys
+import time
+from operator import is_
+from functools import wraps
+from importlib import import_module
+from importlib.util import spec_from_file_location, module_from_spec
 from pathlib import Path
 from socket import gethostname
-from typing import Callable, Iterable, Any, MutableMapping
+from types import ModuleType
+from typing import Callable, MutableMapping, Optional, Sequence, Any, Hashable
 
 import rich.console
+import yaml
 from cytoolz import first
+from dustgoggles.dynamic import exc_report
 
 
 def stamp() -> str:
+    """sorthand for standardized text event stamp"""
     return f"{gethostname()} {dt.datetime.utcnow().isoformat()[:-7]}: "
 
 
 def filestamp() -> str:
+    """shorthand for standardized event stamp that is also a legal filename"""
     return re.sub(r"[-: ]", "_", stamp()[:-2])
+
+
+def logstamp(extra: int = 0) -> str:
+    """shorthand for standardized text timestamp only (no hostname)"""
+    return f"{dt.datetime.utcnow().isoformat()[:(-7 + extra)]}"
 
 
 hostess_CONSOLE = rich.console.Console()
@@ -40,13 +58,23 @@ def gb(b, round_to=2):
         return round(value, round_to)
 
 
-def keygrab(mapping_list, key, value):
-    """returns first element of mapping_list such that element[key]==value"""
-    return next(filter(lambda x: x[key] == value, mapping_list))
+# noinspection PyUnresolvedReferences,PyProtectedMember
+def infer_stream_length(
+    stream: Union[
+        _io.BufferedReader, _io.BinaryIO, Path, str, requests.Response
+    ],
+) -> Optional[int]:
+    """
+    attempts to infer the size of a potential read from an object.
+    Args:
+        stream: may be a buffered reader (like the result of calling open()),
+            a buffer like io.BytesIO, or a Path
+    Returns:
+        an estimate of its size based on best available method, or None if
+        impossible.
+    """
 
-
-def infer_stream_length(stream):
-    def filesize():
+    def filesize() -> Optional[int]:
         try:
             if isinstance(stream, _io.BufferedReader):
                 path = Path(stream.name)
@@ -58,14 +86,14 @@ def infer_stream_length(stream):
         except FileNotFoundError:
             pass
 
-    def buffersize():
+    def buffersize() -> Optional[int]:
         if "getbuffer" in dir(stream):
             try:
                 return len(stream.getbuffer())
             except (TypeError, ValueError, AttributeError):
                 pass
 
-    def responsesize():
+    def responsesize() -> Optional[int]:
         if "headers" in dir(stream):
             try:
                 return stream["headers"].get("content-length")
@@ -85,23 +113,6 @@ def roundstring(string, digits=2):
     return re.sub(
         r"\d+\.\d+", lambda m: str(round(float(m.group()), digits)), string
     )
-
-
-# TODO: temporarily vendored here until the next dustgoggles release
-def gmap(
-    func: Callable,
-    *iterables: Iterable,
-    mapper: Callable[[Callable, tuple[Iterable]], Iterable] = map,
-    evaluator: Callable[[Iterable], Any] = tuple,
-):
-    """
-    'greedy map' function. map func across iterables using mapper and
-    evaluate with evaluator.
-
-    for cases in which you need a terse or configurable way to map and
-    immediately evaluate functions.
-    """
-    return evaluator(mapper(func, *iterables))
 
 
 def my_external_ip():
@@ -132,26 +143,57 @@ def clear_cached_results(path, prefix):
         result.unlink()
 
 
-def record_and_yell(message: str, cache: MutableMapping, loud: bool = False):
+def record_and_yell(
+    message: str, cache: MutableMapping, loud: bool = False, extra: int = 0
+):
     """
     place message into a cache object with a timestamp; optionally print it
     """
     if loud is True:
         print(message)
-    cache[dt.datetime.now().isoformat()] = message
+    cache[logstamp(extra)] = message
 
 
-def notary(cache):
-    def note(message="", loud: bool = False, eject: bool = False):
+def notary(
+    cache: Optional[MutableMapping] = None,
+    be_loud: bool = False,
+    resolution: int = 0,
+) -> Callable[[Any], Optional[MutableMapping]]:
+    """
+    create a function that records, timestamps, and optionally prints messages.
+    if you pass eject=True to that function, it will return its note cache.
+    Args:
+        cache: cache for notes (if None, creates a dict)
+        be_loud: if True, makes output function verbose by default. individual
+            calls can override this setting.
+        resolution: time resolution in significant digits after the second.
+            collisions can occur if entries are sent faster than the time
+            resolution.
+    Returns:
+        note: callable for notetaking
+    """
+    if cache is None:
+        cache = {}
+
+    resolution = resolution if resolution == 0 else resolution + 1
+
+    def note(
+        message: str = "", loud: bool = be_loud, eject: bool = False
+    ) -> Optional[MutableMapping]:
+        """
+        Args:
+            message: message to record in cache and optionally print.
+            loud: print message as well?
+            eject: return cache. if eject is True, ignores all other arguments
+                (does not log this call)
+        Returns:
+            cache: only if eject is True
+        """
         if eject is True:
             return cache
-        return record_and_yell(message, cache, loud)
+        return record_and_yell(message, cache, loud, resolution)
 
     return note
-
-
-def logstamp() -> str:
-    return f"{dt.datetime.utcnow().isoformat()[:-7]}"
 
 
 def dcom(string, sep=";", bad=(",", "\n")):
@@ -163,5 +205,176 @@ def dcom(string, sep=";", bad=(",", "\n")):
     return re.sub(rf"[{re.escape(''.join(bad))}]", sep, string.strip())
 
 
-def unix2dt(epoch):
+def unix2dt(epoch: float) -> dt.datetime:
+    """shorthand for dt.datetime.fromtimestamp."""
     return dt.datetime.fromtimestamp(epoch)
+
+
+# noinspection PyArgumentList
+def curry(func: Callable, *args, **kwargs) -> Callable:
+    """
+    alias for cytoolz.curry with type hinting. this is a hack to
+    improve PyCharm's static analysis.
+    """
+    from cytoolz import curry as _curry
+
+    return _curry(func, *args, **kwargs)
+
+
+class Aliased:
+    """
+    generic wrapper for aliasing a class method. for instance, if you'd like a
+    library function to `append` to a list, but it's only willing to `write`:
+
+    >>> import json
+    >>> my_list = []
+    >>> writeable_list = Aliased(my_list, ("write",), "append")
+    >>> json.dump([1, 2, 3], writeable_list)
+    >>> print(writeable_list)
+    Aliased: ('write',) -> append:
+    ['[1', ', 2', ', 3', ']']
+    """
+
+    def __init__(self, wrapped: Any, aliases: Sequence[str], referent: str):
+        self.obj = wrapped
+        self.method = referent
+        self.aliases = aliases
+        for alias in aliases:
+            setattr(self, alias, self._aliased)
+
+    def _aliased(self, *args, **kwargs):
+        return getattr(self.obj, self.method)(*args, **kwargs)
+
+    def __getattr__(self, attr):
+        return getattr(self.obj, attr)
+
+    def __str__(self):
+        return f"Aliased: {self.aliases} -> {self.method}:\n" + str(self.obj)
+
+    def __repr__(self):
+        return f"Aliased: {self.aliases} -> {self.method}:\n" + repr(self.obj)
+
+
+def timeout_factory(
+    raise_timeout: bool = True, timeout: float = 5
+) -> tuple[Callable[[], int], Callable[[], None]]:
+    """
+    returns a tuple of functions. calling the first starts a wait timer if not
+    started, and also returns current wait time. calling the second resets the
+    wait timer.
+
+    Args:
+        raise_timeout: if True, raises timeout if waiting > timeout.
+        timeout: timeout in seconds, used only if raise_timeout is True
+    """
+    starts = []
+
+    def waiting():
+        """call me to start and check/raise timeout."""
+        if len(starts) == 0:
+            starts.append(time.time())
+            return 0
+        delay = time.time() - starts[-1]
+        if (raise_timeout is True) and (delay > timeout):
+            raise TimeoutError
+        return delay
+
+    def unwait():
+        """call me to reset timeout."""
+        try:
+            starts.pop()
+        except IndexError:
+            pass
+
+    return waiting, unwait
+
+
+def signal_factory(
+    threads: MutableMapping,
+) -> Callable[[Hashable], None]:
+    """
+    creates a 'signaler' function that simply assigns values to a dict
+    bound in enclosing scope. this is primarily intended as a simple
+    inter-thread communication utility
+    """
+
+    def signaler(name, signal=0):
+        if name == "all":
+            for k in threads.keys():
+                threads[k] = signal
+            return
+        if name not in threads.keys():
+            raise KeyError
+        threads[name] = signal
+
+    return signaler
+
+
+# TODO, maybe: replace with a dynamic?
+@curry
+def trywrap(func, name):
+    @wraps(func)
+    def trywrapped(*args, **kwargs):
+        exception, retval = None, None
+        try:
+            retval = func(*args, **kwargs)
+        except Exception as ex:
+            exception = ex
+        finally:
+            return {
+                "name": name,
+                "retval": retval,
+                "time": dt.datetime.now(),
+            } | exc_report(exception)
+
+    return trywrapped
+
+
+def configured(func, config):
+    @wraps(func)
+    def with_configuration(*args, **kwargs):
+        return func(*args, **kwargs, **config)
+
+    return with_configuration
+
+
+# just a little printer to show what crashed/completed
+def filterdone(threads):
+    return [(n, t) for n, t in threads.items() if t._state != "RUNNING"]
+
+
+def get_module(module_name: str) -> ModuleType:
+    """
+    dynamically import a module by name. check to see if it's already in
+    sys.modules; if not, just try to import it; if that doesn't work, try to
+    interpret module_name as a path.
+    """
+    if module_name in sys.modules:
+        return sys.modules[module_name]
+    if Path(module_name).stem in sys.modules:
+        return sys.modules[module_name]
+    try:
+        return import_module(module_name)
+    except ModuleNotFoundError:
+        pass
+    spec = spec_from_file_location(Path(module_name).stem, module_name)
+    module = module_from_spec(spec)
+    spec.loader.exec_module(module)
+    sys.modules[Path(module_name).stem] = module
+    return module
+
+
+def yprint(obj, indent=0, replace_null=True, maxlen=256):
+    try:
+        text = yaml.dump(obj)
+    except TypeError:
+        text = f'***pretty-print failed*** {obj}'
+    if replace_null is True:
+        text = text.replace('null', 'None')
+    return "\n".join(
+        " " * indent + line[:maxlen] for line in text.splitlines()
+    )
+
+
+def is_any(obj, coll):
+    return any(map(lambda item: is_(obj, item), coll))

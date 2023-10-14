@@ -44,7 +44,7 @@ from hostess.aws.utilities import init_client, init_resource
 # boto3 s3.Bucket object, as it performs similar types of abstraction which
 # collide with ours -- for instance, it often prevents us from getting the
 # API's responses, which we in some cases want.
-from hostess.subutils import piped, clean_process_records
+from hostess.subutils import piped
 from hostess.utilities import stamp, console_and_log, infer_stream_length
 
 
@@ -530,6 +530,7 @@ def put_stream(
         raise
     del chunk
     put_chunk(b"", flush=True)
+    # TODO: fix this
     if upload_threads is not None:
         clean_process_records(parts)
     del put_chunk

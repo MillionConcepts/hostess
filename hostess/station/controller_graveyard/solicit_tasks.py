@@ -11,7 +11,7 @@ import rich.console
 
 from hostess.caller import generic_python_endpoint
 from hostess.config import GENERAL_DEFAULTS
-from hostess.controller.parsing import default_output_parser
+from hostess.station.parsing import default_output_parser
 from hostess.subutils import console_stream_handlers, run
 from hostess.utilities import console_and_log, stamp
 

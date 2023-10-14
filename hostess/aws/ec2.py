@@ -5,13 +5,13 @@ import pickle
 import re
 import time
 from collections import defaultdict
-from functools import cache, wraps, partial
+from concurrent.futures import ThreadPoolExecutor
+from functools import cache, partial
 from itertools import chain
 from pathlib import Path
 from random import choices
 from string import ascii_lowercase
 from typing import (
-    Union,
     Collection,
     Literal,
     Sequence,
@@ -21,21 +21,19 @@ from typing import (
     Mapping,
 )
 
+import dateutil.parser as dtp
 from botocore.exceptions import ClientError
 from cytoolz.curried import get
-import dateutil.parser as dtp
-from dustgoggles.func import zero
+from dustgoggles.func import gmap, zero
 from dustgoggles.structures import listify
-import sh
+from invoke import UnexpectedExit
 
+import hostess.shortcuts as ks
 from hostess.aws.pricing import (
     get_on_demand_price,
     get_cpu_credit_price,
     get_ec2_basic_price_list,
 )
-from hostess.caller import generic_python_endpoint
-from hostess.config import EC2_DEFAULTS, GENERAL_DEFAULTS
-import hostess.shortcuts as ks
 from hostess.aws.utilities import (
     init_client,
     init_resource,
@@ -44,22 +42,12 @@ from hostess.aws.utilities import (
     autopage,
     clarify_region,
 )
-from hostess.ssh import (
-    jupyter_connect,
-    wrap_ssh,
-    ssh_key_add,
-    find_conda_env,
-    interpret_command,
-    find_ssh_key,
-    tunnel,
-)
-from hostess.subutils import Viewer, Processlike, Commandlike
+from hostess.caller import generic_python_endpoint
+from hostess.config import EC2_DEFAULTS, GENERAL_DEFAULTS
+from hostess.ssh import jupyter_connect, find_ssh_key, SSH, find_conda_env
+from hostess.subutils import Processlike
 from hostess.utilities import (
-    gmap,
-    my_external_ip,
-    filestamp,
-    check_cached_results,
-    clear_cached_results,
+    my_external_ip, filestamp, check_cached_results, clear_cached_results,
 )
 
 
@@ -176,10 +164,24 @@ class Instance:
             self.name = None
         self.zone = instance_.placement["AvailabilityZone"]
         if key is None:
-            key = find_ssh_key(instance_.key_name)
+            key = str(find_ssh_key(instance_.key_name))
+        if key is None:
+            raise FileNotFoundError("can't find key file for instance.")
         self.uname, self.key = uname, key
         self.instance_ = instance_
-        self._command = wrap_ssh(self.ip, self.uname, self.key, self)
+        self._ssh = None
+        if self.state == 'running':
+            self.connect()
+
+    def connect(self, maxtries=5):
+        for attempt in range(maxtries):
+            try:
+                self._ssh = SSH.connect(self.ip, self.uname, self.key)
+                return
+            except AttributeError:
+                time.sleep(1)
+                self.update()
+        raise ConnectionError("can't connect to instance.")
 
     def _is_unready(self):
         return (self.state not in ("running", "pending")) or any(
@@ -200,14 +202,13 @@ class Instance:
                 f"class constructor when creating a new Instance."
             )
 
-    @wraps(interpret_command)
-    def command(self, *args, **kwargs) -> Union[Viewer, sh.RunningCommand]:
+    def command(self, *args, **kwargs) -> Processlike:
         self._raise_unready()
-        return self._command(*args, **kwargs)
+        return self._ssh(*args, **kwargs)
 
     def commands(
         self,
-        commands: Sequence[Commandlike],
+        commands: Sequence[str],
         op: Literal["and", "xor", "then"] = "then",
         **kwargs,
     ) -> Processlike:
@@ -215,7 +216,7 @@ class Instance:
 
     def notebook(self, **connect_kwargs):
         self._raise_unready()
-        return jupyter_connect(self.ip, self.uname, self.key, **connect_kwargs)
+        return jupyter_connect(self._ssh,  **connect_kwargs)
 
     def start(self, return_response=False):
         """Start the instance."""
@@ -238,71 +239,34 @@ class Instance:
         if return_response is True:
             return response
 
-    def add_public_key(self, tries=5, delay=1.5):
-        """
-        attempts to add the instance's public key to the local known
-        hosts file so that we can interact with it via ssh.
-        """
-        for _ in range(tries):
-            if self.ip is None:
-                self.update()
-            if self.ip is not None:
-                try:
-                    ssh_key_add(self.ip)
-                    return
-                except sh.ErrorReturnCode:
-                    pass
-            time.sleep(delay)
-        raise TimeoutError("timed out adding key. try again in a moment.")
-
-    def put(self, source, target, *args, _literal_str=False, **kwargs):
+    def put(self, source, target, *args, literal_str=False, **kwargs):
         """
         copy file from local disk or object from memory to target file on
         instance using scp.
         """
         self._raise_unready()
-        if isinstance(source, str) and (_literal_str is True):
-            source_file = "/dev/stdin"
+        if isinstance(source, str) and (literal_str is True):
+            source_file = io.BytesIO(source.encode('utf-8'))
         elif not isinstance(source, (str, Path)):
             source_file = "/dev/stdin"
         else:
             source_file = source
-        command_parts = [
-            f"-i{self.key}",
-            source_file,
-            f"{self.uname}@{self.ip}:{target}",
-        ]
-        if source_file == "/dev/stdin":
-            command_parts.append(source)
-        return interpret_command(
-            sh.scp, *command_parts, *args, _host=self, **kwargs
-        )
+        return self._ssh.put(source_file, target, *args, **kwargs)
 
     def get(self, source, target, *args, **kwargs):
         """copy source file from instance to local target file with scp."""
         self._raise_unready()
-        command_parts = [
-            f"-i{self.key}",
-            f"{self.uname}@{self.ip}:{source}",
-            target,
-        ]
-        return interpret_command(
-            sh.scp, *command_parts, *args, _host=self, **kwargs
-        )
+        return self._ssh.get(source, target, *args, **kwargs)
 
     def read(self, source, *args, **kwargs):
         """copy source file from instance into memory using scp."""
         self._raise_unready()
-        command_parts = [
-            f"-i{self.key}",
-            f"{self.uname}@{self.ip}:{source}",
-            "/dev/stdout",
-        ]
-        return interpret_command(
-            sh.scp, *command_parts, *args, _host=self, **kwargs
-        ).stdout
+        buffer = io.BytesIO()
+        self._ssh.get(source, buffer, *args, **kwargs)
+        buffer.seek(0)
+        return buffer
 
-    def read_csv(self, source, **csv_kwargs):
+    def read_csv(self, source, encoding='utf-8', **csv_kwargs):
         """
         reads csv-like file from remote host into pandas DataFrame using scp.
         """
@@ -310,14 +274,13 @@ class Instance:
         import pandas as pd
 
         buffer = io.StringIO()
-        buffer.write(self.read(source).decode())
+        buffer.write(self.read(source).read().decode(encoding))
         buffer.seek(0)
-        # noinspection PyTypeChecker
         return pd.read_csv(buffer, **csv_kwargs)
 
     @cache
     def conda_env(self, env):
-        return find_conda_env(self.command, env)
+        return find_conda_env(self._ssh, env)
 
     @cache
     def find_package(self, package, env=None):
@@ -325,10 +288,15 @@ class Instance:
             pip = "pip"
         else:
             pip = f"{self.conda_env(env)}/bin/pip"
-        result = self.command(
-            f"{pip} show package-name {package}"
-        ).stdout.decode()
-        return re.search(r"Location:\s+(.*?)\n", result).group(1)
+        try:
+            result = self.command(
+                f"{pip} show package-name {package}"
+            ).stdout
+            return re.search(r"Location:\s+(.*?)\n", result).group(1)
+        except UnexpectedExit:
+            raise OSError("pip show did not run successfully")
+        except (AttributeError, IndexError):
+            raise FileNotFoundError("package not found")
 
     def compile_env(self):
         """"""
@@ -339,7 +307,7 @@ class Instance:
         self.instance_.load()
         self.state = self.instance_.state["Name"]
         self.ip = getattr(self.instance_, f"{self.address_type}_ip_address")
-        self._command = wrap_ssh(self.ip, self.uname, self.key, self)
+        self._ssh = SSH.connect(self.ip, self.uname, self.key)
 
     def wait_until(self, state):
         """Pause execution until the instance state is met.
@@ -385,9 +353,10 @@ class Instance:
 
     def tunnel(self, local_port, remote_port, kill=True):
         self._raise_unready()
-        return tunnel(
+        self._ssh.tunnel(
             self.ip, self.uname, self.key, local_port, remote_port, kill
         )
+        return self._ssh.tunnels[-1]
 
     def call_python(
         self,
@@ -424,7 +393,7 @@ class Instance:
             interpreter_path,
             for_bash=True
         )
-        return self.command(python_command_string, **command_kwargs)
+        return self._ssh(python_command_string, **command_kwargs)
 
     def __repr__(self):
         string = f"{self.instance_type} in {self.zone} at {self.ip}"
@@ -441,65 +410,49 @@ class Cluster:
         self.instances = tuple(instances)
         self.fleet_request = None
 
+    def _async_method_call(self, method_name: str, *args, **kwargs):
+        exc = ThreadPoolExecutor(len(self.instances))
+        futures = []
+        for instance in self.instances:
+            futures.append(
+                exc.submit(getattr(instance, method_name), *args, **kwargs)
+            )
+        while not all(f.done() for f in futures):
+            time.sleep(0.01)
+        return [f.result() for f in futures]
+
     def command(
-        self, *args, _viewer=True, **kwargs
-    ) -> tuple[Processlike, ...]:
-        return tuple(
-            [
-                instance.command(*args, _viewer=_viewer, **kwargs)
-                for instance in self.instances
-            ]
+        self, command, *args, _viewer=True, **kwargs
+    ) -> list[Processlike, ...]:
+        return self._async_method_call(
+            "command", command, *args, _viewer=_viewer, **kwargs
         )
 
     def commands(
-        self, commands: Sequence[Commandlike], _viewer=True, **kwargs
-    ) -> tuple[Processlike, ...]:
-        return tuple(
-            (
-                instance.commands(commands, _viewer=_viewer, **kwargs)
-                for instance in self.instances
-            )
+        self, commands: Sequence[str], *args, _viewer=True, **kwargs
+    ) -> list[Processlike, ...]:
+        return self._async_method_call(
+            "commands", commands, *args, _viewer=_viewer, **kwargs
         )
 
     def call_python(
-        self, module, _viewer=True, **kwargs
-    ) -> tuple[Processlike, ...]:
-        return tuple(
-            (
-                instance.call_python(module, _viewer=_viewer, **kwargs)
-                for instance in self.instances
-            )
+        self, module, *args, _viewer=True, **kwargs
+    ) -> list[Processlike, ...]:
+        return self._async_method_call(
+            "call_python", module, *args, _viewer=_viewer, **kwargs
         )
 
-    def add_public_keys(self):
-        ssh_key_add(
-            list(filter(None, [instance.ip for instance in self.instances]))
-        )
-
-    # TODO: make these run asynchronously
     def start(self, return_response=False):
         """Start the instances."""
-        responses = []
-        for instance in self.instances:
-            responses.append(instance.start(return_response))
-        if return_response is True:
-            return responses
+        return self._async_method_call("start", return_response)
 
     def stop(self, return_response=False):
         """Stop the instances."""
-        responses = []
-        for instance in self.instances:
-            responses.append(instance.stop(return_response))
-        if return_response is True:
-            return responses
+        return self._async_method_call("stop", return_response)
 
     def terminate(self, return_response=False):
         """Terminate (aka delete) the instances."""
-        responses = []
-        for instance in self.instances:
-            responses.append(instance.terminate(return_response))
-        if return_response is True:
-            return responses
+        return self._async_method_call("terminate", return_response)
 
     def gather_files(
         self,
@@ -573,7 +526,7 @@ class Cluster:
         options = {} if options is None else options
         if template is None:
             using_scratch_template = True
-            template = create_launch_template(**options)["Template"][
+            template = create_launch_template(**options)[
                 "LaunchTemplateName"
             ]
         else:
@@ -596,7 +549,11 @@ class Cluster:
             Type="instant",
         )
         if using_scratch_template is True:
-            client.delete_launch_template("LaunchTemplateName")
+            client.delete_launch_template(LaunchTemplateName=template)
+        if len(fleet.get('Errors', [])) > 0:
+            raise ValueError(
+                f"Client returned launch error:\n\n{fleet['Errors'][0]}"
+            )
 
         def instance_hook():
             return instances_from_ids(
@@ -627,22 +584,6 @@ class Cluster:
         for instance in cluster.instances:
             instance.wait_until_running()
             print(f"{instance} is running")
-        print("scanning instance ssh keys")
-        added = False
-        tries = 0
-        while (tries < 12) and (added is False):
-            try:
-                cluster.add_public_keys()
-                added = True
-            except sh.ErrorReturnCode:
-                time.sleep(max(6 - tries, 2))
-                [instance.update() for instance in cluster.instances]
-                tries += 1
-        if added is False:
-            print(
-                "warning: timed out adding keys for one or more instances. "
-                "try running .add_public_keys() again in a moment."
-            )
         return cluster
 
     def __getitem__(self, item):

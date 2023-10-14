@@ -121,8 +121,8 @@ def _make_levelframe(group, squish):
 
 
 def make_treeframe(manifest, squish=False):
-    stripped = manifest["path"].copy()
-    parts = stripped.str.split("/", expand=True).drop(columns=0)
+    stripped = manifest.loc[~manifest['directory'], 'path'].copy()
+    parts = stripped.str.split("/", expand=True)
     parts["size"] = manifest["size"]
     n_parts, levelframes = parts.isna().sum(axis=1), []
     for _, group in parts.groupby(n_parts):
@@ -133,10 +133,12 @@ def make_treeframe(manifest, squish=False):
 
 def make_level_table(treeframe):
     level_tables = []
-    levels = [c for c in treeframe.columns if c not in ("filename", "size")]
+    levels = [
+        c for c in treeframe.columns if c not in ("filename", "size", "suffix")
+    ]
     for level in levels:
         table = treeframe.pivot_table(
-            values="size", index=level, aggfunc=[sum, len]
+            values="size", index=level, aggfunc=["sum", len]
         )
         table["level"] = level
         table.columns = ["size", "count", "level"]

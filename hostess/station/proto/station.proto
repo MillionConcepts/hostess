@@ -1,0 +1,238 @@
+syntax = "proto3";
+
+package hostess_station;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+/* compile with: protoc -I hostess --python_out=hostess hostess/station/proto/station.proto */
+/* TODO, maybe: autocompiler...or maybe that's an anti-feature */
+
+message PythonSerial {bytes body = 1; string serialization = 2;}
+enum Serialization {unknownserialization = 0; unserialized = 1; json = 2; dill = 3;}
+enum Compression {uncompressed = 0; gzip = 1; lz4 = 2;}
+enum CharType {unknownstringtype = 0; str = 1; bytes = 2; nonetype = 3;}
+/* for passing arguments directly into a call or constructing structured information */
+message PythonObject {
+  bytes value = 1;
+  /* calling functions with positional-only arguments is not supported */
+  string name = 2;
+  oneof format {
+    string scanf = 3;
+    Serialization serialization = 4;
+    string dtype = 5;
+  }
+  CharType chartype = 6;
+  Compression compression = 7;
+}
+
+/* pipe is the entirety of a multi-action task. note that a task may simply consist
+    of a single action, in which case the delegate should not report anything pipe-level. */
+/* TODO: once available / compatible, get protobuf >= 4.22.0 so this silly
+    placeholder thing doesn't have to happen with not-actually-closed enums */
+enum ActionLevel {unknownactionlevel = 0; pipe = 1; action = 2;}
+/* 'failure' means that a program specifically reported it was unable to fully
+    complete, but still may have exited gracefully. 'crash' means a program did
+    not exit gracefully (returned an exception message or an unwanted exit code,
+    or the delegate found evidence on the system that the process terminated
+    prematurely, etc.). i.e., 'failure' is a handled but fatal exception,
+    'crash' is an unhandled exception. Note that this does _not_ refer to the
+    delegate's status; a delegate may execute many failed tasks but still be fine. */
+enum Status {
+  unknownstatus = 0;
+  running = 1;
+  success = 2;
+  failure = 3;
+  crash = 4;
+  timeout = 5;
+}
+
+/* timestamps and duration for actions */
+message ActionTime {
+  google.protobuf.Timestamp start = 1;
+  google.protobuf.Timestamp end = 2;
+  google.protobuf.Duration duration = 3;
+}
+
+message ActionReport {
+  string name = 1;
+  repeated uint32 pid = 2;
+  Status status = 3;
+  ActionLevel level = 4;
+  ActionTime time = 5;
+  PythonObject result = 6;
+  /* we may have an exception as well as a result in some cases, e.g.,
+  streaming results from a subprocess that did _some_ stuff before failing */
+  PythonObject exception = 7;
+  /* intended specifically for system process exit codes */
+  uint32 exit_code = 8;
+  uint32 id = 9;
+  /* for round-trip description tracking */
+  map <string, string> description = 10;
+
+
+}
+
+/* TaskReport contains information on the outcome of an external task
+execution, generally one in direct response to an instruction, but perhaps
+ also sometimes one independently executed. */
+message TaskReport {
+  uint32 instruction_id = 1;
+  /* redundant? */
+  repeated ActionReport steps = 2;
+  ActionReport action = 3;
+}
+
+enum DelegateStatus {
+  unknown_status = 0;
+  idle = 1;
+  nominal = 2;
+  degraded = 3;
+  /* shutting down gracefully */
+  shutdown = 4;
+  /* crashing but managed to tell the Station about it */
+  crashed = 5;
+}
+enum DelegateLoC {unknown_loc = 0; primary = 1; secondary = 2; sleeping = 3;}
+message DelegateState {
+  DelegateStatus status = 1;
+  DelegateLoC loc = 2;
+  bool can_receive = 3;
+  bool busy = 4;
+  map<string, string> threads = 5;
+  PythonObject interface = 6;
+  PythonObject cdict = 7;
+  /* actor and sensor have names as keys and class names/modules as values */
+  map<string, string> actors = 8;
+  map<string, string> sensors = 9;
+  /* total info objects ever sent by sensors */
+  map<string, uint32> infocount = 10;
+  /* total action instructions ever received */
+  map<string, uint32> actioncount = 11;
+  PythonObject init_params = 12;
+}
+message NodeId {
+  string name = 1;
+  uint32 pid = 3;
+  string host = 4;
+  string port = 5;
+}
+
+enum UpdateReason {
+  no_reason = 0;
+  heartbeat = 1;
+  info = 2;
+  requested = 3;
+  wilco = 4;
+  bad_request = 5;
+  exiting = 6;
+  completion = 7;
+}
+
+message Update {
+  NodeId delegateid = 1;
+  DelegateState state = 2;
+  google.protobuf.Timestamp time = 3;
+  UpdateReason reason = 4;
+  repeated TaskReport running = 5;
+  TaskReport completed = 6;
+  /* structured / serialized data the delegate believes the Station needs */
+  repeated PythonObject info = 7;
+  /* if this update is in response / reference to an instruction */
+  uint32 instruction_id = 8;
+}
+
+enum InstructionType {
+  unknowninst = 0;
+  report = 1;
+  stop = 2;
+  wake = 3;
+  sleep = 4;
+  do = 5;
+  kill = 6;
+  configure = 7;
+}
+
+/* for passing a dict of kwargs as a serialized blob into an endpoint */
+message PythonEncodedPayload {
+  bytes body = 1; Serialization serialization = 2; Compression compression = 3;
+}
+
+enum ExecContext {unknowncontext = 0; thread = 1; process = 2; detached = 3;}
+
+message FunctionCall {
+  /* module name or path */
+  string module = 1;
+  string func = 2;
+  repeated PythonObject arguments = 3;
+  ExecContext context = 4;
+}
+
+message ScriptCall {
+  /* module name or path */
+  string module = 1;
+  string func = 2;
+  PythonEncodedPayload payload = 3;
+  oneof interpreter {
+    string interpreter_path = 4;
+    string conda_env = 5;
+  }
+  ExecContext context = 6;
+}
+
+message SystemCall {
+  string command = 1;
+  bytes payload = 2;
+  Compression compression = 3;
+  string interpreter = 4;
+  ExecContext context = 5;
+}
+
+/* for directly executing code/source */
+message CodeBlob {
+  bytes code = 1;
+  bool is_source = 2;
+  Compression compression = 3;
+  oneof interpreter {
+    string interpreter_path = 4;
+    string conda_env = 5;
+  }
+  ExecContext context = 6;
+}
+
+message Action{
+  uint32 id = 1;
+  string name = 2;
+  /* reserved for application-specific contexts, including full
+  action definitions in cases when more complex runtime pipeline configuration
+  is not required -- in some cases, a delegate might only require a file path,
+  file, an integer representing an orbit number, a url, or a parameter path.
+  may also be used for metadata or comments. */
+  map<string, string> description = 3;
+  oneof call {
+    SystemCall systemcall = 4;
+    FunctionCall functioncall = 5;
+    ScriptCall scriptcall = 6;
+    CodeBlob scriptblob = 7;
+    /* actions that should be executed using a locally-instantiated callable */
+    PythonObject localcall = 8;
+  }
+  /* this action blocks new actions from execution. TODO: implement */
+  bool wait = 9;
+}
+
+message Pipeline {uint32 id = 1; string name = 2; repeated Action steps = 3;}
+
+enum ConfigParamType {unknowntype = 0; config_property = 1; config_dict = 2;}
+
+message ConfigParam {ConfigParamType paramtype = 1; PythonObject value = 2;}
+
+message Instruction {
+  InstructionType type = 1;
+  uint32 id = 2;
+  google.protobuf.Timestamp time = 3;
+  oneof task {Action action = 4; Pipeline pipe = 5;}
+  /* identifying metadata, will be included in logs */
+  map<string, string> metadata = 6;
+  repeated ConfigParam config = 7;
+}

@@ -2,7 +2,8 @@
 import threading
 import time
 from abc import ABC
-from functools import partial
+from collections import defaultdict
+from functools import partial, wraps
 from typing import (
     MutableMapping,
     Callable,
@@ -16,7 +17,7 @@ from dateutil import parser as dtp
 from dustgoggles.func import constant
 import psutil
 
-from hostess.utilities import mb, console_and_log, stamp
+from hostess.utilities import mb, console_and_log, stamp, curry
 
 
 def memory():
@@ -53,7 +54,7 @@ class Bouncer(FakeBouncer):
     def clean(self):
         now = time.time()
         self.events = list(
-            filter(lambda t: now - t > self.window, self.events)
+            filter(lambda t: (now - t) < self.window, self.events)
         )
 
     def block(self):
@@ -157,7 +158,6 @@ class AbstractMonitor(ABC):
             self.total = self.absolute - self.first
         if lap is True:
             self.last = self.absolute
-            self.lap += 1
 
     def update(self, lap=False):
         if self.paused is True:
@@ -491,3 +491,35 @@ class TimeSwitcher:
     def __str__(self):
         return self.__repr__()
 
+
+class Ticker:
+
+    def __init__(self):
+        self.counts = defaultdict(int)
+
+    def tick(self, label):
+        self.counts[label] += 1
+
+    def __repr__(self):
+        if len(self.counts) == 0:
+            return "Ticker (no counts)"
+        selfstr = ""
+        for k, v in self.counts.items():
+            selfstr += f"{k}: {v}\n"
+        return selfstr
+
+    def __str__(self):
+        return self.__repr__()
+
+
+@curry
+def ticked(func, label, ticker):
+    @wraps(func)
+    def tickoff(*args, **kwargs):
+        ticker.tick(label)
+        return func(*args, **kwargs)
+
+    return tickoff
+
+
+DEFAULT_TICKER = Ticker()

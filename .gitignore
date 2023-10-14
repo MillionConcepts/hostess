@@ -138,9 +138,11 @@ dmypy.json
 # development
 *scratch.py
 *scratch.ipynb
+/hostess/station/situation/dump.txt
 
 # logs
 /hostess/logs
+/hostess/station/.nodelogs
 
 # configuration
 /hostess/user_config/user_config.py

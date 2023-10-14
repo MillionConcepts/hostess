@@ -11,15 +11,15 @@ setup(
     install_requires=[
         "boto3",
         "cytoolz",
+        "dill",
         "dustgoggles",
-        "fire",
-        "flask",
+        "invoke",
+        "fabric",
         "more-itertools",
         "pandas",
         "pympler",
         "python-magic",
         "requests",
         "rich",
-        "sh>=2.0.0"
     ]
 )
