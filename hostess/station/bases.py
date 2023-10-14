@@ -18,9 +18,9 @@ from random import shuffle
 from types import MappingProxyType as MPt
 from typing import Any, Callable, Mapping, Union, Optional, Literal, Collection
 
-import yaml
 from cytoolz import valmap
 from dustgoggles.dynamic import exc_report
+import yaml
 
 # noinspection PyProtectedMember
 from google.protobuf.pyext._message import Message

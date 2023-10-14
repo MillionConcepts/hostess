@@ -17,9 +17,9 @@ from types import ModuleType
 from typing import Callable, MutableMapping, Optional, Sequence, Any, Hashable
 
 import rich.console
-import yaml
 from cytoolz import first
 from dustgoggles.dynamic import exc_report
+import yaml
 
 
 def stamp() -> str:
@@ -37,11 +37,11 @@ def logstamp(extra: int = 0) -> str:
     return f"{dt.datetime.utcnow().isoformat()[:(-7 + extra)]}"
 
 
-hostess_CONSOLE = rich.console.Console()
+HOSTESS_CONSOLE = rich.console.Console()
 
 
 def console_and_log(message, level="info", style=None):
-    hostess_CONSOLE.print(message, style=style)
+    HOSTESS_CONSOLE.print(message, style=style)
     getattr(logging, level)(message)
 
 

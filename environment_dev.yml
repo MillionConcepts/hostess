@@ -11,11 +11,11 @@ dependencies:
   - invoke
   - more-itertools
   - pandas
-  # pillow is only for tests rn
   - pillow
   - protobuf
   - psutil
   - pympler
+  - pytest
   - python-magic
   - pyyaml
   - requests

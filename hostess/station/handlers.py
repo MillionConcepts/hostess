@@ -6,7 +6,6 @@ import os
 from pathlib import Path
 from typing import Optional, Union, Any, Mapping, Collection
 
-from cytoolz import valmap
 from google.protobuf.message import Message
 
 import hostess.station.proto.station_pb2 as pro
@@ -18,7 +17,7 @@ from hostess.subutils import (
     watched_process,
     deferinto,
 )
-from hostess.utilities import get_module, curry
+from hostess.utilities import get_module
 
 
 def unpack_callargs(arguments: list[pro.PythonObject]):

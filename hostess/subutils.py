@@ -1,12 +1,22 @@
-"""working subutils module based on invoke"""
+"""utilities for executing, managing, and watching subprocesses"""
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor, Future
 from contextlib import redirect_stdout, redirect_stderr
 from functools import partial, wraps
 from multiprocessing import Process, Pipe
-from typing import Optional, Literal, Mapping, Collection, Hashable, Any, \
-    Callable, MutableMapping, MutableSequence, Union
+from typing import (
+    Optional,
+    Literal,
+    Mapping,
+    Collection,
+    Hashable,
+    Any,
+    Callable,
+    MutableMapping,
+    MutableSequence,
+    Union,
+)
 
 import invoke
 from cytoolz import keyfilter, identity
@@ -18,7 +28,6 @@ from hostess.utilities import timeout_factory, curry, Aliased
 
 
 class Nullify:
-
     @staticmethod
     def read(_size=None):
         return b""
@@ -82,9 +91,10 @@ def dispatch_callback(
 
 def done_callback(
     dispatch: "Dispatcher",
-    runner: Union[invoke.runners.Result, invoke.runners.Runner]
+    runner: Union[invoke.runners.Result, invoke.runners.Runner],
 ) -> Future:
     """simple dispatcher callback for invoke.runner / result completion"""
+
     def callback():
         if "returncode" in dir(runner):
             returncode = runner.returncode
@@ -92,9 +102,9 @@ def done_callback(
             # noinspection PyUnresolvedReferences
             returncode = runner.process.returncode
         return {
-            'success': not runner.failed,
-            'returncode': returncode,
-            'command': runner.command
+            "success": not runner.failed,
+            "returncode": returncode,
+            "command": runner.command,
         }
 
     return dispatch_callback(dispatch, callback, "done", runner)
@@ -160,7 +170,7 @@ def console_stream_handler(
     done=None,
     handle_out=None,
     handle_err=None,
-    handle_done=None
+    handle_done=None,
 ) -> Dispatcher:
     """
     produce a Dispatcher suited for capturing stdout, stderr, and process
@@ -185,6 +195,7 @@ class CBuffer:
     is passed during initialization, CBuffer creates a simple console handler.
     the Dispatcher should have at least steps "out", "err", and "done".
     """
+
     def __init__(self, dispatcher: Optional[Dispatcher] = None):
         if dispatcher is None:
             dispatcher = console_stream_handler()
@@ -266,7 +277,7 @@ class RunCommand:
     def cstring(self, *args, args_at_end=True, **kwargs):
         args = self.args + args
         kwargs = keyfilter(
-            lambda k: not k.startswith("_"),  self.kwargs | kwargs
+            lambda k: not k.startswith("_"), self.kwargs | kwargs
         )
         astring = " ".join(args)
         kstring = ""
@@ -287,12 +298,10 @@ class RunCommand:
             cstring = cstring + f" {s}" if s != "" else cstring
         return cstring
 
-    def __call__(
-        self, *args, **kwargs
-    ) -> Optional["Processlike"]:
+    def __call__(self, *args, **kwargs) -> Optional["Processlike"]:
         rkwargs = keyfilter(
             lambda k: k.startswith("_") and not k.strip("_").isnumeric(),
-            self.kwargs | kwargs
+            self.kwargs | kwargs,
         )
         kwargs = keyfilter(lambda k: k not in rkwargs, self.kwargs | kwargs)
         replace_aliases(
@@ -301,8 +310,8 @@ class RunCommand:
                 "_out_stream": ("_out",),
                 "_err_stream": ("_err",),
                 "_asynchronous": ("_async", "_bg"),
-                "_viewer": ("_v",)
-            }
+                "_viewer": ("_v",),
+            },
         )
         # do not print to stdout/stderr by default
         verbose = rkwargs.pop("verbose", False)
@@ -326,7 +335,7 @@ class RunCommand:
                 *args,
                 ctx=self.ctx,
                 runclass=self.runclass,
-                **(rkwargs | kwargs)
+                **(rkwargs | kwargs),
             )
         else:
             rkwargs = {k[1:]: v for k, v in rkwargs.items()}
@@ -364,12 +373,12 @@ class Viewer:
         self,
         cbuffer: CBuffer,
         runner: Optional[invoke.runners.Runner] = None,
-        metadata: Optional[Mapping] = None
+        metadata: Optional[Mapping] = None,
     ):
         self.runner, self.cbuffer = runner, cbuffer
         self.metadata = {} if metadata is None else metadata
-        self.out = cbuffer.caches['out']
-        self.err = cbuffer.caches['err']
+        self.out = cbuffer.caches["out"]
+        self.err = cbuffer.caches["err"]
 
     # TODO: untangle this a bit
     def __getattr__(self, attr):
@@ -405,10 +414,7 @@ class Viewer:
         return self.__str__()
 
     def wait_for_output(
-        self,
-        stream: Literal["out", "err"] = "out",
-        poll=0.05,
-        timeout=10
+        self, stream: Literal["out", "err"] = "out", poll=0.05, timeout=10
     ):
         if self.done:
             return
@@ -437,9 +443,9 @@ class Viewer:
         # note that Viewers _only_ run commands asynchronously. use the wait or
         # wait_for_output methods if you want to block.
         base_kwargs = {
-            '_bg': True,
-            '_out': cbuffer.buffers['out'],
-            '_err': cbuffer.buffers['err']
+            "_bg": True,
+            "_out": cbuffer.buffers["out"],
+            "_err": cbuffer.buffers["err"],
         }
         viewer = object.__new__(cls)
         if "_done" in kwargs:
@@ -448,47 +454,12 @@ class Viewer:
         viewer.runner = command(*args, **kwargs | base_kwargs, _viewer=False)
         return viewer
 
+    # TODO: implement children property
+
     done = property(_is_done)
     running = property(_is_running)
     initialized = False
-    _children = None
-    _get_children = False
     _pid_records = None
-
-#     @property
-#     def children(self):
-#         if self._get_children is False:
-#             return None
-#         if (self._children not in ([], None)) and not self.process.is_alive():
-#             return self._children
-#         if (self._pid_records is None) and (self._get_children is True):
-#             raise ValueError(
-#                 "This object has not been initialized correctly; cannot find "
-#                 "spawned child processes."
-#             )
-#         if self.remote_pid is None:
-#             raise ValueError(
-#                 "The remote process does not appear to have correctly "
-#                 "returned a process identifier."
-#             )
-#         ps_records = ps_to_records(self._pid_records)
-#         try:
-#             ppids = [self.remote_pid]
-#             children = list(filter(lambda p: p['pid'] in ppids, ps_records))
-#             generation = tuple(
-#                 filter(lambda p: p['ppid'] in ppids, ps_records)
-#             )
-#             while len(generation) > 0:
-#                 children += generation
-#                 ppids = [p['pid'] for p in generation]
-#                 generation = tuple(
-#                     filter(lambda p: p['ppid'] in ppids, ps_records)
-#                 )
-#             self._children = children
-#         except (StopIteration, KeyError):
-#             warnings.warn("couldn't identify child processes.")
-#             self._children = []
-#         return self._children
 
 
 def defer(func, *args, **kwargs):
@@ -572,22 +543,23 @@ def make_call_redirect(func, fork=False):
             p_there.send(os.getpid())
         with (
             redirect_stdout(Aliased(o_there, ("write",), "send")),
-            redirect_stderr(Aliased(e_there, ("write",), "send"))
+            redirect_stderr(Aliased(e_there, ("write",), "send")),
         ):
             try:
                 result = func(*args, **kwargs)
             except Exception as ex:
                 result = ex
             return r_there.send(result)
-    proximal = {'result': r_here, 'out': o_here, 'err': e_here}
+
+    proximal = {"result": r_here, "out": o_here, "err": e_here}
     if fork is True:
-        proximal['pids'] = p_here
+        proximal["pids"] = p_here
     return run_redirected, proximal
 
 
 def make_watch_caches():
     """shorthand for constructing the correct dictionary"""
-    return {'result': [], 'out': [], 'err': []}
+    return {"result": [], "out": [], "err": []}
 
 
 @curry
@@ -595,7 +567,7 @@ def watched_process(
     func: Callable,
     *,
     caches: MutableMapping[str, MutableSequence],
-    fork: bool = False
+    fork: bool = False,
 ) -> Callable:
     """
     decorator to run a function in a subprocess, redirecting its stdout,
@@ -607,14 +579,14 @@ def watched_process(
     pipes: in this case, the calling process is responsible for polling the
     pipes if it wishes to receive output.
     """
-    assert len(intersection(caches.keys(), {'result', 'out', 'err'})) == 3
+    assert len(intersection(caches.keys(), {"result", "out", "err"})) == 3
     target, proximal = make_call_redirect(func, fork)
 
     @wraps(func)
     def run_and_watch(*args, _blocking=True, _poll=0.05, **kwargs):
         process = Process(target=target, args=args, kwargs=kwargs)
         process.start()
-        caches['pids'] = [process.pid]
+        caches["pids"] = [process.pid]
         if _blocking is False:
             return process, caches
         while True:
@@ -630,6 +602,7 @@ def watched_process(
 
 
 # convenience aliases
+
 
 def runv(*args, **kwargs):
     return Viewer.from_command(*args, **kwargs)
