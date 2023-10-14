@@ -29,7 +29,7 @@ class TCPTalk:
         port,
         n_threads=4,
         poll=0.01,
-        decoder: Callable = read_comm,
+        decoder: Optional[Callable] = read_comm,
         ackcheck: Optional[Callable] = None,
         executor: Optional[ThreadPoolExecutor] = None,
         lock: Optional[threading.Lock] = None,

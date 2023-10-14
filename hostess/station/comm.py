@@ -20,11 +20,7 @@ CODE_TO_MTYPE = MPt(
 )
 MTYPE_TO_CODE = MPt({v: k for k, v in CODE_TO_MTYPE.items()})
 HEADER_STRUCT = struct.Struct("<8sBL")
-
-
-def make_header(mtype="Blob", length=0) -> bytes:
-    """create a hostess header."""
-    return HEADER_STRUCT.pack(HOSTESS_SOH, MTYPE_TO_CODE[mtype], length)
+WRAPPER_SIZE = HEADER_STRUCT.size + len(HOSTESS_EOM)
 
 
 def make_comm(body: Union[bytes, Message]) -> bytes:
@@ -32,17 +28,18 @@ def make_comm(body: Union[bytes, Message]) -> bytes:
     create a hostess comm from a buffer or a protobuf Message.
     automatically attach header and footer.
     """
-    wrapsize = HEADER_STRUCT.size + len(HOSTESS_EOM)
-    if "SerializeToString" in dir(body):
+    if hasattr(body, "SerializePartialToString"):
         # i.e., it's a protobuf Message
-        buf = body.SerializeToString()
-        header_kwargs = {
-            "mtype": body.__class__.__name__, "length": len(buf) + wrapsize
-        }
+        buf, mtype = body.SerializePartialToString(), body.__class__.__name__
     else:
-        buf = body
-        header_kwargs = {"mtype": "none", "length": len(body) + wrapsize}
-    return make_header(**header_kwargs) + buf + HOSTESS_EOM
+        buf, mtype = body, "none"
+    return (
+        HEADER_STRUCT.pack(
+            HOSTESS_SOH, MTYPE_TO_CODE[mtype], len(buf) + WRAPPER_SIZE
+        )
+        + buf
+        + HOSTESS_EOM
+    )
 
 
 def read_header(buffer: bytes) -> dict[str, Union[str, bool, int]]:
@@ -88,7 +85,7 @@ def read_comm(
         err.append("mtype")
         return {"header": header, "body": body, "err": ";".join(err)}
     except DecodeError:
-        err.append('protobuf decode')
+        err.append("protobuf decode")
         return {"header": header, "body": body, "err": ";".join(err)}
     if unpack_proto is True:
         message = m2d(message)

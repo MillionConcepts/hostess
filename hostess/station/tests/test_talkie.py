@@ -1,7 +1,6 @@
 import datetime as dt
 import random
 import re
-import time
 from multiprocessing import Pool
 
 import dill
@@ -104,7 +103,9 @@ def test_comm():
     decoded = hostess.station.comm.read_comm(encoded)
     assert decoded["header"]["mtype"] == "Update"
     assert decoded["body"].completed.action.name == "imagestats"
-    assert decoded["header"]["length"] == len(report.SerializeToString()) + 21
+    assert decoded["header"]["length"] == (
+        report.ByteSize() + hostess.station.comm.WRAPPER_SIZE
+    )
 
 
 def test_comm_online():
