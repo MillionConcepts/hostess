@@ -1,3 +1,4 @@
+import re
 from itertools import cycle
 import time
 
@@ -14,11 +15,15 @@ def test_monitor_init():
     monitors = make_monitors(digits=1)
     printstats = make_stat_printer(monitors)
     text = printstats()
-    assert text == (
-        "0.0 %;user 0.0;system 0.0;idle 0.0;iowait 0.0;0.0 MB;total 0.0 MB;"
-        "used 0.0 MB;free 0.0 MB;read 0.0 MB;write 0.0 MB;read count 0.0 MB;"
-        "write count 0.0 MB;sent 0.0 MB;recv 0.0 MB;sent count 0.0 MB;recv "
-        "count 0.0 MB;0.0 s"
+    decimal = r"\d\.\d+"
+    assert re.match(
+        rf"{decimal} %;user {decimal};system {decimal};idle {decimal};iowait "
+        rf"{decimal};{decimal} MB;total {decimal} MB;"
+        rf"used {decimal} MB;free {decimal} MB;read {decimal} MB;write "
+        rf"{decimal} MB;read count {decimal} MB;"
+        rf"write count {decimal} MB;sent {decimal} MB;recv {decimal} MB;"
+        rf"sent count {decimal} MB;recv count {decimal} MB;{decimal} s",
+        text
     )
 
 

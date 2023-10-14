@@ -36,7 +36,7 @@ setup(
         "directory": ["python-magic"],
         "profilers": ["pympler"],
         "ssh": ["fabric"],
-        "station": ["dill", "protobuf", "textual"],
+        "station": ["dill", "fire", "protobuf", "textual"],
         "tests": ["pillow", "pytest"]
     }
 )

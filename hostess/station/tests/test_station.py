@@ -1,7 +1,7 @@
+from pathlib import Path
 import random
 import shutil
 import time
-from pathlib import Path
 
 import numpy as np
 
@@ -138,19 +138,19 @@ def test_application_1():
     station.start()
 
     # launch the nodes as daemonic processes
-    station.launch_delegate("watcher", **watcher_launch_spec, update_interval=0.5)
+    station.launch_delegate("watcher", **watcher_launch_spec, update_interval=0.1)
     station.launch_delegate(
         "thumbnail",
         **thumbnail_launch_spec,
-        update_interval=0.5,
+        update_interval=0.1,
     )
     # configure the watcher delegate
     station.set_delegate_properties("watcher", **watcher_config_spec)
     # allow config to propagate
-    time.sleep(1)
+    time.sleep(0.8)
     # copy a squirrel picture into the directory as a test (representing some
     # external change to the system)
-    test_file = "test_data/squirrel.jpg"
+    test_file = Path(__file__).parent / "test_data/squirrel.jpg"
     shutil.copyfile(test_file, test_dir / (Path(test_file).stem + "_full.jpg"))
     time.sleep(1)
     try:

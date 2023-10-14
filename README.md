@@ -1,7 +1,6 @@
 # hostess
 
 ## overview
-
 `hostess` is a collection of utilities that provide lightweight, Pythonic
 interfaces to distributed resources, along with a framework (`station`) for 
 workflow coordination built on these dependencies. It reduces syntactic 
@@ -12,14 +11,12 @@ analysis workflows, but it is fundamentally a general-purpose utility and
 administration library.
 
 ## cautions
-
 `hostess` is a reliable and fairly feature-complete beta in active use on 
 multiple projects. However, we do not guarantee interface stability or 
 backwards compatibility, and it lacks comprehensive documentation. Also, as
 with any system administration software, we recommend using it very carefully.
 
 ## installation
-
 `hostess` is not currently available via any package manager. 
 For now, we recommend downloading the source, using a `conda`-compatible tool 
 and the provided [environment.yml](environment.yml) file to set up an 
@@ -48,7 +45,13 @@ could be used purely locally.
 4. `hostess` is very lightweight. If a machine has enough resources to run 
 5. a Python interpreter, it can probably run `hostess`.  
 
-## licensing
+## tests
+`hostess` includes a simple test suite compatible with `pytest`. More 
+comprehensive tests are planned. In particular, networking features currently 
+lack test coverage. You can run it by executing `pytest -s` in the root 
+directory. The `-s` flag is mandatory because `pytest`'s default stdout-
+capturing behavior breaks some core `hostess` features.
 
+## licensing
 You can do almost anything with this software that you like, subject only to 
 the extremely permissive terms of the [BSD 3-Clause License](LICENSE).
