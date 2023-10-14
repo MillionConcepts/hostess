@@ -59,8 +59,3 @@ def test_bouncer():
         assert len(bouncer.events) == next(count)
         assert sw.clickpeek() == next(lap)
     assert sw.peek(which="total") == "2.22 s"
-
-
-test_bouncer()
-test_stopwatch()
-test_monitor_init()

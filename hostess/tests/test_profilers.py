@@ -112,10 +112,3 @@ def test_analyze_references_2():
     assert set(
         chain(map(lambda rec: rec['names'][0], ztup_referents[0][2][1]))
     ) == {'x1', 'y1', 'z1'}
-
-
-test_identify()
-test_analyze_references_1()
-test_di()
-test_analyze_references_2()
-test_profiler()

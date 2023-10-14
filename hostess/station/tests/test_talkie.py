@@ -133,9 +133,3 @@ def test_comm_online():
         assert message.instruction_id == 3
         assert ack.startswith(hostess.station.comm.HOSTESS_SOH)
     server.kill()
-
-
-test_protobuf()
-test_comm()
-test_comm_online()
-test_tcp_server()

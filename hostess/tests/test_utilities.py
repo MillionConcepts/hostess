@@ -126,10 +126,3 @@ def test_signal_factory():
         # now it should have quit
         assert futures[i].running() is False
         assert futures[i].result() == i
-
-
-test_notary()
-test_aliased()
-test_signal_factory()
-test_timeout_factory()
-test_infer_stream_length_offline()

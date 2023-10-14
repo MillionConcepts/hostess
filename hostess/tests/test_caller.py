@@ -63,9 +63,3 @@ def test_endpoint():
         print_result=True
     )
     assert run(script) == 'hi\n'
-
-
-test_endpoint()
-test_format_importer()
-test_to_heredoc()
-test_format_deserializer()

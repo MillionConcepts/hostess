@@ -22,7 +22,3 @@ def test_function_call():
     FuncCaller().execute(node, instruction, key=1)
     result = node.actions[1]['result']
     assert result == np.array([1])
-
-
-test_function_call()
-

@@ -234,10 +234,3 @@ def test_echo_numpy():
         assert (echoed == randarray).all()
     finally:
         station.shutdown()
-
-
-test_shutdown()
-test_actions_1()
-test_missing()
-test_application_1()
-test_echo_numpy()
