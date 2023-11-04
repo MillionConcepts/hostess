@@ -104,7 +104,11 @@ def organize_running_actions(reports: dict) -> dict:
 
 
 def delegate_dict(ddict: Mapping) -> dict:
-    out = {'status': ddict['inferred_status'], 'wait_time': ddict['wait_time']}
+    out = {
+        'status': ddict['inferred_status'],
+        'wait_time': ddict['wait_time'],
+        'infocount': ddict['infocount']
+    }
     if ddict.get('busy') is True:
         ddict['wait_time'] = str(out['wait_time']) + ' [busy]'
     for element_type in ('actors', 'sensors'):

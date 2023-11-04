@@ -530,6 +530,7 @@ class Node(Matcher, ABC):
         self.signals["main"] = 1
         try:
             self._shutdown(exception=exception)
+            self._log("completed shutdown")
         except Exception as ex:
             self._log(
                 "shutdown exception", exception=ex, category='system'

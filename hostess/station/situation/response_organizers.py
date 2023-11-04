@@ -68,10 +68,14 @@ def maybe_getdef(obj: Any, maxchar: int = 100) -> str:
 
 
 def sourcerec(obj: Any) -> dict[str, str]:
-    return {
-        "name": f"{obj.__class__.__module__}{obj.__class__.__name__}",
-        "def": maybe_getdef(obj),
+    rec = {
+        "def": maybe_getdef(obj)
     }
+    if hasattr(obj, "__name__"):
+        rec['name'] = obj.__name__
+    else:
+        rec['name'] = obj.__class__.__name__
+    return rec
 
 
 def callable_info(obj: Any) -> Union[dict[str, str], tuple[dict[str, str]]]:
@@ -112,6 +116,7 @@ def pack_delegate(ddict: dict[str]) -> dict[str]:
         "infocount"
     )
     packed = {k: ddict.get(k) for k in literals}
+    packed['logfile'] = ddict["init_params"]["logfile"]
     packed["cdict"], packed["interface"] = pack_config(
         ddict.get('cdict', {}), ddict.get('interface', {})
     )
@@ -155,6 +160,7 @@ def situation_of(station: Station) -> dict:
         "name": station.name,
         "host": station.host,
         "port": station.port,
+        "logfile": station.logfile,
         "actors": station.identify_elements("actors"),
         # TODO: make this more efficient
         "delegates": {d['name']: pack_delegate(d) for d in station.delegates},

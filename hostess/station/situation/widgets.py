@@ -128,7 +128,6 @@ class DictColumn(VerticalScroll):
     max_items = 20
 
     def on_mount(self):
-        pass
         self.mount(Label(self.name))
 
     def update(self) -> None:

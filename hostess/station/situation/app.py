@@ -3,9 +3,10 @@ from typing import Optional
 import fire
 from rich.text import Text
 from textual.app import App, ComposeResult
-from textual.containers import HorizontalScroll
-from textual.widget import Widget
-from textual.widgets import Pretty
+from textual.containers import HorizontalScroll, VerticalScroll, Container
+from textual.css.query import NoMatches
+from textual.widgets import Pretty, Collapsible, Label, \
+    TabbedContent, TabPane
 
 from hostess.monitors import Stopwatch
 from hostess.profilers import Profiler
@@ -33,7 +34,33 @@ DELEGATE_PATTERNS = {
     "protect": (lambda l: (len(l) == 4) and l[1] == "running",),
 }
 
+
+class Logfiles:
+
+    def __init__(self):
+        self.logfiles = {}
+
+    def update_from(self, situation):
+        self.logfiles['station'] = situation['logfile']
+        for d, v in situation['delegates'].items():
+            self.logfiles[d] = v['logfile']
+
+
+LOGFILES = Logfiles()
 APP_PROFILER = Profiler({"time": Stopwatch()})
+
+
+def make_logline(k, v):
+    vert = VerticalScroll(Label("", id=f'log-tail-{k}'))
+    vert.styles.max_height = "60vh"
+    collapse = Collapsible(
+        vert,
+        title=f"{k}: {v}",
+        id=f'logfile-{k}',
+        collapsed=True
+    )
+    collapse.styles.max_height = "64vh"
+    return collapse
 
 
 class SituationApp(App):
@@ -50,17 +77,30 @@ class SituationApp(App):
         self.host, self.fixed_port = host, fixed_port
         self.station_name = station_name
         self.situation, self.update_interval = {}, update_interval
+        self.log_positions = {}
 
     def compose(self) -> ComposeResult:
-        yield ConnectionStatus(id="statusbar")
-        with HorizontalScroll():
-            yield DictColumn(id="station-column", name="Station")
-            yield DictColumn(id="delegate-column", name="Delegates")
-        yield Pretty(APP_PROFILER, id="profiler-panel")
+        yield ConnectionStatus("status: initializing", id="statusbar")
+        content = Container()
+        with content:
+            with TabbedContent(initial="situation"):
+                with TabPane(title="situation", id='situation'):
+                    container = HorizontalScroll(id='main-container')
+                    with container:
+                        yield DictColumn(id="station-column", name="Station")
+                        yield DictColumn(id="delegate-column", name="Delegates")
+                    with Collapsible(
+                        title='profiler',
+                            collapsed=True,
+                            id='profiler-collapse'
+                    ):
+                        yield Pretty(APP_PROFILER, id="profiler")
+                with TabPane(title="logs", id='logs', classes='log-pane'):
+                    yield VerticalScroll(id="logs-container")
 
-    def _handle_error(self, err: Exception, error_label: Widget):
+    def _handle_error(self, err: Exception):
         if isinstance(err, TimeoutError):
-            error_label.update(
+            self.query_one('#statusbar').update(
                 Text(f"status -- delayed", style="light_salmon3")
             )
             return
@@ -70,7 +110,7 @@ class SituationApp(App):
             except (FileNotFoundError, TypeError, ValueError) as ftve:
                 err = ftve
 
-        error_label.update(
+        self.query_one('#statusbar').update(
             Text(f"status: error -- {err}", style="bold red")
         )
 
@@ -83,25 +123,56 @@ class SituationApp(App):
         dcol.patterns = DELEGATE_PATTERNS
         return dcol, scol
 
+    def update_logs(self):
+        for k, v in LOGFILES.logfiles.items():
+            try:
+                logline = self.query_one(f"#logfile-{k}")
+            except NoMatches:
+                self.query_one('#logs-container').mount(
+                    make_logline(k, v)
+                )
+                logline = self.query_one(f"#logfile-{k}")
+            if not logline.collapsed:
+                tail = self.query_one(f'#log-tail-{k}')
+                with v.open() as stream:
+                    if k in self.log_positions:
+                        stream.seek(self.log_positions[k])
+                    content = stream.read()
+                    if len(content) > 0:
+                        self.log_positions[k] = stream.tell()
+                        tail.update(tail.renderable + content)
+
+    def update_from_situation(self):
+        with APP_PROFILER.context("parsing content"):
+            dcol, scol = self._populate_column_content()
+        LOGFILES.update_from(self.situation)
+        with APP_PROFILER.context("rendering new content"):
+            scol.update()
+            dcol.update()
+
     def update_view(self):
+        self.update_logs()
+        if self.query_one(".log-pane").styles.display != 'none':
+            self.update_logs()
+            if self.has_content is True:
+                self.deferred_situation_update = True
         if self.fetching is True:
             return
-        error_label = self.query_one("#statusbar")
         try:
+            if self.deferred_situation_update is True:
+                self.update_from_situation()
             self.fetching = True
             if (self.port is None) and (self.fixed_port is None):
                 self.port = get_port_from_shared_memory(self.station_name)
             APP_PROFILER.reset()
             with APP_PROFILER.context("fetching situation"):
                 self.situation = get_situation(self.host, self.port)
-            with APP_PROFILER.context("parsing content"):
-                dcol, scol = self._populate_column_content()
-            error_label.update(Text("status -- ok", style="bold green"))
-            with APP_PROFILER.context("rendering new content"):
-                scol.update()
-                dcol.update()
-            ppanel: Pretty = self.query_one("#profiler-panel")
-            ppanel.update(APP_PROFILER)
+            self.has_content = True
+            self.update_from_situation()
+            self.query_one('#statusbar').update(
+                Text("status -- ok", style="bold green")
+            )
+            self.query_one("#profiler").update(APP_PROFILER)
         except (
             ValueError,
             AttributeError,
@@ -109,7 +180,7 @@ class SituationApp(App):
             ConnectionError,
             FileNotFoundError
         ) as err:  # TODO: concatenate / specify those exceptions
-            return self._handle_error(err, error_label)
+            return self._handle_error(err)
         finally:
             self.fetching = False
 
@@ -118,6 +189,8 @@ class SituationApp(App):
 
     port = None
     fetching = False
+    has_content = False
+    deferred_situation_update = False
 
 
 def run_situation_app(
