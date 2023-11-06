@@ -1,5 +1,5 @@
 site_name: Hostess
-site_description: "documentation for hostess (github repo: https://github.com/MillionConcepts/pdr)"
+site_description: documentation for hostess https://github.com/MillionConcepts/pdr
 theme:
   name: readthedocs
 plugins:

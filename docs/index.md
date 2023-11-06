@@ -9,7 +9,7 @@ still feeling like code. `hostess` has a special emphasis on fitting intuitively
 and idiomatically into common data science and scientific analysis workflows, but
 is fundamentally a general-purpose utility and administration library.
 
-You can access the source code for `hostess` on github at: https://github.com/MillionConcepts/hostess
+You can access the source code for `hostess` on github at: [https://github.com/MillionConcepts/hostess](https://github.com/MillionConcepts/hostess)
 
 ## cautions
 
