@@ -55,3 +55,7 @@ capturing behavior breaks some core `hostess` features.
 ## licensing
 You can do almost anything with this software that you like, subject only to 
 the extremely permissive terms of the [BSD 3-Clause License](LICENSE).
+
+Additional information on usage including an API reference 
+can now be accessed in our documentation on readthedocs at: https://hostess.readthedocs.io [![Documentation Status](https://readthedocs.org/projects/hostess/badge/?version=latest)](https://hostess.readthedocs.io/en/latest/?badge=latest)
+
