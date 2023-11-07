@@ -202,9 +202,25 @@ class Instance:
                 f"class constructor when creating a new Instance."
             )
 
-    def command(self, *args, **kwargs) -> Processlike:
+    def term(self, *args, **kwargs):
+        return self.command(*args, _viewer=True, _wait=True
+
+    def command(
+        self, *args, _viewer=True, _wait=False, _quiet=False, **kwargs
+    ) -> Processlike:
         self._raise_unready()
-        return self._ssh(*args, **kwargs)
+        if (_w := kwargs.pop('_w', None)) is not None:
+            _wait = _w
+        result = self._ssh(*args, _viewer=_viewer, **kwargs)
+        if _wait is True:
+            result.wait()
+        if _quiet is False:
+            from rich import print as rp
+            if len(result.stdout) > 0:
+                rp(*result.stdout)
+            if len(result.stderr) > 0:
+                rp(*map(lambda t: f"[red]{t}[/red]", result.stderr))
+        return result
 
     def commands(
         self,
@@ -307,7 +323,10 @@ class Instance:
         self.instance_.load()
         self.state = self.instance_.state["Name"]
         self.ip = getattr(self.instance_, f"{self.address_type}_ip_address")
-        self._ssh = SSH.connect(self.ip, self.uname, self.key)
+        if self.state == 'running':
+            self.connect()
+        else:
+            self._ssh = None
 
     def wait_until(self, state):
         """Pause execution until the instance state is met.
