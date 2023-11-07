@@ -203,7 +203,7 @@ class Instance:
             )
 
     def term(self, *args, **kwargs):
-        return self.command(*args, _viewer=True, _wait=True
+        return self.command(*args, _viewer=True, _wait=True)
 
     def command(
         self, *args, _viewer=True, _wait=False, _quiet=False, **kwargs
