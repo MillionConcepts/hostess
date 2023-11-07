@@ -370,11 +370,9 @@ class Instance:
         # an alias for reboot()
         self.reboot(wait_until_running=wait_until_running)
 
-    def tunnel(self, local_port, remote_port, kill=True):
+    def tunnel(self, local_port, remote_port):
         self._raise_unready()
-        self._ssh.tunnel(
-            self.ip, self.uname, self.key, local_port, remote_port, kill
-        )
+        self._ssh.tunnel(local_port, remote_port)
         return self._ssh.tunnels[-1]
 
     def call_python(

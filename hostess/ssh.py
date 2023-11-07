@@ -175,6 +175,7 @@ def jupyter_connect(
     env: Optional[str] = None,
     get_token: bool = True,
     kill_on_exit: bool = True,
+    working_directory: Optional[str] = None,
     **command_kwargs,
 ):
     if env is not None:
@@ -185,14 +186,11 @@ def jupyter_connect(
         done = stop_jupyter_factory(ssh, jupyter, remote_port)
     else:
         done = zero
-    jupyter_launch = ssh(
-        f"{jupyter} --port {remote_port} --no-browser",
-        _done=done,
-        #         TODO: work on yielding a viewer i guess?
-        #         _viewer=True,
-        _bg=True,
-        **command_kwargs,
-    )
+    cmd = f"{jupyter} --port {remote_port} --no-browser"
+    if working_directory is not None:
+        cmd = f"cd {working_directory} && {cmd}"
+    # TODO, maybe: return a Viewer here
+    jupyter_launch = ssh(cmd, _done=done, _bg=True, **command_kwargs)
     jupyter_url_base = f"http://localhost:{local_port}"
     if get_token:
         token = get_jupyter_token(ssh, jupyter, remote_port)
