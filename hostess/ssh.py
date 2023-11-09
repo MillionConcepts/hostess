@@ -168,6 +168,16 @@ def get_jupyter_token(
     )
 
 
+NotebookConnection: tuple[str, Process, Process]
+"""
+structure containing results of a tunneled Jupyter Notebook execution.
+
+1. URL for Jupyter server
+2. SSH tunnel process
+3. Jupyter execution process
+"""
+
+
 def jupyter_connect(
     ssh: SSH,
     local_port: int = 22222,
@@ -177,7 +187,7 @@ def jupyter_connect(
     kill_on_exit: bool = True,
     working_directory: Optional[str] = None,
     **command_kwargs,
-):
+) -> NotebookConnection:
     if env is not None:
         jupyter = f"{find_conda_env(ssh, env)}" f"/bin/jupyter notebook"
     else:

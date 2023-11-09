@@ -439,26 +439,26 @@ def analyze_references(
     analyzing references tracked by the garbage collector.
     Notes:
 
-        1. TAKE SPECIAL CARE WHEN DECORATING THIS FUNCTION OR CALLING IT FROM
-            A LAMBDA FUNCTION OR GENERATOR EXPRESSION, NO MATTER HOW HARMLESS-
-            LOOKING. These operations may add references that are difficult to
-            recognize or interpret. Calls that do not add context are much
-            safer.
-        2. This function is only completely compatible with CPython.
-        3. All 'exclude', 'permit', and 'filter' operations are implicitly
-            connected by boolean AND. Represented as a predicate:  
-            ```
-            (~PRIMITIVE(REF) | ~FILTER_PRMITIVE)  
-            & (~HISTORY(REF) | ~FILTER_HISTORY)  
-            & (~SCOPEDICT(REF) | ~FILTER_SCOPEDICT)  
-            & ((ID(REF) != ID(OBJ)) | ~FILTER_REFLEXIVE)  
-            & ~(ID(REF) ∈ EXCLUDE_IDS)  
-            & (ID(REF) ∈ PERMIT_IDS | PERMIT_IDS = ∅)  
-            & ~(TYPE(REF) ∈ EXCLUDE_TYPES)  
-            & (TYPE(REF) ∈ PERMIT_TYPES | PERMIT_TYPES = ∅)  
-            ```
-        4. references from obj to itself are never included. This may change
-           in the future.
+    1. TAKE SPECIAL CARE WHEN DECORATING THIS FUNCTION OR CALLING IT FROM
+        A LAMBDA FUNCTION OR GENERATOR EXPRESSION, NO MATTER HOW HARMLESS-
+        LOOKING. These operations may add references that are difficult to
+        recognize or interpret. Calls that do not add context are much
+        safer.
+    2. This function is only completely compatible with CPython.
+    3. All 'exclude', 'permit', and 'filter' operations are implicitly
+        connected by boolean AND. Represented as a predicate:
+        ```
+        (~PRIMITIVE(REF) | ~FILTER_PRMITIVE)
+        & (~HISTORY(REF) | ~FILTER_HISTORY)
+        & (~SCOPEDICT(REF) | ~FILTER_SCOPEDICT)
+        & ((ID(REF) != ID(OBJ)) | ~FILTER_REFLEXIVE)
+        & ~(ID(REF) ∈ EXCLUDE_IDS)
+        & (ID(REF) ∈ PERMIT_IDS | PERMIT_IDS = ∅)
+        & ~(TYPE(REF) ∈ EXCLUDE_TYPES)
+        & (TYPE(REF) ∈ PERMIT_TYPES | PERMIT_TYPES = ∅)
+        ```
+    4. references from obj to itself are never included. This may change
+       in the future.
 
     Args:
         obj: object of referential analysis

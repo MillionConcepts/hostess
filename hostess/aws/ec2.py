@@ -19,10 +19,12 @@ from typing import (
     MutableMapping,
     Optional,
     Sequence,
-    Union
+    Union, IO
 )
 
-from botocore.exceptions import ClientError
+import boto3.resources.base
+import botocore.client
+import botocore.exceptions
 from cytoolz.curried import get
 import dateutil.parser as dtp
 from dustgoggles.func import gmap, zero
@@ -45,11 +47,19 @@ from hostess.aws.utilities import (
 )
 from hostess.caller import generic_python_endpoint
 from hostess.config import EC2_DEFAULTS, GENERAL_DEFAULTS
-from hostess.ssh import jupyter_connect, find_ssh_key, SSH, find_conda_env
+from hostess.ssh import jupyter_connect, find_ssh_key, SSH, find_conda_env, NotebookConnection
 from hostess.subutils import Processlike
 from hostess.utilities import (
     my_external_ip, filestamp, check_cached_results, clear_cached_results,
 )
+
+
+InstanceIdentifier = str
+"""
+stringified IP (e.g. `'111.11.11.1'` or full instance id 
+(e.g. `i-0243d3f8g0a85cb18`), used as an explicit instance identifier by some 
+functions in this module.
+"""
 
 
 InstanceDescription = dict[str, Union[dict, str]]
@@ -79,7 +89,7 @@ def summarize_instance_description(
 
 
 def ls_instances(
-    identifier: Optional[str] = None,
+    identifier: Optional[InstanceIdentifier] = None,
     states: Sequence[str] = ("running", "pending", "stopped"),
     raw_filters: Optional[Sequence[Mapping[str, str]]] = None,
     client=None,
@@ -87,7 +97,7 @@ def ls_instances(
     long: bool = False,
     tag_regex: bool = True,
     **tag_filters,
-) -> tuple[InstanceDescription]:
+) -> tuple[Union[InstanceDescription, dict]]:
     """
     `ls` for EC2 instances.
 
@@ -98,8 +108,10 @@ def ls_instances(
         raw_filters: search filters to pass directly to the EC2 API.
         client: optional boto3 Client object
         session: optional boto3 Session object
-        long: if not True, output includes only the most regularly-pertinent
-            information, flattened, with succinct field names.
+        long: if not True, return InstanceDescriptions, including only the
+            most regularly-pertinent information, flattened, with succinct
+            field names. Otherwise return a flattened version of the full API
+            response.
         tag_regex: regex patterns for tag matching.
         tag_filters: filters to interpret as tag name / value pairs before 
             passing to the EC2 API.
@@ -152,14 +164,42 @@ def instances_from_ids(
 class Instance:
     def __init__(
         self,
-        description,
-        uname=GENERAL_DEFAULTS["uname"],
-        key=None,
-        client=None,
-        resource=None,
-        session=None,
-        use_private_ip=False,
+        description: Union[InstanceIdentifier, InstanceDescription],
+        uname: str = GENERAL_DEFAULTS["uname"],
+        key: Optional[Path] = None,
+        client: Optional[botocore.client.BaseClient] = None,
+        resource: Optional[boto3.resources.base.ServiceResource] = None,
+        session: Optional[boto3.Session] = None,
+        use_private_ip: bool = False,
     ):
+        """
+        Interface for an EC2 instance, permitting state control, monitoring,
+        and remote process calls. Uses a combination of direct SSH access and
+        EC2 API calls. Some features usable with no SSH access.
+
+        Args:
+            description: unique identifier for the instance, either its public
+                / private IP (whichever is accessible from where you're
+                initializing this object), the full instance identifier, or
+                an InstanceDescription as returned by ls_instances().
+            uname: username for SSH access to the instance.
+            key: path to keyfile. You don't usually need to explicitly specify
+                it. The constructor can find it automatically given the
+                following conditions:
+
+                    1. You keep the keyfile in a 'standard' location (like
+                    ~/.ssh/; see
+                    config.config.GENERAL_DEFAULTS['secrets_folders'] for a
+                    list) or a directory you specify in
+                    config.user_config.GENERAL_DEFAULTS['secrets_folders'],
+                    2. its filename matches the key name given in the API
+                    response describing the instance.
+                If those aren't both true, you'll need to pass this value to
+                connect to the instance via SSH.
+            client: boto client. creates default client if not given.
+            resource: boto resource. creates default resource if not given.
+            session: boto session. creates default session if not given.
+            """
         resource = init_resource("ec2", resource, session)
         if isinstance(description, str):
             # if it's got periods in it, assume it's a public IPv4 address
@@ -202,22 +242,42 @@ class Instance:
         if self.state == 'running':
             self.connect()
 
-    def connect(self, maxtries=5):
+    def connect(self, maxtries: int = 5, delay: float = 1):
+        """
+        Attempt to connect to the instance via SSH.
+
+        Args:
+            maxtries: total times to try to connect if attempts fail
+            delay: how many seconds to wait after subsequent attempts
+
+        """
         for attempt in range(maxtries):
             try:
                 self._ssh = SSH.connect(self.ip, self.uname, self.key)
                 return
             except AttributeError:
-                time.sleep(1)
+                time.sleep(delay)
                 self.update()
         raise ConnectionError("can't connect to instance.")
 
-    def _is_unready(self):
+    def _is_unready(self) -> bool:
+        """
+        Is the instance obviously not ready for SSH connections?
+
+        Returns:
+            True if:
+
+            1. It is not turned on, or:
+            2. We have not found a keyfile.
+
+            Otherwise False.
+        """
         return (self.state not in ("running", "pending")) or any(
             p is None for p in (self.ip, self.uname, self.key)
         )
 
     def _raise_unready(self):
+        """update info about Instance; raise an error if it is unready."""
         if not self._is_unready():
             return
         self.update()
@@ -231,12 +291,31 @@ class Instance:
                 f"class constructor when creating a new Instance."
             )
 
-    def term(self, *args, **kwargs):
-        return self.command(*args, _viewer=True, _wait=True)
-
     def command(
-        self, *args, _viewer=True, _wait=False, _quiet=False, **kwargs
+        self,
+        *args,
+        _viewer: bool = True,
+        _wait: bool = False,
+        _quiet: bool = True,
+        **kwargs
     ) -> Processlike:
+        """
+        remotely run an explicit command in the default interpreter via SSH.
+
+        Args:
+            *args: args to pass to `self._ssh`.
+            _viewer: if `True`, return a `Viewer` object. otherwise return
+                unwrapped result from `self._ssh`.
+            _wait: if `True`, block until command terminates (or connection
+                fails). _w is an alias.
+            _quiet: if `False`, print stdout and stderr, should the process
+                return any before this function terminates. Generally best
+                used with _wait=True.
+            **kwargs: kwargs to pass to `self.ssh`.
+
+        Returns:
+            object representing executed process.
+        """
         self._raise_unready()
         if (_w := kwargs.pop('_w', None)) is not None:
             _wait = _w
@@ -251,27 +330,70 @@ class Instance:
                 rp(*map(lambda t: f"[red]{t}[/red]", result.stderr))
         return result
 
+    def con(self, *args, **kwargs):
+        """
+        run a command in the default interpreter 'console-style', pausing for
+        output and printing it to stdout.
+
+        Alias for Instance.command with _wait=True, _quiet=False.
+        """
+        self.command(*args, _quiet=False, _wait=True, **kwargs)
+
     def commands(
         self,
         commands: Sequence[str],
         op: Literal["and", "xor", "then"] = "then",
         **kwargs,
     ) -> Processlike:
+        """
+        Remotely run a multi-part shell command. Convenience method
+        for constructing long shell instructions like
+        `this && that && theother && etcetera`.
+
+        Args:
+            commands: commands to chain together.
+            op: logical operator to connect commands.
+
+        Returns:
+            abstraction representing executed process.
+        """
         return self.command(ks.chain(commands, op), **kwargs)
 
-    def notebook(self, **connect_kwargs):
+    def notebook(self, **connect_kwargs) -> NotebookConnection:
+        """
+        execute a Jupyter Notebook on the instance and establish a tunnel for
+        local access.
+
+        Args:
+            connect_kwargs: arguments for notebook execution/connection. see
+                `ssh.jupyter_connect()` for complete signature.
+
+        Returns:
+            structure containing results of the tunneled Jupyter Notebook
+                execution.
+        """
         self._raise_unready()
         return jupyter_connect(self._ssh,  **connect_kwargs)
 
-    def start(self, return_response=False):
-        """Start the instance."""
+    def start(self, return_response: bool = False) -> Optional[dict]:
+        """
+        Start the instance and attempt to establish an SSH connection.
+
+        Args:
+            return_response: if True, return API response.
+        """
         response = self.instance_.start()
         self.update()
         if return_response is True:
             return response
 
-    def stop(self, return_response=False):
-        """Stop the instance."""
+    def stop(self, return_response: bool = False) -> Optional[dict]:
+        """
+        Stop the instance.
+
+        Args:
+            return_response: if True, return API response.
+        """
         response = self.instance_.stop()
         self.update()
         if return_response is True:
@@ -284,10 +406,25 @@ class Instance:
         if return_response is True:
             return response
 
-    def put(self, source, target, *args, literal_str=False, **kwargs):
+    def put(
+        self,
+        source: Union[str, Path, IO],
+        target: Union[str, Path],
+        *args,
+        literal_str: bool = False,
+        **kwargs
+    ):
         """
-        copy file from local disk or object from memory to target file on
-        instance using scp.
+        write local file or object over SSH to target file on instance.
+
+        Args:
+            source: filelike object or path to file
+            target: write path on instance
+            args: additional arguments to pass to underlying put command
+            literal_str: if True and `source` is a `str`, write `source`
+                into `target` as text rather than interpreting `source` as a
+                path
+            kwargs: additional kwargs to pass to underlying put command
         """
         self._raise_unready()
         if isinstance(source, str) and (literal_str is True):
@@ -614,7 +751,7 @@ class Cluster:
             try:
                 instances = instance_hook()
                 break
-            except ClientError as ce:
+            except botocore.exceptions.ClientError as ce:
                 if "does not exist" in str(ce):
                     time.sleep(0.2)
             raise TimeoutError(
