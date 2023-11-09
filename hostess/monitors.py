@@ -559,13 +559,14 @@ def make_stat_printer(
     Returns:
         a function that holds `monitors` in enclosing scope.
 
-        when called, and `eject` (its second positional parameter) is False,
-        updates all monitors, passing its first positional parameter (`lap`)
-        to the `update` methods of all monitors, and and kwargs to the
-        `display` methods of all monitors, and returns a string containing
-        the concatenated output of all monitor displays.
+            when called, and `eject` (its second positional parameter) is
+            False, updates all monitors, passing its first positional
+            parameter (`lap`) to the `update` methods of all monitors, and
+            and kwargs to the `display` methods of all monitors, and returns
+            a string containing the concatenated output of all monitor
+            displays.
 
-        if `eject` is True, instead returns the dictionary of monitors.
+            if `eject` is True, instead returns the dictionary of monitors.
     """
     def printstats(lap=True, eject=False, **display_kwargs):
         if eject is True:
@@ -617,8 +618,8 @@ def make_stat_records(
 
     Returns:
         a stat-recording function that works much the function produced by
-        `make_stat_printer`, but returns a dictionary of numerical values
-        rather than simply returning strings.
+            `make_stat_printer`, but returns a dictionary of numerical values
+            rather than simply returning strings.
     """
     for key in monitors.keys():
         if not isinstance(monitors[key], AbstractMonitor):
@@ -656,7 +657,7 @@ def log_factory(
 
     Returns:
         a function that, when called, creates, prints, and writes a
-        comma-separated log line.
+            comma-separated log line.
     """
     def lprint(message):
         print(message)

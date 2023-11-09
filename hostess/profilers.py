@@ -275,15 +275,16 @@ def _add_varnames(obj, sdict, rec, scopename):
             rec['scopes'].append(scopename)
 
 
-def yclept(obj: Any, terse=True, stepback=1) -> Refnom:
+def yclept(obj: Any, terse: bool = True, stepback: int = 1) -> Refnom:
     """
     Find basic identifiers for obj, along with any names for obj in all frames
     in stack, starting stepback frames back from the frame of this function.
+
     Args:
-        obj (object): object to name
-        terse (bool): include extended information in output?
-        stepback (int): how many frames to step back (from the frame of this
-        function) before looking for obj?
+        obj: object to name
+        terse: include extended information in output?
+        stepback: how many frames to step back (from the frame of this
+            function) before looking for obj?
     """
     nytta = []
     frame = currentframe()
@@ -298,16 +299,7 @@ def yclept(obj: Any, terse=True, stepback=1) -> Refnom:
         localdict, globaldict, builtindict = scopedicts(frame)
         _add_varnames(obj, globaldict, rec, "globals")
         _add_varnames(obj, builtindict, rec, "builtins")
-        # the locals dict of the top-level module frame is the
-        # same as its globals dict, and retrieving it from the frame here
-        # gives us the actual dict. we do NOT want to delete all members
-        # of the top-level module frame here.
-        # conversely, locals dicts retrieved from lower frames are just
-        # copies. modifying them will not affect the locals available in
-        # those frames. HOWEVER, references to everything in those copies
-        # will hang around forever until _that_ frame fully dies, and
-        # clearing the copy is the only reliable way to prevent that from
-        # happening.
+
         if frame.f_code.co_name != "<module>":
             # don't bother adding redundant local varnames at top level
             _add_varnames(obj, localdict, rec, "locals")
@@ -430,23 +422,26 @@ def analyze_references(
     analyze 'references' to or from obj. designed, but not limited to,
     analyzing references tracked by the garbage collector.
     Notes:
-        1) TAKE SPECIAL CARE WHEN DECORATING THIS FUNCTION OR CALLING IT FROM
+
+        1. TAKE SPECIAL CARE WHEN DECORATING THIS FUNCTION OR CALLING IT FROM
             A LAMBDA FUNCTION OR GENERATOR EXPRESSION, NO MATTER HOW HARMLESS-
             LOOKING. These operations may add references that are difficult to
             recognize or interpret. Calls that do not add context are much
             safer.
-        1) This function is only completely compatible with CPython.
-        2) All 'exclude', 'permit', and 'filter' operations are implicitly
-            connected by boolean AND. Represented as a predicate:
-            (~PRIMITIVE(REF) | ~FILTER_PRMITIVE)
-            & (~HISTORY(REF) | ~FILTER_HISTORY)
-            & (~SCOPEDICT(REF) | ~FILTER_SCOPEDICT)
-            & ((ID(REF) != ID(OBJ)) | ~FILTER_REFLEXIVE)
-            & ~(ID(REF) ∈ EXCLUDE_IDS)
-            & (ID(REF) ∈ PERMIT_IDS | PERMIT_IDS = ∅)
-            & ~(TYPE(REF) ∈ EXCLUDE_TYPES)
-            & (TYPE(REF) ∈ PERMIT_TYPES | PERMIT_TYPES = ∅)
-        3) references from obj to itself are never included. This may change
+        2. This function is only completely compatible with CPython.
+        3. All 'exclude', 'permit', and 'filter' operations are implicitly
+            connected by boolean AND. Represented as a predicate:  
+            ```
+            (~PRIMITIVE(REF) | ~FILTER_PRMITIVE)  
+            & (~HISTORY(REF) | ~FILTER_HISTORY)  
+            & (~SCOPEDICT(REF) | ~FILTER_SCOPEDICT)  
+            & ((ID(REF) != ID(OBJ)) | ~FILTER_REFLEXIVE)  
+            & ~(ID(REF) ∈ EXCLUDE_IDS)  
+            & (ID(REF) ∈ PERMIT_IDS | PERMIT_IDS = ∅)  
+            & ~(TYPE(REF) ∈ EXCLUDE_TYPES)  
+            & (TYPE(REF) ∈ PERMIT_TYPES | PERMIT_TYPES = ∅)  
+            ```
+        4. references from obj to itself are never included. This may change
            in the future.
     Args:
         obj: object of referential analysis
@@ -506,7 +501,15 @@ def analyze_references(
 
 # noinspection PyUnresolvedReferences
 def di(obj_id: int) -> Any:
-    """backwards `id`. Use with care! Can segfault."""
+    """
+    backwards `id`. Use with care! Can segfault.
+
+    Args:
+        obj_id: id of desired object, as returned by `id(obj)`.
+
+    Returns:
+        Object corresponding to `obj_id`.
+    """
     return _ctypes.PyObj_FromPtr(obj_id)
 
 

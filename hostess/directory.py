@@ -25,7 +25,7 @@ def mtimes(stat: os.stat_result) -> dict[str, dt.datetime]:
 
     Returns:
         dictionary whose values are datetimes and whose keys are 'atime',
-        'mtime', and 'ctime'.
+            'mtime', and 'ctime'.
     """
     return {
         f"{letter.upper()}TIME": unix2dt(getattr(stat, f"st_{letter}time"))
@@ -37,12 +37,13 @@ LSRecord = dict[str, Union[str, float, bool, dt.datetime]]
 """
 a record containing identifying information about a file. produced by 
 `lsdashl` and used by other functions in this module. has keys:  
- * "path": str (string version of relative path)
- * "size": float (file size in MB, rounded to 3 places)
- * "excluded": bool (placeholder for exclusions, always False)
- * "directory": bool (is it a directory?)
- * "suffix": str (last filename suffix)
- * "atime", "mtime", "ctime": datetime (UNIX file times)
+
+* "path": str (string version of relative path)
+* "size": float (file size in MB, rounded to 3 places)
+* "excluded": bool (placeholder for exclusions, always False)
+* "directory": bool (is it a directory?)
+* "suffix": str (last filename suffix)
+* "atime", "mtime", "ctime": datetime (UNIX file times)
 """
 
 
@@ -117,7 +118,7 @@ def index_breadth_first(root: Union[str, Path]) -> list[LSRecord]:
 
     Returns:
         list of LSRecords describing contents of all directories under and
-        including `root`.
+            including `root`.
     """
     discoveries = []
     search_targets = deque([root])
@@ -176,7 +177,7 @@ def do_magic(manifest: LSFrame, log: Callable[[str], Any] = zero) -> LSFrame:
 
 
 def _squishlevels(join: pd.DataFrame, levels: dict) -> pd.DataFrame:
-    """helper function for _make_levelframe"""
+    """helper function for _make_levelframe()"""
     for ix in range(0, len(join.columns) - 2):
         join.iloc[:, ix] += "/"
     for ix in range(1, len(join.columns) - 1):
@@ -187,7 +188,7 @@ def _squishlevels(join: pd.DataFrame, levels: dict) -> pd.DataFrame:
 
 
 def _make_levelframe(group: pd.DataFrame, squish: bool) -> pd.DataFrame:
-    """helper function for make_treeframe"""
+    """helper function for make_treeframe()"""
     levels = {}
     join = group.dropna(axis=1).copy()
     if squish is True:
