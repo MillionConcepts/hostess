@@ -7,7 +7,9 @@ from inspect import currentframe, getsourcelines, stack
 from itertools import chain
 import re
 from types import EllipsisType, FrameType, NoneType, NotImplementedType
-from typing import Any, Callable, Collection, Mapping, Optional, Union
+from typing import (
+    Any, Callable, Collection, Literal, Mapping, Optional, Union
+)
 
 from cytoolz import keyfilter, valmap
 from pympler.asizeof import asizeof
@@ -164,23 +166,33 @@ def _add_scopedict_ids(frame, ids, lids, scopenames):
                 lids.add(sid)
 
 
+
+ScopeName = Literal["locals", "globals", "builtins"]
+"""
+string that gives the name of a Python scope, not including enclosing/nonlocal 
+scope.
+"""
+
+
 def scopedict_ids(
     frames: Union[FrameType, Collection[FrameType], None] = None,
     *,
-    getstack=False,
-    scopenames=('locals', 'globals', 'builtins'),
-    distinguish_locals=True
+    getstack: bool = False,
+    scopenames: Collection[ScopeName] = ('locals', 'globals', 'builtins'),
+    distinguish_locals: bool = True
 ):
     """
     return ids of all 'scopedicts' (locals, globals, builtins) in frames (by
-    default, just the caller's frame.)
-    if getstack is True, ignore the frames argument and instead look at
-    all levels of the stack above the caller's frame.
-    uses include: distinguishing references held by
-    namespaces from references held by other objects; avoiding accidental
-    'direct' manipulation of namespaces.
-    if distinguish_locals is True, return a tuple containing all ids and just
-    locals ids below top level
+    default, just the caller's frame.) uses include: distinguishing 
+    references held by namespaces from references held by other objects; 
+    avoiding accidental 'direct' manipulation of namespaces.
+
+    Args:
+        getstack: if True, ignore the frames argument and instead look at
+            all levels of the stack above the caller's frame.
+        distinguish_locals: if True, return a tuple whose elements are:  
+            [0] all ids  
+            [1] just local-scope ids below top level
     """
     if getstack is True:
         frames = [s.frame for s in stack()[:-1]]
@@ -193,13 +205,13 @@ def scopedict_ids(
     return ids
 
 
-def lineno():
+def lineno() -> int:
     """Returns the current line number in our program."""
     return currentframe().f_back.f_lineno
 
 
-def def_lineno(obj):
-    """Returns the line number where the object was defined."""
+def def_lineno(obj) -> Optional[int]:
+    """Returns the line number where the object was defined, if available."""
     try:
         return getsourcelines(obj)[1]
     except TypeError:
@@ -207,6 +219,10 @@ def def_lineno(obj):
 
 
 IdentifyResult = dict[str, Union[int, type, str]]
+"""
+record representing information about a Python object, as produced by 
+`identify` and functions that call it.
+"""
 
 
 def identify(
@@ -443,6 +459,7 @@ def analyze_references(
             ```
         4. references from obj to itself are never included. This may change
            in the future.
+
     Args:
         obj: object of referential analysis
         method: Function whose return values define 'references' of
@@ -462,8 +479,8 @@ def analyze_references(
         return_objects: return objects in set of references, or only
             descriptions of those objects?
         globals_: optional dictionary of globals to use in filtering.
-            currently only used in history filtering. If this argument is None,
-            history filtering uses the globals of the calling frame.
+            currently only used in history filtering. If this argument is 
+            None, history filtering uses the globals of the calling frame.
     """
     refs = list(method(obj))
     objid = id(obj)
