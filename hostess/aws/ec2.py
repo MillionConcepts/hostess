@@ -187,13 +187,13 @@ class Instance:
                 it. The constructor can find it automatically given the
                 following conditions:
 
-                    1. You keep the keyfile in a 'standard' location (like
-                    ~/.ssh/; see
-                    config.config.GENERAL_DEFAULTS['secrets_folders'] for a
-                    list) or a directory you specify in
-                    config.user_config.GENERAL_DEFAULTS['secrets_folders'],
-                    2. its filename matches the key name given in the API
-                    response describing the instance.
+                1. You keep the keyfile in a 'standard' location (like
+                ~/.ssh/; see config.config.GENERAL_DEFAULTS['secrets_folders']
+                for a list) or a directory you specify in
+                config.user_config.GENERAL_DEFAULTS['secrets_folders'],
+                2. its filename matches the key name given in the API
+                response describing the instance.
+
                 If those aren't both true, you'll need to pass this value to
                 connect to the instance via SSH.
             client: boto client. creates default client if not given.
@@ -267,10 +267,10 @@ class Instance:
         Returns:
             True if:
 
-            1. It is not turned on, or:
-            2. We have not found a keyfile.
+                1. It is not turned on, or:
+                2. We have not found a keyfile.
 
-            Otherwise False.
+                Otherwise False.
         """
         return (self.state not in ("running", "pending")) or any(
             p is None for p in (self.ip, self.uname, self.key)
