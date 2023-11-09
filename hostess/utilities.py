@@ -68,9 +68,11 @@ def infer_stream_length(
 ) -> Optional[int]:
     """
     attempts to infer the size of a potential read from an object.
+
     Args:
         stream: may be a buffered reader (like the result of calling open()),
             a buffer like io.BytesIO, or a Path
+    
     Returns:
         an estimate of its size based on best available method, or None if
         impossible.
