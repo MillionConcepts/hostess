@@ -2,14 +2,15 @@
 import threading
 import time
 from abc import ABC
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 from functools import partial, wraps
+from pathlib import Path
 from typing import (
     MutableMapping,
     Callable,
     Optional,
     Union,
-    Mapping,
+    Mapping, Any, Sequence,
 )
 
 from cytoolz import identity
@@ -20,11 +21,21 @@ import psutil
 from hostess.utilities import mb, console_and_log, stamp, curry
 
 
-def memory():
+def memory() -> int:
+    """
+    shorthand for psutil.Process().memory_info().rss
+
+    Returns:
+        current process's real set size in bytes
+    """
     return psutil.Process().memory_info().rss
 
 
 class FakeBouncer:
+    """
+    fake blocking rate-limiter. Placeholder for a `Bouncer` in functions that
+    don't actually want to debounce.
+    """
     def clean(self):
         pass
 
@@ -36,9 +47,20 @@ class FakeBouncer:
 
 
 class Bouncer(FakeBouncer):
-    """blocking rate-limiter"""
+    """simple blocking rate-limiter."""
 
-    def __init__(self, ratelimit=0.1, window=1, blockdelay=None):
+    def __init__(
+        self,
+        ratelimit: float = 0.1,
+        window: int = 1,
+        blockdelay: Optional[float] = None
+    ):
+        """
+        Args:
+            ratelimit: how many events to permit within a single window
+            window: size of window in seconds
+            blockdelay: poll rate when blocking (default window/ratelimit)
+        """
         self.events = []
         self.ratelimit = ratelimit
         self.window = window
@@ -52,34 +74,58 @@ class Bouncer(FakeBouncer):
         return object.__new__(cls)
 
     def clean(self):
+        """clean the list of events"""
         now = time.time()
         self.events = list(
             filter(lambda t: (now - t) < self.window, self.events)
         )
 
     def block(self):
+        """block until there are now longer too many events within window"""
         self.clean()
         while len(self.events) > self.ratelimit:
             time.sleep(self.blockdelay)
             self.clean()
 
-    def click(self, block=True):
+    def click(self, block: bool = True):
+        """
+        record an event; optionally block
+
+        Args:
+            block: if True, call block() after recording event
+        """
         self.clean()
         now = time.time()
         self.events.append(now)
-        if block:
+        if block is True:
             self.block()
 
 
 class LogMB:
-    def __init__(self):
+    """simple text logger/printer for aggregate data volume"""
+
+    def __init__(self, threshold_mb: float = 25):
+        """
+
+        Args:
+            threshold_mb: at what interval of MB to log/print
+        """
+
+        self._threshold = threshold_mb
         self._seen_so_far = 0
         self._lock = threading.Lock()
 
-    def __call__(self, bytes_amount):
+    def __call__(self, bytes_amount: int):
+        """
+        Record a write/transfer/whatever. If this causes running volume to
+        cross a multiple of self._threshold, print and log the running volume.
+
+        Args:
+            bytes_amount: number of bytes just written/transferred
+        """
         with self._lock:
             extra = self._seen_so_far + bytes_amount
-            if mb(extra - self._seen_so_far) > 25:
+            if mb(extra - self._seen_so_far) > self._threshold:
                 console_and_log(
                     stamp() + f"transferred {mb(extra)}MB", style="blue"
                 )
@@ -98,6 +144,16 @@ class AbstractMonitor(ABC):
         formatter: Callable[[float], float] = identity,
         name: Optional[str] = None,
     ):
+        """
+
+        Args:
+            digits: number of digits to round output to. if None, don't round.
+            qualities: dictionary of subtypes of monitored quantity. if None,
+                the Monitor only measures one thing.
+            instrument: function used to perform monitoring.
+            formatter: function used to format `instrument`'s output.
+            name: default name of the monitor.
+        """
         if isinstance(qualities, (list, tuple)):
             qualities = {i: i for i in qualities}
         self.digits = digits
@@ -115,20 +171,39 @@ class AbstractMonitor(ABC):
         self.unitstring = f" {self.units}" if len(self.units) > 0 else ""
         self.name = self.__class__.__name__ if name is None else name
 
-    def _round(self, val):
+    def _round(self, val: Union[float, Mapping[str, float]]):
+        """round a measurement if set to do so."""
         if self.digits is None:
             return val
         if isinstance(val, Mapping):
             return {k: round(v, self.digits) for k, v in val.items()}
         return round(val, self.digits)
 
-    def _unpack_reading(self, reading):
+    def _unpack_reading(
+        self, reading: Union[tuple, Mapping]
+    ) -> dict[str, float]:
+        """
+        unpack an instrument reading. for monitors with multiple qualities.
+
+        Args:
+            reading: a named tuple or a Mapping containing measurements for
+                various qualities.
+
+        Returns:
+            formatted dictionary of readings for each quality
+        """
         if isinstance(reading, tuple):
-            # noinspection PyProtectedMember
             reading = reading._asdict()
         return {k: self.formatter(v) for k, v in reading.items()}
 
-    def _update_plural(self, reading, lap):
+    def _update_plural(self, reading: Union[tuple, Mapping], lap: bool):
+        """
+        update registers for each quality from a reading.
+
+        Args:
+            reading: instrument output
+            lap: record this as a 'lap/split' (i.e., reset interval)?
+        """
         self.absolute = {k: reading[v] for k, v in self.qualities.items()}
         if len(self.interval) == 0:
             self.interval = {t: 0 for t in self.qualities}
@@ -148,9 +223,15 @@ class AbstractMonitor(ABC):
         if lap is True:
             self.last = self.absolute
 
-    def _update_single(self, reading, lap):
+    def _update_single(self, reading: float, lap: bool):
+        """
+        update registers from a reading.
+
+        Args:
+            reading: instrument output
+            lap: record this as a 'lap/split' (i.e., reset interval)?
+        """
         self.absolute = reading
-        # maybe need to do a 'cumulative' attribute for certain instruments
         self.interval = self.absolute - self.last
         if self.cumulative is True:
             self.total = self.total + self.interval
@@ -159,7 +240,14 @@ class AbstractMonitor(ABC):
         if lap is True:
             self.last = self.absolute
 
-    def update(self, lap=False):
+    def update(self, lap: bool = False):
+        """
+        update the monitor, starting it if necessary. ignored if monitor is
+        paused.
+
+        Args:
+            lap: record this update as a 'lap/split' (i.e., reset interval)?
+        """
         if self.paused is True:
             return
         if self.started is False:
@@ -168,24 +256,41 @@ class AbstractMonitor(ABC):
         if isinstance(reading, (tuple, Mapping)):
             reading = self._unpack_reading(reading)
             return self._update_plural(reading, lap)
-        return self._update_single(self.formatter(reading), lap)
+        self._update_single(self.formatter(reading), lap)
 
     def _display_simple(self, _which):
+        """internal formatting function"""
         raise TypeError(
             f"_display_simple() not supported for {self.__class__.__name__}"
         )
 
     def _display_single(self, value, which):
+        """internal formatting function"""
         return f"{self._round(value)}{self.unitstring}{which}"
 
     def _display_plural(self, register, which):
+        """internal formatting function"""
         values = [
             f"{quality} {self._display_single(register[quality], '')}"
             for quality in self.qualities
         ] + [which]
         return ";".join(filter(None, values))
 
-    def display(self, which=None, say=False, simple=False):
+    def display(
+        self,
+        which: str = None,
+        say: bool = False,
+        simple: bool = False
+    ) -> str:
+        """
+        return string displaying the contents of one or all registers.
+
+        Args:
+            which: which register to print, or "all" for all. None prints
+                register defined in self.default_display
+            say: include name of register in output?
+            simple: format output tersely?
+        """
         which = self.default_display if which is None else which
         if which == "all":
             return "\n".join(
@@ -199,27 +304,72 @@ class AbstractMonitor(ABC):
             return self._display_plural(register, whichprint)
         return self._display_single(register, whichprint)
 
-    def rec(self, which=None):
+    def rec(
+        self, which: Optional[str] = None
+    ) -> Union[float, dict[str, float]]:
+        """
+        return value of one or all registers in numeric form.
+
+        Args:
+            which: name of register. self.default_display by default. "all"
+            for all.
+        """
         which = self.default_display if which is None else which
         if which == "all":
             return {this: self.rec(this) for this in self.registers}
         val = getattr(self, which)
         return self._round(val)
 
-    def peek(self, which=None, say=False, simple=False):
+    def peek(
+        self,
+        which: Optional[str] = None,
+        say: bool = False,
+        simple: bool = False
+    ) -> str:
+        """
+        peek at one or all registers. managed shorthand for self.update()
+        followed by self.display().
+
+        Args:
+            which: which register (default self.default_click, "all" for all)
+            say: include name of register in output?
+            simple: format output tersely?
+        """
         which = self.default_click if which is None else which
         self.update()
         return self.display(which, say, simple)
 
     def click(self):
+        """shorthand for self.update(True)"""
         self.update(True)
 
-    def clickpeek(self, which=None, say=False, simple=False):
+    def clickpeek(
+        self,
+        which: Optional[str] = None,
+        say: bool = False,
+        simple: bool = False
+    ) -> str:
+        """
+        click the lap button and look at the monitor. managed shorthand for
+        self.update(True) followed by self.display().
+
+        Args:
+            which: register to look at (default default_click, "all" for all)
+            say: include name of register in output?
+            simple: format output tersely?
+        """
         which = self.default_click if which is None else which
         self.click()
         return self.display(which, say, simple)
 
-    def start(self, restart=False):
+    def start(self, restart: bool = False):
+        """
+        start the monitor. unpauses if monitor is paused.
+
+        Args:
+            restart: if monitor is already started, restart it, clearing all
+            entries?
+        """
         self.paused = False
         if (restart is False) and (self.started is True):
             return
@@ -238,10 +388,12 @@ class AbstractMonitor(ABC):
         self.update()
 
     def pause(self):
+        """pause the monitor."""
         self.update()
         self.paused = True
 
     def restart(self):
+        """restart the monitor."""
         self.start(restart=True)
 
     def __str__(self):
@@ -310,9 +462,14 @@ class CPUTime(AbstractMonitor):
 
 
 class Usage(AbstractMonitor):
-    """simple Disk usage monitor"""
+    """simple disk usage monitor"""
 
     def __init__(self, *, digits: Optional[int] = 3, path="."):
+        """
+        Args:
+            digits: number of digits (as in AbstractMonitor)
+            path: root directory to monitor
+        """
         super().__init__(digits=digits)
         self.qualities = {"total": "total", "used": "used", "free": "free"}
         self.instrument = partial(psutil.disk_usage, path)
@@ -342,7 +499,7 @@ class DiskIO(AbstractMonitor):
 
 
 class NetworkIO(AbstractMonitor):
-    """simple Network io monitor"""
+    """simple network I/O monitor"""
 
     def __init__(self, *, digits: Optional[int] = 3):
         super().__init__(digits=digits)
@@ -360,7 +517,7 @@ class NetworkIO(AbstractMonitor):
 
 
 class Load(AbstractMonitor):
-    """simple Load monitoring device"""
+    """simple CPU load monitoring device"""
 
     def __init__(self, *, digits: Optional[int] = 3):
         super().__init__(digits=digits)
@@ -377,8 +534,8 @@ class Load(AbstractMonitor):
     default_click = "absolute"
 
 
-def make_monitors(*, digits: Optional[int] = 3):
-    """make a set of monitors"""
+def make_monitors(*, digits: Optional[int] = 3) -> dict[str, AbstractMonitor]:
+    """make a default set of monitors"""
     return {
         "cpu": CPU(digits=digits),
         "cputime": CPUTime(digits=digits),
@@ -390,7 +547,26 @@ def make_monitors(*, digits: Optional[int] = 3):
     }
 
 
-def make_stat_printer(monitors: Mapping[str, AbstractMonitor]):
+def make_stat_printer(
+    monitors: Mapping[str, AbstractMonitor]
+) -> Callable[
+     [bool, bool, Any, ...], Union[str, Mapping[str, AbstractMonitor]]
+]:
+    """
+    Args:
+        monitors: dictionary of AbstractMonitors
+
+    Returns:
+        a function that holds `monitors` in enclosing scope.
+
+        when called, and `eject` (its second positional parameter) is False,
+        updates all monitors, passing its first positional parameter (`lap`)
+        to the `update` methods of all monitors, and and kwargs to the
+        `display` methods of all monitors, and returns a string containing
+        the concatenated output of all monitor displays.
+
+        if `eject` is True, instead returns the dictionary of monitors.
+    """
     def printstats(lap=True, eject=False, **display_kwargs):
         if eject is True:
             return monitors
@@ -409,7 +585,7 @@ class Recorder:
     with make_stat_records()
     """
 
-    def __init__(self, func):
+    def __init__(self, func: Callable):
         self.func = func
         self.cache = None
 
@@ -430,14 +606,28 @@ class Recorder:
 
 
 def make_stat_records(
-    monitors: MutableMapping[str, Union[AbstractMonitor, Callable]]
+    monitors: MutableMapping[
+        str, Union[AbstractMonitor, Callable[[Any, ...], float]]
+    ]
 ):
+    """
+    Args:
+        monitors: dictionary of AbstractMonitors and/or functions that return
+        floats.
+
+    Returns:
+        a stat-recording function that works much the function produced by
+        `make_stat_printer`, but returns a dictionary of numerical values
+        rather than simply returning strings.
+    """
     for key in monitors.keys():
         if not isinstance(monitors[key], AbstractMonitor):
             monitors[key] = Recorder(monitors[key])
 
     def recordstats(
-        lap=True, eject=False, **display_kwargs
+        lap: bool = True,
+        eject: bool = False,
+        **display_kwargs
     ) -> Union[
         Mapping[str, Union[AbstractMonitor, Recorder]],
         dict[str, Union[dict, float]]
@@ -450,7 +640,24 @@ def make_stat_records(
     return recordstats
 
 
-def log_factory(stamper, stat, log_fields, logfile):
+def log_factory(
+    stamper: Callable[[], Any],
+    stat: Callable[[], Any],
+    log_fields: Sequence[str],
+    logfile: Union[str, Path]
+) -> Callable[[Any, ...], None]:
+    """
+    Args:
+        stamper: line identifier function (i.e., a timestamper)
+        stat: statistic-generating function
+        log_fields: expected kwargs to log function -- this provides an
+            ordering for columns in the output CSV
+        logfile: where to write the log
+
+    Returns:
+        a function that, when called, creates, prints, and writes a
+        comma-separated log line.
+    """
     def lprint(message):
         print(message)
         with open(logfile, "a") as stream:
@@ -470,13 +677,30 @@ class TimeSwitcher:
     little object that tracks changing times
     """
 
-    def __init__(self, start_time: str = None):
+    def __init__(
+        self,
+        start_time: Optional[str] = None
+    ):
+        """
+        Args:
+            start_time: optional start time for the timer, in any format
+                recognized by dateutil.
+        """
         if start_time is not None:
             self.times = [start_time]
         else:
             self.times = []
 
-    def check_time(self, string):
+    def check_time(self, string: str) -> bool:
+        """
+        if the passed value is parseable as a time, append it to self.times.
+        
+        Args:
+            string: stringified time (maybe)
+
+        Returns:
+            True if `string` could be parsed as a time, False if not.
+        """
         try:
             self.times.append(dtp.parse(string).isoformat())
             return True
