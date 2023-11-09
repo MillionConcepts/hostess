@@ -168,7 +168,7 @@ def get_jupyter_token(
     )
 
 
-NotebookConnection: tuple[str, Process, Process]
+NotebookConnection = tuple[str, Process, Process]
 """
 structure containing results of a tunneled Jupyter Notebook execution.
 
