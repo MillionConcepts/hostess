@@ -351,8 +351,6 @@ def get_module(module_name: str) -> ModuleType:
     """
     if module_name in sys.modules:
         return sys.modules[module_name]
-    if Path(module_name).stem in sys.modules:
-        return sys.modules[module_name]
     try:
         return import_module(module_name)
     except ModuleNotFoundError:
