@@ -447,6 +447,7 @@ def analyze_references(
     2. This function is only completely compatible with CPython.
     3. All 'exclude', 'permit', and 'filter' operations are implicitly
         connected by boolean AND. Represented as a predicate:
+
             ```
             (~PRIMITIVE(REF) | ~FILTER_PRMITIVE)
             & (~HISTORY(REF) | ~FILTER_HISTORY)
