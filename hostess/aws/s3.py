@@ -11,22 +11,22 @@ introspection, or more flexible I/O stream manipulation are required. We also
 like the syntax better.
 """
 import datetime as dt
-import io
-import sys
 from functools import partial
+import io
 from inspect import getmembers
 from multiprocessing import Process
 from pathlib import Path
+import sys
 from typing import (
-    Union,
-    Optional,
-    Literal,
-    Iterator,
-    MutableMapping,
-    Mapping,
+    Any,
     Callable,
     IO,
-    Any,
+    Iterator,
+    Literal,
+    Mapping,
+    MutableMapping,
+    Optional,
+    Union,
 )
 import warnings
 
@@ -34,18 +34,17 @@ import boto3
 import boto3.resources.base
 import boto3.s3.transfer
 import botocore.client
-import requests
 from cytoolz import keyfilter
 from dustgoggles.func import naturals
+import requests
 
 from hostess.aws.utilities import init_client, init_resource
-
 # general note: we're largely, although not completely, avoiding use of the
 # boto3 s3.Bucket object, as it performs similar types of abstraction which
 # collide with ours -- for instance, it often prevents us from getting the
 # API's responses, which we in some cases want.
 from hostess.subutils import piped
-from hostess.utilities import stamp, console_and_log, infer_stream_length
+from hostess.utilities import console_and_log, infer_stream_length, stamp
 
 
 class Bucket:
@@ -155,20 +154,23 @@ def put(
     """
     Upload a file or buffer to an S3 bucket
 
-    :param bucket: bucket name as str, or Bucket object
-    :param obj: str, Path, or filelike / buffer object to upload; None for
-        'touch' behavior
-    :param key: S3 key. If not specified then str(
-        file_or_buffer) is used -- will most likely look bad if it's a buffer
-    :param client: boto s3 client; makes a default client if None; used
-        only if bucket is a bucket name as string and not an already-bound
-        Bucket
-    :param session: botocore.session.Session instance; used only if resource
-        is None, makes a default resource from that session
-    :param pass_string -- write passed string directly to file instead of
-        interpreting as a path
-    :param config: boto3.s3.transfer.TransferConfig; default if None
-    :return: API response
+    Args:
+        bucket: bucket name as str, or Bucket object
+        obj: str, Path, or filelike / buffer object to upload; None for
+            'touch' behavior
+        key: S3 key. If not specified then str(file_or_buffer) is used -- 
+            will most likely look bad if it's a buffer
+        client: boto s3 client; makes a default client if None; used only if 
+            `bucket` is a bucket name as string and not an already-bound
+            Bucket
+        session: botocore.session.Session instance; used only if `resource`
+            is None, makes a default resource from that session
+        pass_string: if True, write passed string directly to file instead of
+            interpreting as a path
+        config: boto3.s3.transfer.TransferConfig; default if None
+    
+    Returns:
+        API response
     """
     bucket = Bucket.bind(bucket, client, session)
     if config is None:
@@ -465,17 +467,6 @@ def put_stream(
     #  to this
     chunksize: Optional[int] = None,
 ):
-    """
-    :param bucket:
-    :param key:
-    :param obj:
-    :param client:
-    :param config:
-    :param session:
-    :param upload_threads:
-    :param download_threads:
-    :return:
-    """
     bucket = Bucket.bind(bucket, client, session, config)
     if config is None:
         config = bucket.config

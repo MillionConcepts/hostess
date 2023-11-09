@@ -1,46 +1,47 @@
-import datetime as dt
-import io
-import os
-import pickle
-import re
-import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
+import datetime as dt
 from functools import cache, partial
+import io
 from itertools import chain
+import os
 from pathlib import Path
+import pickle
 from random import choices
+import re
 from string import ascii_lowercase
+import time
 from typing import (
+    Callable,
     Collection,
     Literal,
-    Sequence,
+    Mapping,
     MutableMapping,
     Optional,
-    Callable,
-    Mapping,
+    Sequence,
+    Union
 )
 
-import dateutil.parser as dtp
 from botocore.exceptions import ClientError
 from cytoolz.curried import get
+import dateutil.parser as dtp
 from dustgoggles.func import gmap, zero
 from dustgoggles.structures import listify
 from invoke import UnexpectedExit
 
 import hostess.shortcuts as ks
 from hostess.aws.pricing import (
-    get_on_demand_price,
     get_cpu_credit_price,
     get_ec2_basic_price_list,
+    get_on_demand_price,
 )
 from hostess.aws.utilities import (
+    autopage,
+    clarify_region,
     init_client,
     init_resource,
     tag_dict,
     tagfilter,
-    autopage,
-    clarify_region,
 )
 from hostess.caller import generic_python_endpoint
 from hostess.config import EC2_DEFAULTS, GENERAL_DEFAULTS
@@ -51,11 +52,15 @@ from hostess.utilities import (
 )
 
 
-def summarize_instance_description(description):
-    """
-    convert an Instance element of a JSON structure returned by a
-    DescribeInstances operation to a more concise format.
-    """
+InstanceDescription = dict[str, Union[dict, str]]
+"""
+concise version of an EC2 API Instance data structure 
+(see https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_Instance.html)
+"""
+
+
+def summarize_instance_description(description: str) -> InstanceDescription:
+    """convert an EC2 API Instance object to a more concise format."""
     return {
         "name": tag_dict(description.get("Tags", {})).get("Name"),
         "ip": description.get("PublicIpAddress"),
@@ -76,11 +81,26 @@ def ls_instances(
     long: bool = False,
     tag_regex: bool = True,
     **tag_filters,
-):
+) -> tuple[InstanceDescription]:
     """
-    return tuple of records describing all instances accessible to aws user.
-    if long=True is not passed, includes only the most regularly-pertinent
-    information, flattened, with succint field names.
+    `ls` for EC2 instances.
+
+    Args:
+        identifier: string specifying a particular instance. may be a 
+            stringified IP address or instance id.
+        states: strings specifying legal states for listed instances.
+        raw_filters: search filters to pass directly to the EC2 API.
+        client: optional boto3 Client object
+        session: optional boto3 Session object
+        long: if not True, output includes only the most regularly-pertinent
+            information, flattened, with succinct field names.
+        tag_regex: regex patterns for tag matching.
+        tag_filters: filters to interpret as tag name / value pairs before 
+            passing to the EC2 API.
+
+    Returns:
+        tuple of records describing all matching EC2 instances owned by 
+            caller.
     """
     client = init_client("ec2", client, session)
     filters = [] if raw_filters is None else raw_filters
@@ -95,7 +115,10 @@ def ls_instances(
     descriptions = chain.from_iterable(
         map(get("Instances"), response["Reservations"])
     )
-    # the ec2 api does not support string inclusion or other fuzzy filters.
+    # TODO: examine newer Filter API functionality (see 
+    # https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_Filter.html)
+    
+    # the EC2 api does not support string inclusion or other fuzzy filters.
     # we would like to be able to fuzzy-filter, so we apply our tag filters to
     # the structure returned by boto3 from its DescribeInstances call.
     descriptions = filter(
