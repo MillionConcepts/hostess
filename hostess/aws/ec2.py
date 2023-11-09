@@ -59,8 +59,14 @@ concise version of an EC2 API Instance data structure
 """
 
 
-def summarize_instance_description(description: str) -> InstanceDescription:
-    """convert an EC2 API Instance object to a more concise format."""
+def summarize_instance_description(
+    description: Mapping
+) -> InstanceDescription:
+    """
+    convert a dictionary produced from an EC2 API Instance object to a more 
+    concise format. Likely sources for this dictionary include `boto3` or 
+    parsing JSON responses from the AWS CLI or HTTP API.
+    """
     return {
         "name": tag_dict(description.get("Tags", {})).get("Name"),
         "ip": description.get("PublicIpAddress"),
