@@ -3,22 +3,24 @@ from __future__ import annotations
 
 import _io
 import datetime as dt
-import logging
-import re
-import sys
-import time
-from operator import is_
 from functools import wraps
 from importlib import import_module
 from importlib.util import spec_from_file_location, module_from_spec
+import logging
 from pathlib import Path
+from operator import is_
+import re
 from socket import gethostname
+import sys
+import time
 from types import ModuleType
-from typing import Callable, MutableMapping, Optional, Sequence, Any, Hashable
+from typing import (
+    Any, Callable, Hashable, Iterable, MutableMapping, Optional, Sequence
+)
 
-import rich.console
 from cytoolz import first
 from dustgoggles.dynamic import exc_report
+import rich.console
 import yaml
 
 
@@ -162,6 +164,7 @@ def notary(
     """
     create a function that records, timestamps, and optionally prints messages.
     if you pass eject=True to that function, it will return its note cache.
+
     Args:
         cache: cache for notes (if None, creates a dict)
         be_loud: if True, makes output function verbose by default. individual
@@ -169,8 +172,9 @@ def notary(
         resolution: time resolution in significant digits after the second.
             collisions can occur if entries are sent faster than the time
             resolution.
+
     Returns:
-        note: callable for notetaking
+        note: function for notetaking
     """
     if cache is None:
         cache = {}
@@ -182,12 +186,13 @@ def notary(
     ) -> Optional[MutableMapping]:
         """
         Args:
-            message: message to record in cache and optionally print.
+            message: message to record in `cache` and optionally print.
             loud: print message as well?
-            eject: return cache. if eject is True, ignores all other arguments
-                (does not log this call)
+            eject: if True, return `cache` ignore all other arguments, and
+                do not log this call.
+
         Returns:
-            cache: only if eject is True
+            usually `None`; if `eject` is True, instead `cache`
         """
         if eject is True:
             return cache
@@ -226,6 +231,7 @@ class Aliased:
     generic wrapper for aliasing a class method. for instance, if you'd like a
     library function to `append` to a list, but it's only willing to `write`:
 
+    ```
     >>> import json
     >>> my_list = []
     >>> writeable_list = Aliased(my_list, ("write",), "append")
@@ -233,6 +239,7 @@ class Aliased:
     >>> print(writeable_list)
     Aliased: ('write',) -> append:
     ['[1', ', 2', ', 3', ']']
+    ```
     """
 
     def __init__(self, wrapped: Any, aliases: Sequence[str], referent: str):
@@ -289,9 +296,7 @@ def timeout_factory(
     return waiting, unwait
 
 
-def signal_factory(
-    threads: MutableMapping,
-) -> Callable[[Hashable], None]:
+def signal_factory(threads: MutableMapping) -> Callable[[Hashable], None]:
     """
     creates a 'signaler' function that simply assigns values to a dict
     bound in enclosing scope. this is primarily intended as a simple
@@ -348,6 +353,12 @@ def get_module(module_name: str) -> ModuleType:
     dynamically import a module by name. check to see if it's already in
     sys.modules; if not, just try to import it; if that doesn't work, try to
     interpret module_name as a path.
+
+    Args:
+        module_name: name of or path to a Python module.
+
+    Returns:
+        a module, hopefully.
     """
     if module_name in sys.modules:
         return sys.modules[module_name]
@@ -363,6 +374,10 @@ def get_module(module_name: str) -> ModuleType:
 
 
 def yprint(obj, indent=0, replace_null=True, maxlen=256):
+    """
+    lazy way to pretty-print many objects by using `pyyaml`'s excellent YAML 
+    formatter.
+    """
     try:
         text = yaml.dump(obj)
     except TypeError:
@@ -374,5 +389,16 @@ def yprint(obj, indent=0, replace_null=True, maxlen=256):
     )
 
 
-def is_any(obj, coll):
+def is_any(obj: Any, coll: Iterable) -> bool:
+    """
+    like `obj in coll`, for use in cases when `obj` and `coll` do not, or 
+    might not, support use of `in`.
+
+    Args:
+        obj: an object
+        coll: a collection
+
+    Returns:
+        True if `obj` is in `coll`; False if not
+    """
     return any(map(lambda item: is_(obj, item), coll))
