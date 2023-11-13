@@ -16,6 +16,7 @@ from typing import (
     Mapping,
     MutableMapping,
     Optional,
+    Sequence,
     Union,
 )
 
@@ -167,11 +168,7 @@ class PContext:
 
 def scopedicts(
     frame: FrameType,
-    scopes: tuple[Literal["locals", "globals", "builtins"]] = (
-        "locals",
-        "globals",
-        "builtins",
-    ),
+    scopes: Sequence[ScopeName] = ("locals", "globals", "builtins"),
 ) -> tuple[dict, ...]:
     """
     fetch specified scopes from a frame and return them in a tuple. the
@@ -269,7 +266,7 @@ def scopedict_ids(
     frames: Union[FrameType, Collection[FrameType], None] = None,
     *,
     getstack: bool = False,
-    scopenames: Collection[ScopeName] = ("locals", "globals", "builtins"),
+    scopenames: Sequence[ScopeName] = ("locals", "globals", "builtins"),
     distinguish_locals: bool = True,
 ):
     """
@@ -279,8 +276,11 @@ def scopedict_ids(
     avoiding accidental 'direct' manipulation of namespaces.
 
     Args:
+        frames: a single frame, a collection of frames, or None. if None,
+            get ids of scopedicts of the caller's frame.
         getstack: if True, ignore the frames argument and instead look at
             all levels of the stack above the caller's frame.
+        scopenames: names of scopes to fetch.
         distinguish_locals: if True, return a tuple whose elements are:
             [0] all ids
             [1] just local-scope ids below top level
