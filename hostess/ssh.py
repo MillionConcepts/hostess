@@ -83,12 +83,12 @@ class SSH(RunCommand):
     tail = ssh("tail -f a.txt")
     for n in range(5):
         ssh(f"echo {n} >> a.txt")
-    print(tail.out)
+    print(','.join([s.strip('\n') for s in tail.out]))
     ssh.con('ls -l / | grep dev')
     ```
     output:
     ```
-    ['hi', '0\n', '1\n', '2\n', '3\n']
+    'hi, 0, 1, 2, 3'
     drwxr-xr-x  15 root   root     3320 Nov 12 01:50 dev
     ```
     """
