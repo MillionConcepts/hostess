@@ -70,7 +70,7 @@ def open_tunnel(
 class SSH(RunCommand):
     """
     callable interface to an SSH connection to a remote host. basically a
-    wrapper for a`fabric.connection.Connection` object with additional
+    wrapper for a fabric.connection.Connection object with additional
     functionality for managed command execution. NOTE: supports only keyfile
     authentication.
 
