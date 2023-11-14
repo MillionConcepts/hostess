@@ -5,7 +5,9 @@ import re
 import os
 from pathlib import Path
 import time
-from typing import Hashable, Mapping, Optional, Union
+from typing import (
+    Any, Callable, Collection, Hashable, Mapping, Optional, Union
+)
 
 from dustgoggles.func import zero, filtern
 from dustgoggles.structures import listify
@@ -16,7 +18,7 @@ import pandas as pd
 
 from hostess.config import GENERAL_DEFAULTS
 import hostess.shortcuts as short
-from hostess.subutils import RunCommand
+from hostess.subutils import RunCommand, Processlike
 
 
 def open_tunnel(
@@ -28,7 +30,7 @@ def open_tunnel(
 ) -> tuple[Process, dict[str, Union[int, str, Path]]]:
     """
     create a child process that maintains an SSH tunnel. NOTE: supports only
-    keyfile-based authentication.
+    keyfile authentication.
 
     Args:
         host: remote host ip
@@ -67,9 +69,28 @@ def open_tunnel(
 
 class SSH(RunCommand):
     """
-    interface to an SSH connection to a remote host. basically a wrapper for a
-    `fabric.connection.Connection` object with additional functionality for
-    managed command execution.
+    callable interface to an SSH connection to a remote host. basically a
+    wrapper for a`fabric.connection.Connection` object with additional
+    functionality for managed command execution. NOTE: supports only keyfile
+    authentication.
+
+    Example of use:
+    ```
+    ssh = SSH.connect(
+        "1.11.11.111", 'remote_user', '/home/local_user/.ssh/keyfile.pem'
+    )
+    ssh("echo hi > a.txt")
+    tail = ssh("tail -f a.txt")
+    for n in range(5):
+        ssh(f"echo {n} >> a.txt")
+    print(tail.out)
+    ssh.con('ls -l / | grep dev')
+    ```
+    output:
+    ```
+    ['hi', '0\n', '1\n', '2\n', '3\n']
+    drwxr-xr-x  15 root   root     3320 Nov 12 01:50 dev
+    ```
     """
 
     def __init__(
@@ -81,22 +102,20 @@ class SSH(RunCommand):
     ):
         """
         Args:
-            command: shell command to execute on remote host. may be omitted
-                if this object is not intended to execute a command.
+            command: optional shell command to 'curry'  into this object. may
+                be omitted if commands will be provided later, or if this
+                particular object is not intended to execute commands.
             conn: Fabric `Connection` object
             key: path to keyfile; may be provided after instantiation, but
                 must be provided before command is actually executed.
-            **kwargs: kwargs to pass to the command execution itself. kwarg
-                names beginning with '_' specify execution meta-parameters;
-                others will be inserted directly into the command as `--`-type
-                shell parameters.
+            **kwargs: RunCommand init kwargs (see RunCommand documentation)
         """
         if conn is None:
             raise TypeError("a Connection must be provided")
         super().__init__(command, conn, conn["runners"]["remote"], **kwargs)
         self.host, self.uname, self.key = conn.host, conn.user, key
         self.conn = conn  # effectively an alias for self.ctx
-        self.tunnels = []
+        self.tunnels: list[tuple[Process, dict]] = []
 
     @classmethod
     def connect(
@@ -167,6 +186,57 @@ class SSH(RunCommand):
         )
         self.tunnels.append((process, meta))
 
+    def __call__(
+        self,
+        *args,
+        _quiet: bool = False,
+        _viewer: bool = True,
+        _wait: bool = False,
+        **kwargs
+    ) -> Processlike:
+        """
+        run a shell command in the remote host's default interpreter.
+
+        Args:
+            *args: args to use to construct the command.
+            _viewer: if `True`, return a hostess `Viewer` object. otherwise
+                return unwrapped Fabric `Result`.
+            _wait: if `True`, block until command terminates (or connection
+                fails). _w is an alias.
+            _quiet: if `False`, print stdout and stderr, should the process
+                return any before this function terminates. Generally best
+                used with _wait=True.
+            **kwargs: kwargs to pass to command execution. kwarg
+                names beginning with '_' specify execution meta-parameters;
+                others will be inserted directly into the command as `--`-type
+                shell parameters.
+
+        Returns:
+            object representing executed process.
+        """
+        if (_w := kwargs.pop('_w', None)) is not None:
+            _wait = _w
+        result = super().__call__(*args, _viewer=_viewer, **kwargs)
+        if _wait is True:
+            result.wait()
+        if _quiet is False:
+            from rich import print as rp
+            if len(result.stdout) > 0:
+                rp(*result.stdout)
+            if len(result.stderr) > 0:
+                rp(*map(lambda t: f"[red]{t}[/red]", result.stderr))
+        return result
+
+    def con(self, *args, **kwargs):
+        """
+        pretend you are running a command on the instance while looking at a
+        terminal emulator, pausing for output and pretty-printing it to stdout.
+
+        like SSH.__call__() with _wait=True, _quiet=False, but does not return
+        a process abstraction. fun in interactive environments.
+        """
+        self(*args, _quiet=False, _wait=True, **kwargs)
+
     def __str__(self):
         return f"{super().__str__()}\n{self.uname}@{self.host}"
 
@@ -209,6 +279,18 @@ TOKEN_PATTERN = re.compile(r"(?<=\?token=)([a-z]|\d)+")
 
 
 def find_conda_env(cmd: RunCommand, env: str = None) -> str:
+    """
+    find location of a named conda environment. intended primarily for use
+    on remote hosts.
+
+    Args:
+        cmd: instance of RunCommand or one of its subclasses; most likely an
+            SSH instance.
+        env: name of conda environment.
+
+    Returns:
+        absolute path to root directory of conda environment.
+    """
     env = "base" if env is None else env
     suffix = f"/envs/{env}" if env != "base" else ""
     try:
@@ -230,10 +312,29 @@ def find_conda_env(cmd: RunCommand, env: str = None) -> str:
     raise FileNotFoundError("conda environment not found.")
 
 
-def stop_jupyter_factory(command, jupyter, remote_port):
-    def stop_it(waitable):
+def stop_jupyter_factory(
+    command: RunCommand,
+    jupyter: str,
+    port: int
+) -> Callable:
+    """
+    Create a function that shuts down a Jupyter server when some other task
+    or process completes.
+
+    Args:
+        command: an instance of RunCommand or one of its subclasses, likely
+            an SSH object.
+        jupyter: absolute path to jupyter executable
+        port: port on which jupyter server is running
+
+    Returns:
+        function that, when passed anything with a `wait` method, calls that
+        method, and once it finishes, attempts to stop the Jupyter server
+        running on the specified port.
+    """
+    def stop_it(waitable: Any):
         waitable.wait()
-        command(f"{jupyter} stop --NbserverStopApp.port={remote_port}")
+        command(f"{jupyter} stop --NbserverStopApp.port={port}")
 
     return stop_it
 
@@ -242,7 +343,19 @@ def get_jupyter_token(
     command: RunCommand,
     jupyter_executable: str,
     port: int
-):
+) -> str:
+    """
+    Get the access token of a Jupyter server running on the specified port.
+
+    Args:
+        command: an instance of RunCommand or one of its subclasses, likely
+            an SSH object.
+        jupyter_executable: path to Jupyter executable.
+        port: port on which Jupyter server is running.
+
+    Returns:
+        the Jupyter server's access token.
+    """
     for attempt in range(5):
         try:
             jlist = command(f"{jupyter_executable} list").stdout
@@ -256,12 +369,12 @@ def get_jupyter_token(
     )
 
 
-NotebookConnection = tuple[str, Process, Process]
+NotebookConnection = tuple[str, tuple[Process, dict], Processlike]
 """
 structure containing results of a tunneled Jupyter Notebook execution.
 
 1. URL for Jupyter server
-2. SSH tunnel process
+2. SSH tunnel process + metadata
 3. Jupyter execution process
 """
 
@@ -276,6 +389,25 @@ def jupyter_connect(
     working_directory: Optional[str] = None,
     **command_kwargs,
 ) -> NotebookConnection:
+    """
+    Launch a Jupyter server on a remote host over an SSH tunnel.
+
+    Args:
+        ssh: `SSH` object connected to remote host
+        local_port: port number for local end of tunnel
+        remote_port: port number for remote Jupyter server / remote end of
+            tunnel
+        env: conda env from which to launch Jupyter server; if none is
+            specified, use the remote host's default `jupyter`
+        get_token: get the access token from the server?
+        kill_on_exit: attempt to kill the Jupyter server when the
+            `jupyter_launch` process terminates?
+        working_directory: working directory for jupyter server
+        **command_kwargs: additional kwargs to pass to `jupyter notebook`
+
+    Returns:
+        structure containing results of tunneled notebook execution
+    """
     if env is not None:
         jupyter = f"{find_conda_env(ssh, env)}" f"/bin/jupyter notebook"
     else:
@@ -299,8 +431,20 @@ def jupyter_connect(
     return jupyter_url, ssh.tunnels[-1], jupyter_launch
 
 
-def find_ssh_key(keyname, paths=None) -> Union[Path, None]:
-    """look for private SSH key in common folders"""
+def find_ssh_key(
+    keyname, paths: Optional[Collection[Union[str, Path]]] = None
+) -> Union[Path, None]:
+    """
+    look for private SSH keyfile.
+
+    Args:
+        keyname: full or partial name of keyfile
+        paths: paths in which to search for key file. if not specified, look
+            in hostess.config.GENERAL_DEFAULTS['secrets_folders']
+
+    Returns:
+        path to keyfile, or None if not found.
+    """
     if paths is None:
         paths = list(GENERAL_DEFAULTS["secrets_folders"]) + [os.getcwd()]
     for directory in filter(lambda p: p.exists(), map(Path, listify(paths))):

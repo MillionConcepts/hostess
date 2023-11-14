@@ -175,7 +175,7 @@ class Instance:
         """
         Interface for an EC2 instance, permitting state control, monitoring,
         and remote process calls. Uses a combination of direct SSH access and
-        EC2 API calls. Some features usable with no SSH access.
+        EC2 API calls.
 
         Args:
             description: unique identifier for the instance, either its public
@@ -234,8 +234,8 @@ class Instance:
         self.zone = instance_.placement["AvailabilityZone"]
         if key is None:
             key = str(find_ssh_key(instance_.key_name))
-        if key is None:
-            raise FileNotFoundError("can't find key file for instance.")
+            if key == 'None':
+                raise FileNotFoundError("can't find key file for instance.")
         self.uname, self.key = uname, key
         self.instance_ = instance_
         self._ssh = None
@@ -300,7 +300,7 @@ class Instance:
         **kwargs
     ) -> Processlike:
         """
-        remotely run an explicit command in the default interpreter via SSH.
+        run a command in the instance's default interpreter via SSH.
 
         Args:
             *args: args to pass to `self._ssh`.
@@ -317,25 +317,17 @@ class Instance:
             object representing executed process.
         """
         self._raise_unready()
-        if (_w := kwargs.pop('_w', None)) is not None:
-            _wait = _w
-        result = self._ssh(*args, _viewer=_viewer, **kwargs)
-        if _wait is True:
-            result.wait()
-        if _quiet is False:
-            from rich import print as rp
-            if len(result.stdout) > 0:
-                rp(*result.stdout)
-            if len(result.stderr) > 0:
-                rp(*map(lambda t: f"[red]{t}[/red]", result.stderr))
-        return result
+        return self._ssh(
+            *args, _viewer=_viewer, _wait=_wait, _quiet=_quiet, **kwargs
+        )
 
     def con(self, *args, **kwargs):
         """
-        run a command in the default interpreter 'console-style', pausing for
-        output and printing it to stdout.
+        pretend you are running a command on the instance while looking at a
+        terminal emulator, pausing for output and pretty-printing it to stdout.
 
-        Alias for Instance.command with _wait=True, _quiet=False.
+        like Instance.command with _wait=True, _quiet=False, but does not
+        return a process abstraction. fun in interactive environments.
         """
         self.command(*args, _quiet=False, _wait=True, **kwargs)
 
