@@ -1,16 +1,18 @@
 """tracking, logging, and synchronization objects"""
-import threading
-import time
 from abc import ABC
-from collections import defaultdict, namedtuple
+from collections import defaultdict
 from functools import partial, wraps
 from pathlib import Path
+import threading
+import time
 from typing import (
-    MutableMapping,
+    Any,
     Callable,
+    Mapping,
+    MutableMapping,
     Optional,
+    Sequence,
     Union,
-    Mapping, Any, Sequence,
 )
 
 from cytoolz import identity
@@ -23,7 +25,7 @@ from hostess.utilities import mb, console_and_log, stamp, curry
 
 def memory() -> int:
     """
-    shorthand for psutil.Process().memory_info().rss
+    alias for psutil.Process().memory_info().rss
 
     Returns:
         current process's real set size in bytes
@@ -36,6 +38,7 @@ class FakeBouncer:
     fake blocking rate-limiter. Placeholder for a `Bouncer` in functions that
     don't actually want to debounce.
     """
+
     def clean(self):
         pass
 
@@ -53,7 +56,7 @@ class Bouncer(FakeBouncer):
         self,
         ratelimit: float = 0.1,
         window: int = 1,
-        blockdelay: Optional[float] = None
+        blockdelay: Optional[float] = None,
     ):
         """
         Args:
@@ -193,6 +196,7 @@ class AbstractMonitor(ABC):
             formatted dictionary of readings for each quality
         """
         if isinstance(reading, tuple):
+            # noinspection PyProtectedMember,PyUnresolvedReferences
             reading = reading._asdict()
         return {k: self.formatter(v) for k, v in reading.items()}
 
@@ -277,10 +281,7 @@ class AbstractMonitor(ABC):
         return ";".join(filter(None, values))
 
     def display(
-        self,
-        which: str = None,
-        say: bool = False,
-        simple: bool = False
+        self, which: str = None, say: bool = False, simple: bool = False
     ) -> str:
         """
         return string displaying the contents of one or all registers.
@@ -324,7 +325,7 @@ class AbstractMonitor(ABC):
         self,
         which: Optional[str] = None,
         say: bool = False,
-        simple: bool = False
+        simple: bool = False,
     ) -> str:
         """
         peek at one or all registers. managed shorthand for self.update()
@@ -347,7 +348,7 @@ class AbstractMonitor(ABC):
         self,
         which: Optional[str] = None,
         say: bool = False,
-        simple: bool = False
+        simple: bool = False,
     ) -> str:
         """
         click the lap button and look at the monitor. managed shorthand for
@@ -550,7 +551,7 @@ def make_monitors(*, digits: Optional[int] = 3) -> dict[str, AbstractMonitor]:
 def make_stat_printer(
     monitors: Mapping[str, AbstractMonitor]
 ) -> Callable[
-     [bool, bool, Any, ...], Union[str, Mapping[str, AbstractMonitor]]
+    [bool, bool, Any, ...], Union[str, Mapping[str, AbstractMonitor]]
 ]:
     """
     Args:
@@ -561,13 +562,14 @@ def make_stat_printer(
 
             when called, and `eject` (its second positional parameter) is
             False, updates all monitors, passing its first positional
-            parameter (`lap`) to the `update` methods of all monitors, and
-            and kwargs to the `display` methods of all monitors, and returns
-            a string containing the concatenated output of all monitor
-            displays.
+            parameter (`lap`) to the `update` methods of all monitors,
+            and kwargs to the `display` methods of all monitors.
+            it returns a string containing the concatenated output of all
+            monitor displays.
 
             if `eject` is True, instead returns the dictionary of monitors.
     """
+
     def printstats(lap=True, eject=False, **display_kwargs):
         if eject is True:
             return monitors
@@ -610,7 +612,13 @@ def make_stat_records(
     monitors: MutableMapping[
         str, Union[AbstractMonitor, Callable[[Any, ...], float]]
     ]
-):
+) -> Callable[
+    [bool, bool, Any, ...],
+    Union[
+        Mapping[str, Union[AbstractMonitor, Recorder]],
+        dict[str, Union[dict, float]],
+    ],
+]:
     """
     Args:
         monitors: dictionary of AbstractMonitors and/or functions that return
@@ -626,18 +634,17 @@ def make_stat_records(
             monitors[key] = Recorder(monitors[key])
 
     def recordstats(
-        lap: bool = True,
-        eject: bool = False,
-        **display_kwargs
+        lap: bool = True, eject: bool = False, **display_kwargs
     ) -> Union[
         Mapping[str, Union[AbstractMonitor, Recorder]],
-        dict[str, Union[dict, float]]
+        dict[str, Union[dict, float]],
     ]:
         if eject is True:
             return monitors
         for v in monitors.values():
             v.update(lap)
         return {k: v.rec(**display_kwargs) for k, v in monitors.items()}
+
     return recordstats
 
 
@@ -645,7 +652,7 @@ def log_factory(
     stamper: Callable[[], Any],
     stat: Callable[[], Any],
     log_fields: Sequence[str],
-    logfile: Union[str, Path]
+    logfile: Union[str, Path],
 ) -> Callable[[Any, ...], None]:
     """
     Args:
@@ -659,6 +666,7 @@ def log_factory(
         a function that, when called, creates, prints, and writes a
             comma-separated log line.
     """
+
     def lprint(message):
         print(message)
         with open(logfile, "a") as stream:
@@ -678,10 +686,7 @@ class TimeSwitcher:
     little object that tracks changing times
     """
 
-    def __init__(
-        self,
-        start_time: Optional[str] = None
-    ):
+    def __init__(self, start_time: Optional[str] = None):
         """
         Args:
             start_time: optional start time for the timer, in any format
@@ -695,7 +700,7 @@ class TimeSwitcher:
     def check_time(self, string: str) -> bool:
         """
         if the passed value is parseable as a time, append it to self.times.
-        
+
         Args:
             string: stringified time (maybe)
 
@@ -718,7 +723,6 @@ class TimeSwitcher:
 
 
 class Ticker:
-
     def __init__(self):
         self.counts = defaultdict(int)
 
