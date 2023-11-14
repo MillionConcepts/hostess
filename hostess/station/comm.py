@@ -1,3 +1,4 @@
+"""simple, robust protocol for messaging and serialized data transfer."""
 from __future__ import annotations
 
 import struct
@@ -9,24 +10,34 @@ from google.protobuf.message import Message, DecodeError
 from hostess.station.proto import station_pb2 as hostess_proto
 from hostess.station.proto_utils import m2d
 
-# acknowledgement, end-of-message, start-of-header codes
 HOSTESS_ACK = b"\06hostess"
+"""hostess acknowledgement code"""
 HOSTESS_EOM = b"\03hostess"
+"""hostess end-of-message code"""
 HOSTESS_SOH = b"\01hostess"
-# one-byte-wide codes for Message type of comm body.
-# "none" means the comm body is not a serialized protobuf Message.
+"""hostess start-of-header code"""
 CODE_TO_MTYPE = MPt(
     {0: "none", 1: "Update", 2: "Instruction", 3: "PythonObject"}
 )
+"""
+one-byte-wide codes for Message type of comm body. "none" means the comm body 
+is not a serialized protobuf Message.
+"""
 MTYPE_TO_CODE = MPt({v: k for k, v in CODE_TO_MTYPE.items()})
 HEADER_STRUCT = struct.Struct("<8sBL")
+"""struct specification for hostess comm header."""
 WRAPPER_SIZE = HEADER_STRUCT.size + len(HOSTESS_EOM)
 
 
 def make_comm(body: Union[bytes, Message]) -> bytes:
     """
     create a hostess comm from a buffer or a protobuf Message.
-    automatically attach header and footer.
+
+    Args:
+        body: byte string or hostess Message to use as comm body
+
+    Returns:
+        hostess comm as `bytes`
     """
     if hasattr(body, "SerializePartialToString"):
         # i.e., it's a protobuf Message
@@ -43,7 +54,18 @@ def make_comm(body: Union[bytes, Message]) -> bytes:
 
 
 def read_header(buffer: bytes) -> dict[str, Union[str, bool, int]]:
-    """attempt to read a hostess header from the first 13 bytes of `buffer`."""
+    """
+    read a hostess header from the first 13 bytes of `buffer`.
+
+    Args:
+        buffer: a `bytes` buffer containing a hostess comm
+
+    Returns:
+        dict with keys:
+            "mtype": name of body's hostess Message type as given in header;
+                "none" if the header says the body is not a serialized Message
+            "length": body length as given in header
+    """
     try:
         unpacked = HEADER_STRUCT.unpack(buffer[:13])
         assert buffer[:8] == HOSTESS_SOH
@@ -60,10 +82,17 @@ def read_comm(
     buffer: bytes, unpack_proto: bool = False
 ) -> dict[str, Union[dict, bytes, Message, str]]:
     """
-    read a hostess comm. if the header says the body is a protobuf, attempt to
-    decode it as a hostess.station Message. if unpack_proto is True, convert
-    it to a dict. return a dict containing the decoded header, the
-    (possibly decoded) body, and any errors.
+    read a hostess comm from a byte string. if the comm's header says its body
+    contains a hostess Message protobuf, attempt to decode it as a Message.
+
+    Args:
+        buffer: `bytes` object comprising a hostess comm.
+        unpack_proto: if True and the comm contains a protobuf, unpack it
+            into a dictionary rather than returning a 'raw' Message.
+
+    Returns:
+        a dict containing the decoded header, the (possibly decoded) body,
+        and any errors.
     """
     try:
         header = read_header(buffer[: HEADER_STRUCT.size])

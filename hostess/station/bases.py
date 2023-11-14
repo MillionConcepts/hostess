@@ -46,12 +46,17 @@ class AttrConsumer:
     def __init__(self):
         self.attrefs = {}
 
-    def consume_property(self, obj, attr, newname=None):
+    def consume_property(
+        self, obj: Any, attr: str, newname: Optional[str] = None
+    ):
         """
-        promote the `attr` attribute of `obj` into this object's interface.
-        if `newname` is not None, assign it to the `newname` key of this
-        object's attribute reference dict (`attrefs`); otherwise, use the
-        original name.
+        consume an attribute of another object into this object's interface.
+
+        Args:
+            obj: object from which to consume attribute
+            attr: name of attribute to consume
+            newname: optional name of referencing attribute of `self`;
+                if not specified, just use `attr`.
         """
         newname = attr if newname is None else newname
         self.attrefs[newname] = (obj, attr)
