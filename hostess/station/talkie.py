@@ -158,6 +158,7 @@ class TCPTalk:
     def launch_selector(self):
         """
         launch the server's selector thread.
+
         Returns:
             An dict with name, any received signal, and any exception.
         """

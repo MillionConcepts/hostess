@@ -1,10 +1,10 @@
 import io
-import os
-import time
 from itertools import product
 from multiprocessing import Process
 import re
+import os
 from pathlib import Path
+import time
 from typing import Hashable, Mapping, Optional, Union
 
 from dustgoggles.func import zero, filtern
@@ -12,14 +12,36 @@ from dustgoggles.structures import listify
 from fabric import Connection
 from invoke import UnexpectedExit
 from magic import Magic
+import pandas as pd
 
 from hostess.config import GENERAL_DEFAULTS
 import hostess.shortcuts as short
 from hostess.subutils import RunCommand
 
 
-def open_tunnel(host, uname, keyfile, local_port, remote_port):
-    """abstraction to open a tunnel with Fabric in a child process."""
+def open_tunnel(
+    host: str,
+    uname: str,
+    keyfile: Union[str, Path],
+    local_port: int,
+    remote_port: int
+) -> tuple[Process, dict[str, Union[int, str, Path]]]:
+    """
+    create a child process that maintains an SSH tunnel. NOTE: supports only
+    keyfile-based authentication.
+
+    Args:
+        host: remote host ip
+        uname: user name on remote host
+        keyfile: path to keyfile
+        local_port: port on local end of tunnel
+        remote_port: port on remote end of tunnel
+
+    Returns:
+        tuple whose elements are:
+            0: `Process` abstraction for the tunnel process
+            1: dict of metadata about the tunnel
+    """
 
     def target():
         conn = SSH.connect(host, uname, keyfile).conn
@@ -44,15 +66,31 @@ def open_tunnel(host, uname, keyfile, local_port, remote_port):
 
 
 class SSH(RunCommand):
-    """wrapper for managed command execution via fabric.Connection"""
+    """
+    interface to an SSH connection to a remote host. basically a wrapper for a
+    `fabric.connection.Connection` object with additional functionality for
+    managed command execution.
+    """
 
     def __init__(
         self,
-        command="",
+        command: str = "",
         conn: Optional[Connection] = None,
         key: Optional[str] = None,
         **kwargs
     ):
+        """
+        Args:
+            command: shell command to execute on remote host. may be omitted
+                if this object is not intended to execute a command.
+            conn: Fabric `Connection` object
+            key: path to keyfile; may be provided after instantiation, but
+                must be provided before command is actually executed.
+            **kwargs: kwargs to pass to the command execution itself. kwarg
+                names beginning with '_' specify execution meta-parameters;
+                others will be inserted directly into the command as `--`-type
+                shell parameters.
+        """
         if conn is None:
             raise TypeError("a Connection must be provided")
         super().__init__(command, conn, conn["runners"]["remote"], **kwargs)
@@ -61,7 +99,25 @@ class SSH(RunCommand):
         self.tunnels = []
 
     @classmethod
-    def connect(cls, host, uname=GENERAL_DEFAULTS["uname"], key=None):
+    def connect(
+        cls,
+        host: str,
+        uname: str = GENERAL_DEFAULTS["uname"],
+        key: str = None
+    ):
+        """
+        constructor that creates a connection to the remote host and uses it
+        to instantiate the SSH object. convenient in cases when an appropriate
+        `Connection` object does not already exist or should not be reused.
+
+        Args:
+            host: ip of remote host
+            uname: user name on remote host
+            key: path to keyfile
+
+        Returns:
+            an SSH object with a newly-generated `Connection`.
+        """
         connect_kwargs = {"key_filename": key} if key is not None else {}
         conn = Connection(user=uname, host=host, connect_kwargs=connect_kwargs)
         ssh = object().__new__(cls)
@@ -69,20 +125,43 @@ class SSH(RunCommand):
         return ssh
 
     def get(self, *args, **kwargs):
+        """copy a file from the remote host."""
         return self.conn.get(*args, **kwargs)
 
     def put(self, *args, **kwargs):
+        """copy a file to the remote host."""
         return self.conn.put(*args, **kwargs)
 
-    def read_csv(self, fname, **csv_kwargs):
-        import pandas as pd
+    def read_csv(self, fname: str, **csv_kwargs) -> pd.DataFrame:
+        """
+        read a CSV file from the remote host into a pandas DataFrame.
 
+        Args:
+            fname: path to CSV file on remote host.
+            csv_kwargs: kwargs to pass to pd.read_csv.
+
+        Returns:
+            DataFrame created from contents of remote CSV file.
+        """
         buffer = io.StringIO()
         buffer.write(self.get(fname).decode())
         buffer.seek(0)
         return pd.read_csv(buffer, **csv_kwargs)
 
-    def tunnel(self, local_port, remote_port):
+    def tunnel(
+        self,
+        local_port: int,
+        remote_port: int
+    ):
+        """
+        create an SSH tunnel between a local port and a remote port; store an
+        abstraction for the tunnel process, along with metadata about the
+        tunnel, in self.tunnels.
+
+        Args:
+            local_port: port number for local end of tunnel.
+            remote_port: port number for remote end of tunnel.
+        """
         process, meta = open_tunnel(
             self.host, self.uname, self.key, local_port, remote_port
         )
@@ -95,13 +174,22 @@ class SSH(RunCommand):
 # TODO: try fabric's pooled commands
 def merge_csv(
     ssh_dict: Mapping[Hashable, SSH], fn: str, **csv_kwargs
-) -> "pd.DataFrame":
+) -> pd.DataFrame:
     """
-    merges csv files -- logs, perhaps -- from across a defined group
-    of remote servers.
-    """
-    import pandas as pd
+    merges data from CSV files on multiple remote hosts into a single pandas
+    DataFrame.
 
+    Args:
+        ssh_dict: mapping whose keys are identifiers for remote hosts and
+            whose values are SSH objects connected to those hosts.
+        fn: path to file (must be the same on all remote hosts)
+        csv_kwargs: kwargs to pass to pd.read_csv()
+
+    Returns:
+         a DataFrame containing merged data from all remote CSV files,
+         including a "server" column that labels the source hosts using the
+         keys of `ssh_dict`.
+    """
     framelist = []
     for name, ssh in ssh_dict.items():
         csv_df = ssh.read_csv(fn, **csv_kwargs)
