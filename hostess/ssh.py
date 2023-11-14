@@ -75,22 +75,21 @@ class SSH(RunCommand):
     authentication.
 
     Example of use:
-    ```
-    ssh = SSH.connect(
-        "1.11.11.111", 'remote_user', '/home/local_user/.ssh/keyfile.pem'
-    )
-    ssh("echo hi > a.txt")
-    tail = ssh("tail -f a.txt")
-    for n in range(5):
-        ssh(f"echo {n} >> a.txt")
-    print(','.join([s.strip('\n') for s in tail.out]))
-    ssh.con('ls -l / | grep dev')
-    ```
+
+        >>> ssh = SSH.connect(
+        ...    "1.11.11.111", 'remote_user', '/home/user/.ssh/keyfile.pem'
+        ... )
+        >>> ssh("echo hi > a.txt")
+        >>> tail = ssh("tail -f a.txt")
+        >>> for n in range(5):
+            ... ssh(f"echo {n} >> a.txt")
+        >>> print(','.join([s.strip() for s in tail.out]))
+        >>> ssh.con('ls -l / | grep dev')
+
     output:
-    ```
-    'hi, 0, 1, 2, 3'
-    drwxr-xr-x  15 root   root     3320 Nov 12 01:50 dev
-    ```
+
+        hi, 0, 1, 2, 3
+        drwxr-xr-x  15 root   root     3320 Nov 12 01:50 dev
     """
 
     def __init__(
