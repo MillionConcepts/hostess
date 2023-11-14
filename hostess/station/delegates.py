@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import random
-import sys
-import time
 from collections import defaultdict
 from itertools import count
 from pathlib import Path
+import random
+import sys
+import time
 from types import MappingProxyType as MPt, ModuleType
 from typing import Union, Literal, Optional, Type, Any, Mapping
 
@@ -13,14 +13,13 @@ from dustgoggles.dynamic import exc_report
 from dustgoggles.structures import rmerge
 from google.protobuf.message import Message
 
-import hostess.station.proto.station_pb2 as pro
 from hostess.station import bases
 from hostess.station.bases import Sensor, Actor, ConsumedAttributeError
 from hostess.station.comm import read_comm
 from hostess.station.messages import pack_obj, task_msg, unpack_obj
 from hostess.station.proto_utils import make_timestamp, enum
+import hostess.station.proto.station_pb2 as pro
 from hostess.station.talkie import stsend, timeout_factory
-from hostess.utilities import filestamp
 
 ConfigParamType = Literal["config_property", "config_dict"]
 GENERIC_LOGINFO = MPt(
@@ -44,15 +43,19 @@ class Delegate(bases.Node):
     ):
         """
         configurable remote processor for hostess network. can gather data
-        and/or execute actions based on the elements attached to it.
+        and/or execute actions based on the elements attached to it. should
+        typically be instantiated via the launch_delegate() method of the
+        supervising Station.
 
-        station_address: (hostname, port) of supervising Station
-        name: identifying name for delegate
-        n_threads: max threads in executor
-        elements: Sensors or Actors to add to delegate at creation.
-        poll: delay, in seconds, for polling loops
-        timeout: timeout, in s, for intra-hostess communications
-        update: interval, in s, for check-in Updates to supervising Station
+        Args:
+            station_address: (hostname, port) of supervising Station
+            name: identifying name for delegate
+            n_threads: max threads in executor
+            elements: Sensors or Actors to add to delegate at creation.
+            poll: delay, in seconds, for polling loops
+            timeout: timeout, in s, for intra-hostess communications
+            update_interval: interval, in s, for check-in Updates to
+                supervising Station
         """
         super().__init__(
             name=name,
@@ -68,7 +71,6 @@ class Delegate(bases.Node):
         )
         self.update_interval = update_interval
         self.actionable_events, self.infocount = [], defaultdict(int)
-
         self.actions = {}
         self.instruction_queue = []
         self.update_timer, self.reset_update_timer = timeout_factory(False)
@@ -84,17 +86,29 @@ class Delegate(bases.Node):
         }
 
     def _set_logfile(self):
+        """internal function to set path to log file."""
         self.logfile = Path(
             self.logdir,
             f"{self.loginfo.get('init_time', self.init_time)}_{self.name}_"
             f"{self.station[0]}_{self.station[1]}.log"
         )
 
-    def _sensor_loop(self, sensor: bases.Sensor):
+    def _sensor_loop(
+        self, sensor: bases.Sensor
+    ) -> dict[str, Union[str, Optional[int], Optional[Exception]]]:
         """
-        continuously check a Sensor. must be launched in a separate thread or
-        it will block and be useless. should probably only be called by the
-        main loop in _start().
+        continuously check a Sensor. this function must be launched in its
+        own thread or it will block and be useless. NOTE: should only be
+        called from _start().
+
+        Args:
+            sensor: Sensor to poll.
+
+        Returns:
+            dict with keys:
+                name: name of sensor
+                signal: signal sent to terminate this function (if any)
+                exception: exception that terminated this function (if any)
         """
         exception = None
         try:
@@ -113,7 +127,25 @@ class Delegate(bases.Node):
                 "exception": exception,
             }
 
-    def check_on_action(self, instruction_id: int):
+    def check_on_action(
+        self, instruction_id: int
+    ) -> tuple[Optional[Exception], bool]:
+        """
+        check whether one of this delegate's Actions completed. if it crashed,
+        set its status and exception keys appropriately in this delegate's
+        `actions` dict. typically called as part of the main Delegate loop,
+        specifically from _check_on_actions().
+
+        Args:
+            instruction_id: numerical identifier of Action to check.
+
+        Returns:
+            tuple whose elements are:
+                0: None if the Action terminated successfully or hasn't yet
+                    terminated; the Exception the Action raised if it didn't
+                    terminate successfully.
+                1: True if the Action has terminated; False if not.
+        """
         try:
             self.threads[f"Instruction_{instruction_id}"].result(0)
         except TimeoutError:
@@ -216,7 +248,13 @@ class Delegate(bases.Node):
             time.sleep(self.poll)
 
     def _shutdown(self, exception: Optional[Exception] = None):
-        """shut down the delegate"""
+        """
+        internal shutdown handler.
+
+        Args:
+            exception: Exception that terminated Delegate's main loop, if any.
+                should be None on a 'graceful' shutdown.
+        """
         # divorce oneself from actors and acts, from events and instructions
         self.actions, self.actionable_events = {}, []
         # TODO, maybe: try to kill child processes (can't in general kill
@@ -256,7 +294,13 @@ class Delegate(bases.Node):
         self.talk_to_station(msg)
 
     def _report_on_action(self, action: dict):
-        """report to Station on completed/failed action."""
+        """
+        report to Station on completed/failed action. should only be called as
+        part of the main loop, specifically from _check_on_actions().
+
+        Args:
+            action: a value of this delegate's `actions` dict.
+        """
         msg = self._base_message(
             completed=task_msg(action), reason="completion"
         )
@@ -264,7 +308,7 @@ class Delegate(bases.Node):
         return self.talk_to_station(msg)
 
     def _check_in(self):
-        """send check-in Update to the Station."""
+        """send heartbeat Update to the Station."""
         self.talk_to_station(self._base_message(reason="heartbeat"))
         self.reset_update_timer()
 
@@ -323,8 +367,14 @@ class Delegate(bases.Node):
             configuration=(cp_for_log | cd_for_log)
         )
 
-    def _handle_instruction(self, instruction: Message):
-        """interpret, reply to, and execute (if relevant) an Instruction."""
+    def _handle_instruction(self, instruction: pro.Instruction):
+        """
+        interpret, reply to, and execute (if relevant) an Instruction. should
+        only be called as part of the main loop.
+
+        Args:
+            instruction: Instruction received from Station.
+        """
         status, err = "wilco", None
         try:
             bases.validate_instruction(instruction)
@@ -361,7 +411,14 @@ class Delegate(bases.Node):
             # noinspection PyTypeChecker
             self._reply_to_instruction(instruction, status, err)
 
-    def execute_do_instruction(self, instruction):
+    def execute_do_instruction(self, instruction: pro.Instruction):
+        """
+        execute a "do" Instruction (an Instruction specifying an action).
+        typically called from the _handle_instruction() workflow.
+
+        Args:
+            instruction: Instruction to execute.
+        """
         actions = self._match_task_instruction(instruction)
         if actions is None:
             # return
@@ -385,6 +442,9 @@ class Delegate(bases.Node):
         """
         try to send a message to the Station. Sleep if it doesn't work --
         or if we're shut down, just assume the Station is dead and leave.
+
+        args:
+            message: Message to send to station.
         """
         response, was_locked, timeout_counter = None, self.locked, count()
         self.locked = True
@@ -521,6 +581,7 @@ class HeadlessDelegate(Delegate):
         self.message_log.append(message)
 
 
+# TODO: log initialization failures
 def launch_delegate(
     station_address: tuple[str, int],
     name: str,
@@ -529,9 +590,29 @@ def launch_delegate(
     elements: tuple[tuple[str, str]] = None,
     is_local: bool = False,
     **init_kwargs
-):
-    """simple hook for launching a delegate."""
-    # TODO: log initialization failures
+) -> Optional[Delegate]:
+    """
+    hook for launching a delegate, designed to be easily called either locally
+    or from an interpreter running in a separate process. Designed to be
+    called as part of the Station.launch_delegate() workflow, but may be used
+    in other ways.
+
+    Args:
+        station_address: address of supervising Station
+        name: name to assign to Delegate instance
+        delegate_module: name of, or path to, module in which the desired
+            Delegate subclass is defined
+        delegate_class: name of Delegate subclass
+        elements: specifications for Actors and Sensors to attach to Delegate
+            instance
+        is_local: is this Delegate being instantiated in the process of the
+            calling Station (or other launcher) or not? if this is False,
+            consider this process "owned by" the instantiated Delegate;
+            terminate it when the Delegate shuts down.
+
+    Returns:
+        the instantiated Delegate if is_local is not False; None otherwise.
+    """
 
     from hostess.utilities import import_module
 

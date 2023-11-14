@@ -8,7 +8,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
 from itertools import cycle, chain
-from typing import Optional, Callable, Union
+from typing import Optional, Callable, Union, Any
 
 from hostess.station.comm import make_comm, read_header, read_comm
 from hostess.station.messages import Mailbox
@@ -368,34 +368,6 @@ class TCPTalk:
             return None, False
 
 
-def tcp_send(
-    data, host, port, timeout=10, delay=0, chunksize=None, headerread=None
-):
-    """simple utility for one-shot TCP send."""
-    sockname = None
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        try:
-            sock.settimeout(timeout)
-            sock.connect((host, port))
-            sockname = sock.getsockname()
-            if (delay > 0) or (chunksize is not None):
-                chunksize = 16384 if chunksize is None else chunksize
-                while len(data) > 0:
-                    data, chunk = data[chunksize:], data[:chunksize]
-                    sock.send(chunk)
-                    time.sleep(delay)
-            else:
-                sock.sendall(data)
-                response = read_from_socket(headerread, sock, timeout)
-                return response, sockname
-        except TimeoutError:
-            return "timeout", sockname
-        except ConnectionError:
-            return "connection refused", sockname
-        finally:
-            sock.close()  # TODO: redundant with context manager?
-
-
 def read_from_socket(headerread, sock, timeout):
     # TODO, maybe: move _tryread?
     waiting, unwait = timeout_factory(timeout=timeout)
@@ -421,6 +393,34 @@ def read_from_socket(headerread, sock, timeout):
         continue
     sock.close()
     return response
+
+
+def tcp_send(
+    data, host, port, timeout=10, delay=0, chunksize=None, headerread=None
+) -> tuple[Any, Optional[int]]:
+    """simple utility for one-shot TCP send."""
+    sockname = None
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        try:
+            sock.settimeout(timeout)
+            sock.connect((host, port))
+            sockname = sock.getsockname()
+            if (delay > 0) or (chunksize is not None):
+                chunksize = 16384 if chunksize is None else chunksize
+                while len(data) > 0:
+                    data, chunk = data[chunksize:], data[:chunksize]
+                    sock.send(chunk)
+                    time.sleep(delay)
+            else:
+                sock.sendall(data)
+                response = read_from_socket(headerread, sock, timeout)
+                return response, sockname
+        except TimeoutError:
+            return "timeout", sockname
+        except ConnectionError:
+            return "connection refused", sockname
+        finally:
+            sock.close()  # TODO: redundant with context manager?
 
 
 # TODO: consider benchmarking pos-only / unnested versions
