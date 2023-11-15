@@ -7,6 +7,7 @@ from itertools import chain
 import os
 from pathlib import Path
 import re
+import time
 from typing import Union, Collection, Any, Callable
 
 from dustgoggles.func import zero
@@ -138,7 +139,9 @@ def index_breadth_first(root: Union[str, Path]) -> list[LSRecord]:
 def _parse_fileinfo(magic_viewer: Viewer) -> list[dict[str, str]]:
     """parses stdout from the POSIX `file` utility."""
     fileinfo = []
-    for line in magic_viewer.out:
+    for line in ''.join(magic_viewer.out).split('\n'):
+        if line == '':
+            continue
         fn, result = re.split(":", line, maxsplit=1)
         fileinfo.append(
             {"path": fn.strip(), "info": result.strip().replace(",", ";")}
@@ -162,8 +165,10 @@ def do_magic(manifest: LSFrame, log: Callable[[str], Any] = zero) -> LSFrame:
     files = manifest.loc[manifest["directory"] == False]["path"].to_list()
     log(f"performing magic on {len(files)} files")
     viewers = [
-        Viewer.from_command("file", chunk) for chunk in chunked(files, 1000)
+        Viewer.from_command("file", *chunk) for chunk in chunked(files, 100)
     ]
+    while any(not v.done for v in viewers):
+        time.sleep(0.05)
     infoframe = pd.DataFrame(
         list(chain.from_iterable(map(_parse_fileinfo, viewers)))
     )
