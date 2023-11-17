@@ -293,18 +293,25 @@ def find_conda_env(cmd: RunCommand, env: str = None) -> str:
     env = "base" if env is None else env
     suffix = f"/envs/{env}" if env != "base" else ""
     try:
-        envs = str(cmd(f"cat ~/.conda/environments.txt").stdout).splitlines()
+        cat = cmd(
+            f"cat ~/.conda/environments.txt", _viewer=True
+        )
+        cat.wait()
+        envs = cat.out
         if env == "base":
-            return next(filter(lambda l: "envs" not in l, envs))
+            return next(filter(lambda l: "envs" not in l, envs)).strip()
         else:
-            return next(filter(lambda l: suffix in l, envs))
+            return next(filter(lambda l: suffix in l, envs)).strip()
     except (UnexpectedExit, StopIteration):
         pass
-    lines = cmd(
+    getlines = cmd(
         short.chain(
             [short.truthy(f"-e {path}{suffix}") for path in CONDA_SEARCH_PATHS]
-        )
-    ).stdout.splitlines()
+        ),
+        _viewer=True
+    )
+    getlines.wait()
+    lines = getlines.out
     for line, path in zip(lines, CONDA_SEARCH_PATHS):
         if "True" in line:
             return f"{path}/{suffix}"
@@ -357,8 +364,9 @@ def get_jupyter_token(
     """
     for attempt in range(5):
         try:
-            jlist = command(f"{jupyter_executable} list").stdout
-            line = filtern(lambda l: str(port) in l, jlist.splitlines())
+            jlister = command(f"{jupyter_executable} list", _viewer=True)
+            jlister.wait()
+            line = filtern(lambda l: str(port) in l, jlister.out)
             return re.search(TOKEN_PATTERN, line).group()
         except (StopIteration, AttributeError):
             time.sleep(0.1)

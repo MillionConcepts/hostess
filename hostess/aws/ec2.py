@@ -47,7 +47,9 @@ from hostess.aws.utilities import (
 )
 from hostess.caller import generic_python_endpoint
 from hostess.config import EC2_DEFAULTS, GENERAL_DEFAULTS
-from hostess.ssh import jupyter_connect, find_ssh_key, SSH, find_conda_env, NotebookConnection
+from hostess.ssh import (
+    find_ssh_key, find_conda_env, jupyter_connect, NotebookConnection, SSH
+)
 from hostess.subutils import Processlike
 from hostess.utilities import (
     my_external_ip, filestamp, check_cached_results, clear_cached_results,
