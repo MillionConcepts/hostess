@@ -164,6 +164,11 @@ def _nonelist(obj):
     return [] if obj is None else obj
 
 
+def strip_newline(text):
+    """just strip newlines. for easier use of console streams."""
+    return text.strip("\n")
+
+
 def console_stream_handler(
     out=None,
     err=None,
@@ -178,7 +183,7 @@ def console_stream_handler(
     """
     out, err, done = map(_nonelist, (out, err, done))
     handler = Dispatcher(
-        steps={"out": identity, "err": identity, "done": identity}
+        steps={"out": strip_newline, "err": strip_newline, "done": identity}
     )
     handler.add_send("out", pipe=handle_out, target=out)
     handler.add_send("err", pipe=handle_err, target=err)
@@ -259,7 +264,7 @@ def replace_aliases(mapping: dict, aliasdict: Mapping[str, Collection[str]]):
 class RunCommand:
     """callable for managed command execution via Invoke."""
 
-    def __init__(self, command="", ctx=None, runclass=None, **kwargs):
+    def __init__(self, command=None, ctx=None, runclass=None, **kwargs):
         self.command = command
         if ctx is None:
             self.ctx = invoke.context.Context()
@@ -276,10 +281,20 @@ class RunCommand:
 
     def cstring(self, *args, args_at_end=True, **kwargs):
         args = self.args + args
+        if self.command is None:
+            if len(args) == 0:
+                # if there is no bound command, always treat the first arg as a
+                # command, not as an option
+                raise ValueError(
+                    "No command to run. Pass at least one argument."
+                )
+            command, args = args[0], args[1:]
+        else:
+            command = self.command
         kwargs = keyfilter(
-            lambda k: not k.startswith("_"), self.kwargs | kwargs
+            lambda kwarg: not kwarg.startswith("_"), self.kwargs | kwargs
         )
-        astring = " ".join(args)
+        astring = "" if len(args) == 0 else f" {' '.join(args)}"
         kstring = ""
         for k, v in kwargs.items():
             k = k.strip("_").replace("_", "-")
@@ -292,11 +307,8 @@ class RunCommand:
                 kstring += f" -{k} {v}"
             else:
                 kstring += f" --{k}={v}"
-        cstring = self.command
         order = (kstring, astring) if args_at_end else (astring, kstring)
-        for s in order:
-            cstring = cstring + f" {s}" if s != "" else cstring
-        return cstring
+        return f"{command}{''.join(order)}"
 
     def __call__(self, *args, **kwargs) -> Optional["Processlike"]:
         rkwargs = keyfilter(
@@ -354,9 +366,9 @@ class RunCommand:
         return output
 
     def __str__(self):
-        if (cstring := self.cstring()) == "":
-            cstring = "no curried command"
-        return f"{self.__class__.__name__} ({cstring})"
+        if self.command is None:
+            return f"{self.__class__.__name__} (no curried command)"
+        return f"{self.__class__.__name__} ({self.cstring()})"
 
     def __repr__(self):
         return self.__str__()
@@ -401,7 +413,7 @@ class Viewer:
         runstring = "running" if self.running else "finished"
         base = f"Viewer for {runstring} process {self.command}"
         try:
-            base += f" , PID {self.pid}"
+            base += f", PID {self.pid}"
         except AttributeError:
             # TODO: fetch remote PIDs with shell tricks
             pass
@@ -440,8 +452,8 @@ class Viewer:
             cbuffer = CBuffer()
         if not isinstance(command, RunCommand):
             command = RunCommand(command, ctx, runclass)
-        # note that Viewers _only_ run commands asynchronously. use the wait or
-        # wait_for_output methods if you want to block.
+        # note that Viewers _only_ run commands asynchronously. use the wait
+        # or wait_for_output methods if you want to block.
         base_kwargs = {
             "_bg": True,
             "_out": cbuffer.buffers["out"],
