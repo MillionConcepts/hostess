@@ -242,6 +242,8 @@ class SSH(RunCommand):
     def __del__(self):
         if self.conn is not None:
             self.conn.close()
+        for process, _ in self.tunnels:
+            process.kill()
 
     conn = None
 
