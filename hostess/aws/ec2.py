@@ -703,9 +703,7 @@ class Cluster:
         options = {} if options is None else options
         if template is None:
             using_scratch_template = True
-            template = create_launch_template(**options)[
-                "LaunchTemplateName"
-            ]
+            template = create_launch_template(**options)["LaunchTemplateName"]
         else:
             using_scratch_template = False
         fleet = client.create_fleet(
@@ -727,9 +725,22 @@ class Cluster:
         )
         if using_scratch_template is True:
             client.delete_launch_template(LaunchTemplateName=template)
-        if len(fleet.get('Errors', [])) > 0:
+        # note that we do not want to raise these all the time, because the
+        # API frequently dumps a lot of harmless info in here.
+        launch_errors = len(fleet.get('Errors', []))
+        try:
+            n_instances = len(fleet['Instances'][0]['InstanceIds'])
+            assert n_instances > 0
+        except (KeyError, IndexError, AssertionError):
             raise ValueError(
-                f"Client returned launch error:\n\n{fleet['Errors'][0]}"
+                f"No instances appear to have launched. "
+                f"Client returned error(s):\n\n{launch_errors}"
+            )
+        if n_instances != count:
+            print(
+                f"warning: fewer instances appear to have launched than "
+                f"requested ({n_instances} vs. {count}). Check the 'Errors' "
+                f"key of this Cluster's 'fleet_request' attribute."
             )
 
         def instance_hook():
@@ -750,7 +761,9 @@ class Cluster:
                     time.sleep(0.2)
             raise TimeoutError(
                 "launched instances successfully, but unable to run "
-                "DescribeInstances. Perhaps permissions are wrong."
+                "DescribeInstances. Perhaps permissions are wrong. "
+                "Reported instance ids:\n"
+                + "\n".join(fleet["Instances"][0]["InstanceIds"])
             )
         cluster = Cluster(instances)
         cluster.fleet_request = fleet
