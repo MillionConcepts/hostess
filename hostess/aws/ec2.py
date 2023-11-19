@@ -150,15 +150,13 @@ def ls_instances(
 
 
 def instances_from_ids(
-    ids, *instance_args, resource=None, session=None, **instance_kwargs
+    ids, resource=None, session=None, **instance_kwargs
 ):
     resource = init_resource("ec2", resource, session)
     instances = []
     # TODO: make this asynchronous
     for instance_id in ids:
-        instance = Instance(
-            instance_id, *instance_args, resource=resource, **instance_kwargs
-        )
+        instance = Instance(instance_id, resource=resource, **instance_kwargs)
         instances.append(instance)
     return instances
 
@@ -234,43 +232,113 @@ class Instance:
         else:
             self.name = None
         self.zone = instance_.placement["AvailabilityZone"]
-        if key is None:
-            key = str(find_ssh_key(instance_.key_name))
-            if key == 'None':
-                raise FileNotFoundError("can't find key file for instance.")
-        self.uname, self.key = uname, key
+        self.uname, self.passed_key, self._ssh = uname, key, None
         self.instance_ = instance_
-        self._ssh = None
-        if self.state == 'running':
-            self._connect()
+
+    @classmethod
+    def launch(
+        cls,
+        template=None,
+        options=None,
+        tags=None,
+        client=None,
+        session=None,
+        wait=True,
+        **instance_kwargs,
+    ):
+        return Cluster.launch(
+            1,
+            template,
+            options,
+            tags,
+            client,
+            session,
+            wait,
+            **instance_kwargs
+        )[0]
 
     # TODO: pull more of these command / connect behaviors up to SSH.
 
     def connect(self, maxtries: int = 5, delay: float = 1):
         """
-        open a new SSH connection to the instance.
+        establish SSH connection to the instance, prepping a new connection
+        if none currently exists, but not replacing an existing one.
 
         Args:
             maxtries: maximum times to re-attempt failed connections
             delay: how many seconds to wait after failed attempts
         """
-        return self._connect(lazy=False, maxtries=maxtries, delay=delay)
+        self._prep_connection(lazy=False, maxtries=maxtries, delay=delay)
 
-    def _connect(self, lazy: bool = True, maxtries: int = 5, delay: float = 1):
+    def reconnect(self, maxtries: int = 5, delay: float = 1):
         """
-        Prep a new SSH connection to the instance. By default this is lazy, in
-        the sense that it does not actually open the connection until
-        something calls a method that requires it.
+        create and attempt to establish a new SSH connection to the instance,
+        closing any existing one.
+        Note that this will immediately terminate any non-daemonized processes
+        previously executed over the existing connection.
 
         Args:
-            lazy: if True, simply prepare a Connection object to open later.
-                if False, open a connection immediately.
+            maxtries: maximum times to re-attempt failed connections
+            delay: how many seconds to wait after failed attempts
+        """
+        if self._ssh is not None:
+            del self._ssh
+            self._ssh = None
+        self._prep_connection(lazy=False, maxtries=maxtries, delay=delay)
+
+    @property
+    def is_connected(self):
+        if self._ssh is None:
+            return False
+        if self._ssh.conn.is_connected:
+            return True
+        return False
+
+    def _maybe_find_key(self):
+        if self.key is not None:
+            return
+        if self.passed_key is None:
+            found = find_ssh_key(self.instance_.key_name)
+            if found is None:
+                self.key_errstring = (
+                    f"Couldn't find a keyfile for the instance. The keyfile "
+                    f"may not be in the expected path, or its filename might "
+                    f"not match the AWS key name ({self.instance_.key_name}). "
+                    f"Try explicitly specifying the path by setting the .key "
+                    f"attribute or passing the key= argument."
+                )
+            else:
+                self.key, self.key_errstring = str(found), None
+            return
+        if not Path(self.passed_key).exists():
+            self.key_errstring = (
+                f"The specified key file ({self.passed_key}) does not exist."
+            )
+            return
+        self.key, self.key_errstring = str(self.passed_key), None
+
+    def _prep_connection(
+        self, *, lazy=True, maxtries: int = 5, delay: float = 1
+    ):
+        """
+        try to prep, and optionally establish, a SSH connection to the
+        instance. if no closed / latent connection exists, create one;
+        otherwise, use the existing one. if the instance isn't running,
+        automatically replace any existing connection (which will be closed
+        anyway by then, or should be).
+
+        Args:
+            lazy: don'y establish the connection immediately;  wait until some
+                method needs it. other arguments do nothing if this is True.
             maxtries: maximum times to re-attempt failed connections
             delay: how many seconds to wait after subsequent attempts
         """
-        if self._ssh is not None:
-            self._ssh.conn.close()
-        self._ssh = SSH.connect(self.ip, self.uname, self.key)
+        if self.is_connected:  # nothing to do
+            return
+        self._maybe_find_key()
+        self._update_ssh_info()
+        if self._ssh is None:
+            self._ssh = SSH.connect(self.ip, self.uname, self.key)
         if lazy is True:
             return
         for attempt in range(maxtries):
@@ -280,34 +348,53 @@ class Instance:
             except AttributeError:
                 time.sleep(delay)
                 self.update()
-        raise ConnectionError("can't connect to instance.")
+        raise ConnectionError("connection timed out.")
 
-    def _is_unready(self) -> bool:
+    def _check_unready(self) -> Union[str, bool]:
         """
         Is the instance obviously not ready for SSH connections?
 
         Returns:
-            True if it is not running or transitioning to running, or if we
-                have not found a keyfile. Otherwise False.
+            "state" if it is not running or transitioning to running;
+                comma-separated list of missing ip/uname/key if any;
+                Otherwise False.
         """
-        return (self.state not in ("running", "pending")) or any(
-            p is None for p in (self.ip, self.uname, self.key)
-        )
+        if self.state not in ("running", "pending"):
+            return "state"
+        none = [p for p in ("ip", "uname", "key") if getattr(self, p) is None]
+        if len(none) > 0:
+            return ", ".join(none)
+        return False
 
-    def _raise_unready(self):
-        """update info about Instance; raise an error if it is unready."""
-        if not self._is_unready():
-            return
+    def _update_ssh_info(self):
+        """
+        update SSH connectability info about Instance. raise an error if
+        required info is not available. automatically remove any existing
+        prepped connection if instance is not running.
+        """
         self.update()
-        if self._is_unready():
-            raise ConnectionError(
-                f"Unable to execute commands on {self.instance_id}. This is "
-                f"most likely because it is not running or because its "
-                f"identity keyfile could not be located. Please try "
-                f"explicitly setting the path to the keyfile, like: "
-                f"instance.key = '/path/to/key.pem', or passing it to the "
-                f"class constructor when creating a new Instance."
+        if (unready := self._check_unready()) is False:
+            return
+        errstring = f"Unable to execute commands on {self.instance_id}. "
+        number = iter(range(1, 5))
+        if "state" in unready:
+            errstring += (
+                f"{next(number)}. It is currently not running. Try starting "
+                f"the instance with .start()."
             )
+            del self._ssh
+            self._ssh = None
+        # only mention missing IP if instance is running -- we don't expect
+        # a stopped instance to have an IP.
+        elif "ip" in unready:
+            errstring += (
+                f"{next(number)}. Cannot find IP for instance. It "
+                f"may be in the process of IP assignment; try waiting a "
+                f"moment. It may also be configured to have no appropriate IP."
+            )
+        if "key" in unready:
+            errstring += f"{next(number)}. {self.key_errstring}"
+        raise ConnectionError(errstring)
 
     def command(
         self,
@@ -334,7 +421,7 @@ class Instance:
         Returns:
             object representing executed process.
         """
-        self._raise_unready()
+        self._prep_connection()
         return self._ssh(
             *args, _viewer=_viewer, _wait=_wait, _quiet=_quiet, **kwargs
         )
@@ -382,7 +469,7 @@ class Instance:
             structure containing results of the tunneled Jupyter Notebook
                 execution.
         """
-        self._raise_unready()
+        self._prep_connection()
         return jupyter_connect(self._ssh,  **connect_kwargs)
 
     def start(self, return_response: bool = False) -> Optional[dict]:
@@ -436,7 +523,7 @@ class Instance:
                 path
             kwargs: additional kwargs to pass to underlying put command
         """
-        self._raise_unready()
+        self._prep_connection()
         if isinstance(source, str) and (literal_str is True):
             source_file = io.BytesIO(source.encode('utf-8'))
         elif not isinstance(source, (str, Path)):
@@ -447,12 +534,12 @@ class Instance:
 
     def get(self, source, target, *args, **kwargs):
         """copy source file from instance to local target file with scp."""
-        self._raise_unready()
+        self._prep_connection()
         return self._ssh.get(source, target, *args, **kwargs)
 
     def read(self, source, *args, **kwargs):
         """copy source file from instance into memory using scp."""
-        self._raise_unready()
+        self._prep_connection()
         buffer = io.BytesIO()
         self._ssh.get(source, buffer, *args, **kwargs)
         buffer.seek(0)
@@ -462,7 +549,7 @@ class Instance:
         """
         reads csv-like file from remote host into pandas DataFrame using scp.
         """
-        self._raise_unready()
+        self._prep_connection()
         import pandas as pd
 
         buffer = io.StringIO()
@@ -499,10 +586,6 @@ class Instance:
         self.instance_.load()
         self.state = self.instance_.state["Name"]
         self.ip = getattr(self.instance_, f"{self.address_type}_ip_address")
-        if self.state == 'running':
-            self._connect()
-        else:
-            self._ssh = None
 
     def wait_until(self, state):
         """Pause execution until the instance state is met.
@@ -547,7 +630,7 @@ class Instance:
         self.reboot(wait_until_running=wait_until_running)
 
     def tunnel(self, local_port, remote_port):
-        self._raise_unready()
+        self._prep_connection()
         self._ssh.tunnel(local_port, remote_port)
         return self._ssh.tunnels[-1]
 
@@ -589,14 +672,20 @@ class Instance:
         return self._ssh(python_command_string, **command_kwargs)
 
     def __repr__(self):
-        # TODO: s
-        string = f"{self.instance_type} in {self.zone} at {self.ip}"
+        string = f"{self.instance_type} in {self.zone} "
+        if self.ip is None:
+            string += "(no ip)"
+        else:
+            string += f"at {self.ip}"
         if self.name is None:
             return f"{self.instance_id}: {string}"
         return f"{self.name} ({self.instance_id}): {string}"
 
     def __str__(self):
         return self.__repr__()
+
+    key = None
+    key_errstring = None
 
 
 class Cluster:
@@ -711,7 +800,6 @@ class Cluster:
         tags=None,
         client=None,
         session=None,
-        *instance_args,
         wait=True,
         **instance_kwargs,
     ):
@@ -721,27 +809,38 @@ class Cluster:
         if template is None:
             using_scratch_template = True
             template = create_launch_template(**options)["LaunchTemplateName"]
+            if options.get('image_id') is None:
+                # we're always using a stock Canonical image in this case, so
+                # note that we're forcing uname to 'ubuntu':
+                print(
+                    "Using stock Canonical image, so setting uname to "
+                    "'ubuntu'."
+                )
+                instance_kwargs['uname'] = 'ubuntu'
         else:
             using_scratch_template = False
-        fleet = client.create_fleet(
-            LaunchTemplateConfigs=[
-                {
-                    "LaunchTemplateSpecification": {
-                        "LaunchTemplateName": template,
-                        "Version": "$Default",
+
+        try:
+            fleet = client.create_fleet(
+                LaunchTemplateConfigs=[
+                    {
+                        "LaunchTemplateSpecification": {
+                            "LaunchTemplateName": template,
+                            "Version": "$Default",
+                        }
                     }
-                }
-            ],
-            TargetCapacitySpecification={
-                "TotalTargetCapacity": count,
-                "OnDemandTargetCapacity": count,
-                "DefaultTargetCapacityType": "on-demand",
-            },
-            TagSpecifications=[{"Tags": tags}],
-            Type="instant",
-        )
-        if using_scratch_template is True:
-            client.delete_launch_template(LaunchTemplateName=template)
+                ],
+                TargetCapacitySpecification={
+                    "TotalTargetCapacity": count,
+                    "OnDemandTargetCapacity": count,
+                    "DefaultTargetCapacityType": "on-demand",
+                },
+                TagSpecifications=[{"Tags": tags}],
+                Type="instant",
+            )
+        finally:
+            if using_scratch_template is True:
+                client.delete_launch_template(LaunchTemplateName=template)
         # note that we do not want to raise these all the time, because the
         # API frequently dumps a lot of harmless info in here.
         launch_errors = len(fleet.get('Errors', []))
@@ -763,7 +862,6 @@ class Cluster:
         def instance_hook():
             return instances_from_ids(
                 fleet["Instances"][0]["InstanceIds"],
-                *instance_args,
                 client=client,
                 **instance_kwargs,
             )
@@ -784,10 +882,11 @@ class Cluster:
             )
         cluster = Cluster(instances)
         cluster.fleet_request = fleet
+        noun = "fleet" if count > 1 else "instance"
         if wait is False:
-            print("launched fleet; _wait=False passed, not checking status")
+            print(f"launched {noun}; _wait=False passed, not checking status")
             return cluster
-        print("launched fleet; waiting until instances are running")
+        print(f"launched {noun}; waiting until running")
         for instance in cluster.instances:
             instance.wait_until_running()
             print(f"{instance} is running")
@@ -1079,18 +1178,6 @@ def create_security_group(
                     }
                 ],
             },
-            {
-                "FromPort": 6000,
-                "ToPort": 6000,
-                "IpProtocol": "tcp",
-                "IpRanges": [
-                    {
-                        "CidrIp": f"{my_ip}/32",
-                        "Description": "default hostess port access from "
-                        "creating IP",
-                    }
-                ],
-            },
         ]
     )
     sg.authorize_ingress(SourceSecurityGroupName=sg.group_name)
@@ -1118,9 +1205,9 @@ def create_ec2_key(key_name=None, save_key=True, resource=None, session=None):
 
 def create_launch_template(
     template_name=None,
-    instance_type=EC2_DEFAULTS["instance_type"],
-    volume_type=EC2_DEFAULTS["volume_type"],
-    volume_size=EC2_DEFAULTS["volume_size"],
+    instance_type=EC2_DEFAULTS['instance_type'],
+    volume_type=None,
+    volume_size=None,
     image_id=None,
     iops=None,
     throughput=None,
