@@ -52,7 +52,7 @@ from hostess.ssh import (
 )
 from hostess.subutils import Processlike
 from hostess.utilities import (
-    my_external_ip, filestamp, check_cached_results, clear_cached_results,
+    my_external_ip, filestamp, check_cached_results, clear_cached_results, timeout_factory,
 )
 
 
@@ -159,6 +159,22 @@ def instances_from_ids(
         instance = Instance(instance_id, resource=resource, **instance_kwargs)
         instances.append(instance)
     return instances
+
+
+def _move_print_heads(err_head, out_head, process):
+    from rich import print as rp
+    has_new_output = False
+    if (outlen := len(process.out)) > out_head:
+        has_new_output = True
+        for outline in process.out[out_head:]:
+            rp(outline)
+        out_head = outlen
+    if (errlen := len(process.err)) > err_head:
+        has_new_output = True
+        for errline in process.err[err_head:]:
+            rp(f"[red]{errline}[/red]")
+        err_head = errlen
+    return has_new_output, out_head, err_head
 
 
 class Instance:
@@ -426,7 +442,7 @@ class Instance:
             *args, _viewer=_viewer, _wait=_wait, _quiet=_quiet, **kwargs
         )
 
-    def con(self, *args, **kwargs):
+    def con(self, *args, _poll=0.05, _timeout=None, **kwargs):
         """
         pretend you are running a command on the instance while looking at a
         terminal emulator, pausing for output and pretty-printing it to stdout.
@@ -434,7 +450,25 @@ class Instance:
         like Instance.command with _wait=True, _quiet=False, but does not
         return a process abstraction. fun in interactive environments.
         """
-        self.command(*args, _quiet=False, _wait=True, **kwargs)
+        process = self.command(*args, **kwargs)
+        if _timeout is not None:
+            waiting, unwait = timeout_factory(True, _timeout)
+        else:
+            waiting, unwait = zero, zero
+        out_head, err_head = 0, 0
+        try:
+            while process.running:
+                has_new_output, out_head, err_head = _move_print_heads(
+                    err_head, out_head, process
+                )
+                if has_new_output is True:
+                    unwait()
+                else:
+                    waiting()
+                time.sleep(_poll)
+            _move_print_heads(err_head, out_head, process)
+        except KeyboardInterrupt:
+            print("^C")
 
     def commands(
         self,
