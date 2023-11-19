@@ -122,7 +122,7 @@ def roundstring(string, digits=2):
 def my_external_ip():
     import requests
 
-    return requests.get("https://ident.me").content.decode()
+    return requests.get("https://4.ident.me").content.decode()
 
 
 def check_cached_results(path, prefix, max_age=7):
