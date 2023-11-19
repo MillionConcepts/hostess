@@ -212,7 +212,7 @@ class Instance:
             else:
                 instance_id = description
         # otherwise assume it's a full description like from
-        # ls_instances / ec2.describe_instance*
+        # ls_instances / ec2.describe_instance
         elif "id" in description.keys():
             instance_id = description["id"]
         elif "InstanceId" in description.keys():
@@ -242,20 +242,40 @@ class Instance:
         self.instance_ = instance_
         self._ssh = None
         if self.state == 'running':
-            self.connect()
+            self._connect()
+
+    # TODO: pull more of these command / connect behaviors up to SSH.
 
     def connect(self, maxtries: int = 5, delay: float = 1):
         """
-        Attempt to connect to the instance via SSH.
+        open a new SSH connection to the instance.
 
         Args:
-            maxtries: total times to try to connect if attempts fail
-            delay: how many seconds to wait after subsequent attempts
-
+            maxtries: maximum times to re-attempt failed connections
+            delay: how many seconds to wait after failed attempts
         """
+        return self._connect(lazy=False, maxtries=maxtries, delay=delay)
+
+    def _connect(self, lazy: bool = True, maxtries: int = 5, delay: float = 1):
+        """
+        Prep a new SSH connection to the instance. By default this is lazy, in
+        the sense that it does not actually open the connection until
+        something calls a method that requires it.
+
+        Args:
+            lazy: if True, simply prepare a Connection object to open later.
+                if False, open a connection immediately.
+            maxtries: maximum times to re-attempt failed connections
+            delay: how many seconds to wait after subsequent attempts
+        """
+        if self._ssh is not None:
+            self._ssh.conn.close()
+        self._ssh = SSH.connect(self.ip, self.uname, self.key)
+        if lazy is True:
+            return
         for attempt in range(maxtries):
             try:
-                self._ssh = SSH.connect(self.ip, self.uname, self.key)
+                self._ssh.conn.open()
                 return
             except AttributeError:
                 time.sleep(delay)
@@ -267,12 +287,8 @@ class Instance:
         Is the instance obviously not ready for SSH connections?
 
         Returns:
-            True if:
-
-                1. It is not turned on, or:
-                2. We have not found a keyfile.
-
-                Otherwise False.
+            True if it is not running or transitioning to running, or if we
+                have not found a keyfile. Otherwise False.
         """
         return (self.state not in ("running", "pending")) or any(
             p is None for p in (self.ip, self.uname, self.key)
@@ -484,7 +500,7 @@ class Instance:
         self.state = self.instance_.state["Name"]
         self.ip = getattr(self.instance_, f"{self.address_type}_ip_address")
         if self.state == 'running':
-            self.connect()
+            self._connect()
         else:
             self._ssh = None
 
@@ -573,6 +589,7 @@ class Instance:
         return self._ssh(python_command_string, **command_kwargs)
 
     def __repr__(self):
+        # TODO: s
         string = f"{self.instance_type} in {self.zone} at {self.ip}"
         if self.name is None:
             return f"{self.instance_id}: {string}"

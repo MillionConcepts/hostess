@@ -94,7 +94,7 @@ class SSH(RunCommand):
 
     def __init__(
         self,
-        command: str = "",
+        command: Optional[str] = None,
         conn: Optional[Connection] = None,
         key: Optional[str] = None,
         **kwargs
@@ -239,8 +239,14 @@ class SSH(RunCommand):
     def __str__(self):
         return f"{super().__str__()}\n{self.uname}@{self.host}"
 
+    def __del__(self):
+        if self.conn is not None:
+            self.conn.close()
 
-# TODO: try fabric's pooled commands
+    conn = None
+
+
+# TODO, maybe: try fabric's pooled commands
 def merge_csv(
     ssh_dict: Mapping[Hashable, SSH], fn: str, **csv_kwargs
 ) -> pd.DataFrame:
