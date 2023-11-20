@@ -867,7 +867,8 @@ class Cluster:
         **instance_kwargs,
     ):
         client = init_client("ec2", client, session)
-        tags = [] if tags is None else tags
+        tags = {} if tags is None else tags
+        tags = [{"Key": k, "Value": v} for k, v in tags.items()]
         options = {} if options is None else options
         if template is None:
             using_scratch_template = True
