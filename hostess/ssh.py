@@ -188,7 +188,7 @@ class SSH(RunCommand):
     def __call__(
         self,
         *args,
-        _quiet: bool = False,
+        _quiet: bool = True,
         _viewer: bool = True,
         _wait: bool = False,
         **kwargs
@@ -277,7 +277,9 @@ def merge_csv(
 
 # jupyter / conda utilities
 
-CONDA_NAMES = ("anaconda3", "miniconda3", "miniforge", "mambaforge")
+CONDA_NAMES = (
+    "miniforge3", "miniforge", "miniconda3", "anaconda3", "mambaforge"
+)
 CONDA_PARENTS = ("~", "/opt")
 CONDA_SEARCH_PATHS = tuple(
     [f"{root}/{name}" for root, name in product(CONDA_PARENTS, CONDA_NAMES)]

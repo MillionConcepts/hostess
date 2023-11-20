@@ -85,7 +85,7 @@ def execute_pipeline_script(
     interpreter=None,
     compression=None,
     serialization=None,
-    argument_unpacking="**",
+    splat="**",
     cleanup_func=None,
     cleanup_kwargs=None,
     output_parser_func=None,
@@ -103,7 +103,7 @@ def execute_pipeline_script(
                                        payload=payload,
                                        compression=compression,
                                        serialization=serialization,
-                                       argument_unpacking=argument_unpacking,
+                                       splat=splat,
                                        payload_encoded=True,
                                        filter_kwargs=True,
                                        interpreter=interpreter, for_bash=True)

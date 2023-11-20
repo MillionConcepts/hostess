@@ -513,7 +513,7 @@ class Station(bases.Node):
             "hostess.station.delegates",
             "launch_delegate",
             payload=kwargs,
-            argument_unpacking="**",
+            splat="**",
             print_result=True,
         )
         if context == "daemon":

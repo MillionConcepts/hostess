@@ -1,7 +1,7 @@
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 import datetime as dt
-from functools import cache, partial
+from functools import cache, partial, wraps
 import io
 from itertools import chain
 import os
@@ -30,6 +30,7 @@ import dateutil.parser as dtp
 from dustgoggles.func import gmap, zero
 from dustgoggles.structures import listify
 from invoke import UnexpectedExit
+from paramiko.ssh_exception import NoValidConnectionsError, SSHException
 
 import hostess.shortcuts as ks
 from hostess.aws.pricing import (
@@ -69,6 +70,20 @@ InstanceDescription = dict[str, Union[dict, str]]
 concise version of an EC2 API Instance data structure 
 (see https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_Instance.html)
 """
+
+
+def connectwrap(func):
+    @wraps(func)
+    def tryconnect(instance, *args, **kwargs):
+        # noinspection PyProtectedMember
+        instance._prep_connection()
+        try:
+            return func(instance, *args, **kwargs)
+        except (SSHException, NoValidConnectionsError):
+            instance.connect()
+            return func(instance, *args, **kwargs)
+
+    return tryconnect
 
 
 def summarize_instance_description(
@@ -361,10 +376,14 @@ class Instance:
             try:
                 self._ssh.conn.open()
                 return
-            except AttributeError:
+            except (AttributeError, SSHException, NoValidConnectionsError):
                 time.sleep(delay)
                 self.update()
-        raise ConnectionError("connection timed out.")
+        raise ConnectionError(
+            "Unable to establish SSH connection to instance. It may not yet "
+            "be ready to accept SSH connections, or something might "
+            "be wrong with configuration."
+        )
 
     def _check_unready(self) -> Union[str, bool]:
         """
@@ -412,6 +431,7 @@ class Instance:
             errstring += f"{next(number)}. {self.key_errstring}"
         raise ConnectionError(errstring)
 
+    @connectwrap
     def command(
         self,
         *args,
@@ -437,11 +457,11 @@ class Instance:
         Returns:
             object representing executed process.
         """
-        self._prep_connection()
         return self._ssh(
             *args, _viewer=_viewer, _wait=_wait, _quiet=_quiet, **kwargs
         )
 
+    @connectwrap
     def con(self, *args, _poll=0.05, _timeout=None, **kwargs):
         """
         pretend you are running a command on the instance while looking at a
@@ -470,12 +490,14 @@ class Instance:
         except KeyboardInterrupt:
             print("^C")
 
+    @connectwrap
     def commands(
         self,
         commands: Sequence[str],
         op: Literal["and", "xor", "then"] = "then",
+        _con: bool = False,
         **kwargs,
-    ) -> Processlike:
+    ) -> Optional[Processlike]:
         """
         Remotely run a multi-part shell command. Convenience method
         for constructing long shell instructions like
@@ -484,10 +506,15 @@ class Instance:
         Args:
             commands: commands to chain together.
             op: logical operator to connect commands.
+            _con: run 'console-style', pretty-printing rather than
+                returning output
 
         Returns:
-            abstraction representing executed process.
+            abstraction representing executed process, or None if
+                _con is True.
         """
+        if _con is True:
+            return self.con(ks.chain(commands, op), **kwargs)
         return self.command(ks.chain(commands, op), **kwargs)
 
     def notebook(self, **connect_kwargs) -> NotebookConnection:
@@ -537,6 +564,7 @@ class Instance:
         if return_response is True:
             return response
 
+    @connectwrap
     def put(
         self,
         source: Union[str, Path, IO],
@@ -557,33 +585,30 @@ class Instance:
                 path
             kwargs: additional kwargs to pass to underlying put command
         """
-        self._prep_connection()
         if isinstance(source, str) and (literal_str is True):
-            source_file = io.BytesIO(source.encode('utf-8'))
-        elif not isinstance(source, (str, Path)):
-            source_file = "/dev/stdin"
-        else:
-            source_file = source
-        return self._ssh.put(source_file, target, *args, **kwargs)
+            source = io.StringIO(source)
+        elif not isinstance(source, (str, Path, io.StringIO, io.BytesIO)):
+            raise TypeError("Object must be a string, Path, or filelike.")
+        return self._ssh.put(source, target, *args, **kwargs)
 
+    @connectwrap
     def get(self, source, target, *args, **kwargs):
         """copy source file from instance to local target file with scp."""
-        self._prep_connection()
         return self._ssh.get(source, target, *args, **kwargs)
 
+    @connectwrap
     def read(self, source, *args, **kwargs):
         """copy source file from instance into memory using scp."""
-        self._prep_connection()
         buffer = io.BytesIO()
         self._ssh.get(source, buffer, *args, **kwargs)
         buffer.seek(0)
         return buffer
 
+    @connectwrap
     def read_csv(self, source, encoding='utf-8', **csv_kwargs):
         """
         reads csv-like file from remote host into pandas DataFrame using scp.
         """
-        self._prep_connection()
         import pandas as pd
 
         buffer = io.StringIO()
@@ -668,35 +693,38 @@ class Instance:
         self._ssh.tunnel(local_port, remote_port)
         return self._ssh.tunnels[-1]
 
+    @connectwrap
     def call_python(
         self,
-        module,
+        module=None,
         func=None,
         payload=None,
         interpreter_path=None,
         env=None,
         compression=None,
         serialization=None,
-        argument_unpacking="",
+        splat="",
         payload_encoded=False,
-        print_result=False,
+        print_result=True,
         filter_kwargs=True,
         **command_kwargs,
     ):
-        if (interpreter_path is None) == (env is None):
+        if (interpreter_path is not None) and (env is not None):
             raise ValueError(
                 "Please pass either the name of a conda environment or the "
                 "path to a Python interpreter (one or the other, not both)."
             )
-        if interpreter_path is None:
+        if env is not None:
             interpreter_path = f"{self.conda_env(env)}/bin/python"
+        if interpreter_path is None:
+            interpreter_path = "python"
         python_command_string = generic_python_endpoint(
             module,
             func,
             payload,
             compression,
             serialization,
-            argument_unpacking,
+            splat,
             payload_encoded,
             print_result,
             filter_kwargs,
