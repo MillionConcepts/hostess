@@ -1295,7 +1295,7 @@ def create_launch_template(
         try:
             image_id = client.describe_images(
                 Filters=[{"Name": "name", "Values": [image_id]}]
-            )[0]["ImageId"]
+            )['Images'][0]["ImageId"]
         except KeyError:
             raise ValueError(
                 f"Can't find an image corresponding to the name {image_id}."
