@@ -898,7 +898,10 @@ class Cluster:
                     "OnDemandTargetCapacity": count,
                     "DefaultTargetCapacityType": "on-demand",
                 },
-                TagSpecifications=[{"Tags": tags}],
+                TagSpecifications= [
+                    {"ResourceType": "instance", "Tags": tags},
+                    {"ResourceType": "volume", "Tags": tags},
+                ],
                 Type="instant",
             )
         finally:
