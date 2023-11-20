@@ -53,9 +53,11 @@ from hostess.ssh import (
 )
 from hostess.subutils import Processlike
 from hostess.utilities import (
-    my_external_ip, filestamp, check_cached_results, clear_cached_results, timeout_factory,
+    check_cached_results,
+    filestamp,
+    my_external_ip,
+    timeout_factory,
 )
-
 
 InstanceIdentifier = str
 """
@@ -63,7 +65,6 @@ stringified IP (e.g. `'111.11.11.1'` or full instance id
 (e.g. `i-0243d3f8g0a85cb18`), used as an explicit instance identifier by some 
 functions in this module.
 """
-
 
 InstanceDescription = dict[str, Union[dict, str]]
 """
@@ -1293,7 +1294,7 @@ def create_launch_template(
     if (image_id is not None) and not image_id.startswith("ami-"):
         try:
             image_id = client.describe_images(
-                Filters=[{"Name": "tag:Name", "Values": [image_id]}]
+                Filters=[{"Name": "name", "Values": [image_id]}]
             )[0]["ImageId"]
         except KeyError:
             raise ValueError(
