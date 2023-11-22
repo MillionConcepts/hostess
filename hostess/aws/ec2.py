@@ -464,7 +464,14 @@ class Instance:
         )
 
     @connectwrap
-    def con(self, *args, _poll=0.05, _timeout=None, **kwargs):
+    def con(
+        self,
+        *args,
+        _poll=0.05,
+        _timeout=None,
+        _return_viewer=False,
+        **kwargs
+    ):
         """
         pretend you are running a command on the instance while looking at a
         terminal emulator, pausing for output and pretty-printing it to stdout.
@@ -490,7 +497,10 @@ class Instance:
                 time.sleep(_poll)
             _move_print_heads(err_head, out_head, process)
         except KeyboardInterrupt:
+            process.kill()
             print("^C")
+        if _return_viewer is True:
+            return process
 
     @connectwrap
     def commands(
