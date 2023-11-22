@@ -1,4 +1,5 @@
 import io
+import warnings
 from itertools import product
 from multiprocessing import Process
 import re
@@ -226,24 +227,27 @@ class SSH(RunCommand):
                 rp(*map(lambda t: f"[red]{t}[/red]", result.stderr))
         return result
 
-    def con(self, *args, **kwargs):
-        """
-        pretend you are running a command on the instance while looking at a
-        terminal emulator, pausing for output and pretty-printing it to stdout.
+    # def con(self, *args, **kwargs):
+    #     """
+    #     pretend you are running a command on the remote host while looking at a
+    #     terminal emulator, pausing for output and pretty-printing it to stdout.
+    #
+    #     like SSH.__call__() with _wait=True, _quiet=False, but does not return
+    #     a process abstraction. fun in interactive environments.
+    #     """
+    #     self(*args, _quiet=False, _wait=True, **kwargs)
 
-        like SSH.__call__() with _wait=True, _quiet=False, but does not return
-        a process abstraction. fun in interactive environments.
-        """
-        self(*args, _quiet=False, _wait=True, **kwargs)
+    def close(self):
+        for process, _ in self.tunnels:
+            process.kill()
+        if self.conn is not None:
+            self.conn.close()
 
     def __str__(self):
         return f"{super().__str__()}\n{self.uname}@{self.host}"
 
     def __del__(self):
-        if self.conn is not None:
-            self.conn.close()
-        for process, _ in self.tunnels:
-            process.kill()
+        self.close()
 
     conn = None
 
@@ -348,9 +352,10 @@ def stop_jupyter_factory(
         method, and once it finishes, attempts to stop the Jupyter server
         running on the specified port.
     """
-    def stop_it(waitable: Any):
-        waitable.wait()
-        command(f"{jupyter} stop --NbserverStopApp.port={port}")
+    def stop_it(waitable: Any = None):
+        if waitable is not None:
+            waitable.wait()
+        command(f"{jupyter} stop {port}")
 
     return stop_it
 
@@ -386,13 +391,17 @@ def get_jupyter_token(
     )
 
 
-NotebookConnection = tuple[str, tuple[Process, dict], Processlike]
+NotebookConnection = tuple[
+    str, Process, dict, Processlike, Callable[[], None]
+]
 """
 structure containing results of a tunneled Jupyter Notebook execution.
 
 1. URL for Jupyter server
-2. SSH tunnel process + metadata
+2. SSH tunnel process
+3. SSH tunnel metadata
 3. Jupyter execution process
+4. Callable for gracefully shutting down Notebook
 """
 
 
@@ -402,8 +411,9 @@ def jupyter_connect(
     remote_port: int = 8888,
     env: Optional[str] = None,
     get_token: bool = True,
-    kill_on_exit: bool = True,
+    kill_on_exit: bool = False,
     working_directory: Optional[str] = None,
+    lab=False,
     **command_kwargs,
 ) -> NotebookConnection:
     """
@@ -420,32 +430,40 @@ def jupyter_connect(
         kill_on_exit: attempt to kill the Jupyter server when the
             `jupyter_launch` process terminates?
         working_directory: working directory for jupyter server
+        lab: launch JupyterLab instead of Jupyter Notebook
         **command_kwargs: additional kwargs to pass to `jupyter notebook`
 
     Returns:
-        structure containing results of tunneled notebook execution
+        structure containing results of tunneled notebook execution,
+        including a callable to terminate the Notebook
     """
+    booktype = 'notebook' if lab is False else 'lab'
     if env is not None:
-        jupyter = f"{find_conda_env(ssh, env)}" f"/bin/jupyter notebook"
+        jupyter = f"{find_conda_env(ssh, env)}" f"/bin/jupyter {booktype}"
     else:
-        jupyter = "jupyter notebook"
-    if kill_on_exit is True:
-        done = stop_jupyter_factory(ssh, jupyter, remote_port)
-    else:
-        done = zero
+        jupyter = f"jupyter {booktype}"
+    stopper = stop_jupyter_factory(ssh, jupyter, remote_port)
+    done = stopper if kill_on_exit is True else zero
     cmd = f"{jupyter} --port {remote_port} --no-browser"
     if working_directory is not None:
         cmd = f"cd {working_directory} && {cmd}"
-    # TODO, maybe: return a Viewer here
-    jupyter_launch = ssh(cmd, _done=done, _bg=True, **command_kwargs)
+    launch_process = ssh(cmd, _done=done, _bg=True, **command_kwargs)
     jupyter_url_base = f"http://localhost:{local_port}"
     if get_token:
-        token = get_jupyter_token(ssh, jupyter, remote_port)
-        jupyter_url = f"{jupyter_url_base}/?token={token}"
+        try:
+            token = get_jupyter_token(ssh, jupyter, remote_port)
+            jupyter_url = f"{jupyter_url_base}/?token={token}"
+        except ValueError as ve:
+            warnings.warn(str(ve))
+            jupyter_url = None
     else:
         jupyter_url = jupyter_url_base
-    ssh.tunnel(local_port, remote_port)
-    return jupyter_url, ssh.tunnels[-1], jupyter_launch
+    if jupyter_url is not None:
+        ssh.tunnel(local_port, remote_port)
+        tunnel, tunnel_meta = ssh.tunnels[-1]
+    else:
+        tunnel, tunnel_meta = None, None
+    return jupyter_url, tunnel, tunnel_meta, launch_process, stopper
 
 
 def find_ssh_key(

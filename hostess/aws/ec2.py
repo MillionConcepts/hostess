@@ -315,8 +315,7 @@ class Instance:
             delay: how many seconds to wait after failed attempts
         """
         if self._ssh is not None:
-            del self._ssh
-            self._ssh = None
+            self._drop_ssh()
         self._prep_connection(lazy=False, maxtries=maxtries, delay=delay)
 
     @property
@@ -419,8 +418,8 @@ class Instance:
                 f"{next(number)}. It is currently not running. Try starting "
                 f"the instance with .start()."
             )
-            del self._ssh
-            self._ssh = None
+            if self._ssh is not None:
+                self._drop_ssh()
         # only mention missing IP if instance is running -- we don't expect
         # a stopped instance to have an IP.
         elif "ip" in unready:
@@ -432,6 +431,11 @@ class Instance:
         if "key" in unready:
             errstring += f"{next(number)}. {self.key_errstring}"
         raise ConnectionError(errstring)
+
+    def _drop_ssh(self):
+        self._ssh.close()
+        del self._ssh
+        self._ssh = None
 
     @connectwrap
     def command(
