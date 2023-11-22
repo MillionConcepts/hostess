@@ -24,6 +24,7 @@ from typing import (
 
 import boto3.resources.base
 import botocore.client
+
 import botocore.exceptions
 from cytoolz.curried import get
 import dateutil.parser as dtp
@@ -734,6 +735,24 @@ class Instance:
         )
         return self._ssh(python_command_string, **command_kwargs)
 
+    def rebase_ssh_ingress_ip(self, ip=None, force=False, revoke=False):
+        """Revoke all SSH ingress rules and add one for the current IP.
+
+        TODO: It is permitted to have more than one security group apply to
+        an instance. This method will currently modify _all_ security groups
+        attached to a particular instance. We only really ever use one
+        security group per instance... but this should be fixed somehow."""
+
+        for sg_index in self.instance_.security_groups:
+            sg = init_resource("ec2").SecurityGroup(sg_index["GroupId"])
+            if revoke is True:
+                revoke_ssh_ingress_from_all_ips(
+                    sg, force_modification_of_default_sg=force
+                )
+            authorize_ssh_ingress_from_ip(
+                sg, ip=ip, force_modification_of_default_sg=force
+            )
+
     def __repr__(self):
         string = f"{self.instance_type} in {self.zone} "
         if self.ip is None:
@@ -867,8 +886,6 @@ class Cluster:
         **instance_kwargs,
     ):
         client = init_client("ec2", client, session)
-        tags = {} if tags is None else tags
-        tags = [{"Key": k, "Value": v} for k, v in tags.items()]
         options = {} if options is None else options
         if template is None:
             using_scratch_template = True
@@ -883,7 +900,16 @@ class Cluster:
                 instance_kwargs['uname'] = 'ubuntu'
         else:
             using_scratch_template = False
-
+        if tags is not None:
+            tagrecs = [{"Key": k, "Value": v} for k, v in tags.items()]
+            tag_kwarg = {
+                'TagSpecifications': [
+                    {"ResourceType": "instance", "Tags": tagrecs},
+                    {"ResourceType": "volume", "Tags": tagrecs},
+                ]
+            }
+        else:
+            tag_kwarg = {}
         try:
             fleet = client.create_fleet(
                 LaunchTemplateConfigs=[
@@ -899,11 +925,8 @@ class Cluster:
                     "OnDemandTargetCapacity": count,
                     "DefaultTargetCapacityType": "on-demand",
                 },
-                TagSpecifications= [
-                    {"ResourceType": "instance", "Tags": tags},
-                    {"ResourceType": "volume", "Tags": tags},
-                ],
                 Type="instant",
+                **tag_kwarg
             )
         finally:
             if using_scratch_template is True:
@@ -958,6 +981,14 @@ class Cluster:
             instance.wait_until_running()
             print(f"{instance} is running")
         return cluster
+
+    def rebase_ssh_ingress_ip(self, ip=None, force=False, revoke=False):
+        """Revoke all SSH ingress rules and add one for the current IP.
+        To issue commands to instances, you must have SSH ingress access
+        and it is good security practice to not white list the entire world."""
+        return self._async_method_call(
+            "rebase_ssh_ingress_ip", ip=ip, force=force, revoke=revoke
+        )
 
     def __getitem__(self, item):
         return self.instances[item]
@@ -1191,6 +1222,8 @@ def _ebs_device_mapping(
         )
     if device_name is None:
         device_name = f"/dev/sd{ascii_lowercase[1:][index]}"
+    # TODO: figure out how to override config in launch template instead
+    #  of creating additional volumes
     mapping = {
         "DeviceName": device_name,
         "Ebs": {"VolumeType": volume_type, "VolumeSize": volume_size},
@@ -1373,3 +1406,68 @@ def create_launch_template(
         LaunchTemplateData=launch_template_data,
         TagSpecifications=[{"ResourceType": "launch-template", "Tags": tags}],
     )["LaunchTemplate"]
+
+
+def revoke_ssh_ingress_from_all_ips(
+    sg,
+    force_modification_of_default_sg=False,
+    ports=(22,),
+    protocols=('tcp',)
+):
+    print(f'Revoking SSH ingress from all IPs for security group {sg.id}')
+    if 'default' in sg.id and not force_modification_of_default_sg:
+        print(
+            '\tRefusing to modify permissions of a default security group. '
+            'Pass flag to override.'
+        )
+        return
+    for rule in sg.ip_permissions:
+        # do not modify ingress rules based on security group (and not just IP)
+        if not (rule['FromPort'] in ports and
+                rule['IpProtocol'] in protocols and
+                any(sg.ip_permissions[1]['UserIdGroupPairs'])):
+            continue
+        sg.revoke_ingress(IpPermissions=[rule])
+
+
+def authorize_ssh_ingress_from_ip(
+    sg, ip=None, force_modification_of_default_sg=False,
+):
+    """
+    Args:
+        sg: ec2.SecurityGroup object to apply authorization to
+        ip: ip to authorize
+        force_modification_of_default_sg: apply modification even to a default
+            security group?
+    """
+    if ip is None:
+        # automatically select the user's ip
+        ip = my_external_ip()
+    print(f"Authorizing SSH ingress from {ip} for security group {sg.id}")
+    if 'default' in sg.id and not force_modification_of_default_sg:
+        print(
+            '\tRefusing to modify permissions of a default security group. '
+            'Pass flag to override.'
+        )
+        return
+    try:
+        sg.authorize_ingress(
+            IpPermissions=[
+                {
+                    "FromPort": 22,
+                    "ToPort": 22,
+                    "IpProtocol": "tcp",
+                    "IpRanges": [
+                        {
+                            "CidrIp": f"{ip}/32",
+                            "Description": "SSH access from specified IP",
+                        }
+                    ],
+                },
+            ],
+        )
+    except botocore.client.ClientError as ce:
+        if 'InvalidPermission.Duplicate' in str(ce):
+            print(f"** {ip} already authorized for SSH ingress for {sg.id} **")
+        else:
+            raise
