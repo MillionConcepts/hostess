@@ -10,6 +10,9 @@ fitting intuitively and idiomatically into common data science and scientific
 analysis workflows, but it is fundamentally a general-purpose utility and 
 administration library.
 
+[You can find extended documentation and an API reference on readthedocs.](https://hostess.readthedocs.io)
+[![Documentation Status](https://readthedocs.org/projects/hostess/badge/?version=latest)](https://hostess.readthedocs.io/en/latest/?badge=latest)
+
 ## cautions
 `hostess` is a reliable and fairly feature-complete beta in active use on 
 multiple projects. However, we do not guarantee interface stability or 
@@ -18,7 +21,7 @@ with any system administration software, we recommend using it very carefully.
 
 ## installation
 `hostess` is not currently available via any package manager. 
-For now, we recommend downloading the source, using a `conda`-compatible tool 
+For now, we recommend downloading the source, using a Conda-compatible tool 
 and the provided [environment.yml](environment.yml) file to set up an 
 appropriate conda env, then installing `hostess` into that environment using 
 `pip`. For instance, if you have `mamba` and `git` installed:
@@ -47,15 +50,11 @@ could be used purely locally.
 
 ## tests
 `hostess` includes a simple test suite compatible with `pytest`. More 
-comprehensive tests are planned. In particular, networking features currently 
-lack test coverage. You can run it by executing `pytest -s` in the root 
-directory. The `-s` flag is mandatory because `pytest`'s default stdout-
-capturing behavior breaks some core `hostess` features.
+comprehensive tests are planned. In particular, non-local networking features 
+currently lack test coverage. You can run the tests by executing `pytest -s` 
+in the root directory. The `-s` flag is mandatory because `pytest`'s default 
+output capturing breaks some `hostess` features covered by the tests.
 
 ## licensing
 You can do almost anything with this software that you like, subject only to 
 the extremely permissive terms of the [BSD 3-Clause License](LICENSE).
-
-Additional information on usage including an API reference 
-can now be accessed in our documentation on readthedocs at: https://hostess.readthedocs.io [![Documentation Status](https://readthedocs.org/projects/hostess/badge/?version=latest)](https://hostess.readthedocs.io/en/latest/?badge=latest)
-
