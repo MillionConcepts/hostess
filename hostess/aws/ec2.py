@@ -108,7 +108,7 @@ def summarize_instance_description(
 
 def ls_instances(
     identifier: Optional[InstanceIdentifier] = None,
-    states: Sequence[str] = ("running", "pending", "stopped"),
+    states: Sequence[str] = ("running", "pending", "stopping", "stopped"),
     raw_filters: Optional[Sequence[Mapping[str, str]]] = None,
     client=None,
     session=None,

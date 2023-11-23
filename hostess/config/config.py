@@ -17,10 +17,10 @@ GENERAL_DEFAULTS = {
     ),
     "cache_path": f"{home}/.hostess/cache",
     "log_path": f"{home}/.hostess/logs",
-    "uname": getpass.getuser(),
+    "uname": 'ubuntu'
 }
 EC2_DEFAULTS = {
-    "instance_type": "t3.small",
+    "instance_type": "t3a.small",
     "volume_type": "gp3",
     "volume_size": 8,
 }
