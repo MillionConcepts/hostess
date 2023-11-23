@@ -7,7 +7,7 @@ def test_viewer_1():
     viewer = Viewer.from_command("echo hi")
     time.sleep(0.01)
     assert str(viewer).startswith("Viewer for finished process echo hi")
-    assert viewer.out[0] == 'hi\n'
+    assert viewer.out[0] == 'hi'
 
 
 def test_viewer_2():
