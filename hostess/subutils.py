@@ -603,7 +603,7 @@ class RunCommand:
              use an `'='` to separate them from their values.
              `cmd("ls", I="a*")` is equivalent to `"ls -I a*"`.
            * it treats longer names as options preceded by `"--"` and uses
-             an `'='` to seaprate them from their values.
+             an `'='` to separate them from their values.
              `cmd("ls", width=20)` is equivalent to `"ls --width=20"`.
            * It replaces `"_"` characters within names with `"-"`.
              `cmd("ls", time_style="iso")` is equivalent to
