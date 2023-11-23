@@ -34,7 +34,7 @@ def test_format_deserializer():
         deserializer = Dynamic(
             defwrap("def deserialize(payload)", desource + "\nreturn payload")
         )
-        # int isn't json-compliant and won't survive roundtrip
+        # ints aren't json-compliant keys and would be stringified in roundtrip
         rdict = random_nested_dict(20, types=[str])
         assert deserializer(serializer(rdict)) == rdict
 

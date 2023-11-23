@@ -11,6 +11,7 @@ introspection, or more flexible I/O stream manipulation are required. We also
 like the syntax better.
 """
 import datetime as dt
+import time
 from functools import partial
 import io
 from inspect import getmembers
@@ -35,7 +36,7 @@ import boto3.resources.base
 import boto3.s3.transfer
 import botocore.client
 import pandas as pd
-from cytoolz import keyfilter
+from cytoolz import keyfilter, valfilter
 from dustgoggles.func import naturals
 import requests
 
@@ -507,7 +508,7 @@ def ls(
     if cache_only is True:
         return None
     if formatting == "raw":
-        return responses
+        return tuple(responses)
     contents, prefixes = [], []
     for r in responses:
         if "Contents" in r.keys():
@@ -666,6 +667,30 @@ def complete_multipart_upload(
     )
 
 
+# noinspection PyProtectedMember
+def _clean_putter_process_records(
+    records, block=True, block_threshold=1, poll_delay=0.05
+):
+    """helper function for multithreaded put_stream()"""
+    i_am_actively_blocking = True
+    while i_am_actively_blocking is True:
+        process_records = valfilter(lambda v: "process" in v.keys(), records)
+        alive_count = 0
+        for record in process_records.values():
+            if not record["process"]._closed:
+                if record["process"].is_alive():
+                    alive_count += 1
+                    continue
+            if "result" not in record.keys():
+                record["result"] = record["pipe"].recv()
+                record["pipe"].close()
+            if not record["process"]._closed:
+                record["process"].close()
+        i_am_actively_blocking = (alive_count >= block_threshold) and block
+        if i_am_actively_blocking is True:
+            time.sleep(poll_delay)
+
+
 def put_stream(
     bucket: Union[str, Bucket],
     obj: Union[Iterator, IO, str, Path],
@@ -764,9 +789,8 @@ def put_stream(
         raise
     del chunk
     put_chunk(b"", flush=True)
-    # TODO: fix this
     if upload_threads is not None:
-        clean_process_records(parts)
+        _clean_putter_process_records(parts)
     del put_chunk
     parts = {number: part["result"] for number, part in parts.items()}
     return bucket.complete_multipart_upload(
@@ -808,7 +832,7 @@ def _put_stream_chunk(
     }
     download_cache.append(b"")
     if upload_threads is not None:
-        clean_process_records(parts, block_threshold=upload_threads)
+        _clean_putter_process_records(parts, block_threshold=upload_threads)
         pipe, remote = piped(bucket.client.upload_part)
         process = Process(target=remote, kwargs=kwargs)
         process.start()

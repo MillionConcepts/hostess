@@ -55,6 +55,7 @@ from hostess.ssh import (
 from hostess.subutils import Processlike
 from hostess.utilities import (
     check_cached_results,
+    clear_cached_results,
     filestamp,
     my_external_ip,
     timeout_factory,
@@ -715,7 +716,8 @@ class Instance:
         module=None,
         func=None,
         payload=None,
-        interpreter_path=None,
+        *,
+        interpreter=None,
         env=None,
         compression=None,
         serialization=None,
@@ -725,26 +727,26 @@ class Instance:
         filter_kwargs=True,
         **command_kwargs,
     ):
-        if (interpreter_path is not None) and (env is not None):
+        if (interpreter is not None) and (env is not None):
             raise ValueError(
                 "Please pass either the name of a conda environment or the "
                 "path to a Python interpreter (one or the other, not both)."
             )
         if env is not None:
-            interpreter_path = f"{self.conda_env(env)}/bin/python"
-        if interpreter_path is None:
-            interpreter_path = "python"
+            interpreter = f"{self.conda_env(env)}/bin/python"
+        if interpreter is None:
+            interpreter = "python"
         python_command_string = generic_python_endpoint(
             module,
             func,
             payload,
-            compression,
-            serialization,
-            splat,
-            payload_encoded,
-            print_result,
-            filter_kwargs,
-            interpreter_path,
+            compression=compression,
+            serialization=serialization,
+            splat=splat,
+            payload_encoded=payload_encoded,
+            print_result=print_result,
+            filter_kwargs=filter_kwargs,
+            interpreter=interpreter,
             for_bash=True
         )
         return self._ssh(python_command_string, **command_kwargs)

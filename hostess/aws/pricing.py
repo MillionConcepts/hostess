@@ -6,13 +6,14 @@ from dustgoggles.structures import dig_for_value
 
 from hostess.aws.utilities import init_client, clarify_region, autopage
 from hostess.config import GENERAL_DEFAULTS
-from hostess.utilities import check_cached_results, clear_cached_results, \
-    filestamp
+from hostess.utilities import (
+    check_cached_results, clear_cached_results, filestamp
+)
 
 
 def get_on_demand_price(instance_type, region=None, client=None, session=None):
     """
-    fetch on-dmeand pricing information for a specific instance type.
+    fetch on-demand pricing information for a specific instance type.
     """
     client = init_client("pricing", client, session)
     region = clarify_region(region, client)
