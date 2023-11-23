@@ -276,9 +276,11 @@ class Instance:
         client=None,
         session=None,
         wait=True,
-        **instance_kwargs,
+        connect=False,
+        maxtries=40,
+        **instance_kwargs
     ):
-        return Cluster.launch(
+        instance = Cluster.launch(
             1,
             template,
             options,
@@ -288,6 +290,19 @@ class Instance:
             wait,
             **instance_kwargs
         )[0]
+        if connect is True:
+            instance._wait_on_connection(maxtries)
+        return instance
+
+    def _wait_on_connection(self, maxtries):
+        print("waiting until instance is connectable...", end="")
+        while not self.is_connected:
+            try:
+                self.connect(maxtries=maxtries)
+                break
+            except ConnectionError:
+                continue
+        print('connection established')
 
     # TODO: pull more of these command / connect behaviors up to SSH.
 
@@ -548,15 +563,33 @@ class Instance:
         self._prep_connection()
         return jupyter_connect(self._ssh,  **connect_kwargs)
 
-    def start(self, return_response: bool = False) -> Optional[dict]:
+    def start(
+        self,
+        return_response: bool = False,
+        wait: bool = True,
+        connect: bool = False,
+        maxtries: int = 40
+    ) -> Optional[dict]:
         """
-        Start the instance and attempt to establish an SSH connection.
+        Start the instance.
 
         Args:
             return_response: if True, return API response.
+            wait: if True, wait until instance is running.
+            connect: if True, wait until the instance is connectable via SSH
+                or we have tried to connect `maxtries` times.
+            maxtries: max number of times to attempt connection (5s delay in
+                between).
         """
         response = self.instance_.start()
         self.update()
+        if (wait is True) and (connect is False):
+            print('waiting until instance is running...', end='')
+            self.wait_until_running()
+            print('running.')
+        if connect is True:
+            self.wait_until_running()
+            self._wait_on_connection(maxtries)
         if return_response is True:
             return response
 
@@ -901,6 +934,11 @@ class Cluster:
     ):
         client = init_client("ec2", client, session)
         options = {} if options is None else options
+        # TODO: add a few more conveniences, clean up
+        if instance_kwargs.get('type_') is not None:
+            options['instance_type'] = instance_kwargs.pop('type_')
+        if instance_kwargs.get('name') is not None:
+            options['instance_name'] = instance_kwargs.pop('name')
         if template is None:
             using_scratch_template = True
             template = create_launch_template(**options)["LaunchTemplateName"]
@@ -1235,9 +1273,9 @@ def _ebs_device_mapping(
             f"throughput or IOPS."
         )
     if device_name is None:
-        device_name = f"/dev/sd{ascii_lowercase[1:][index]}"
-    # TODO: figure out how to override config in launch template instead
-    #  of creating additional volumes
+        device_name = f"/dev/sd{ascii_lowercase[index]}"
+    if device_name == "/dev/sda":
+        device_name = "/dev/sda1"
     mapping = {
         "DeviceName": device_name,
         "Ebs": {"VolumeType": volume_type, "VolumeSize": volume_size},
