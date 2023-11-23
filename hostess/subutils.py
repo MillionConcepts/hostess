@@ -1,21 +1,22 @@
 """utilities for executing, managing, and watching subprocesses"""
-import os
-import time
 from concurrent.futures import ThreadPoolExecutor, Future
 from contextlib import redirect_stdout, redirect_stderr
 from functools import partial, wraps
 from multiprocessing import Process, Pipe
+import os
+import time
 from typing import (
-    Optional,
-    Literal,
-    Mapping,
-    Collection,
-    Hashable,
     Any,
     Callable,
+    Collection,
+    Hashable,
+    Literal,
+    Mapping,
     MutableMapping,
     MutableSequence,
-    Union, Sequence,
+    Optional,
+    Sequence,
+    Union,
 )
 
 import invoke
@@ -24,7 +25,7 @@ from dustgoggles.composition import Composition
 from dustgoggles.func import intersection
 from dustgoggles.structures import listify
 
-from hostess.utilities import timeout_factory, curry, Aliased
+from hostess.utilities import Aliased, curry, timeout_factory
 
 
 class Nullify:
@@ -519,7 +520,7 @@ class RunCommand:
         """
         Execute a shell command parsed from args and kwargs.
 
-        This method has two legal calling conventions along witha variety of
+        This method has two legal calling conventions along with a variety of
         keyword-argument meta-options that modify _how_ it executes the shell
         command. The meta-options are not defined in the signature in order
         to facilitate the parsing process.
@@ -557,7 +558,7 @@ class RunCommand:
         These conventions are not mutually exclusive, although it is
         generally less confusing to pick one or the other.
 
-        1. Pass the entire shell command as a literal string. This can be
+        1. Pass the shell command as a literal string. This can be
            simpler in many cases, and is mandatory for programs with
            non-standard calling conventions, like the ffmpeg command below.
 
@@ -600,7 +601,9 @@ class RunCommand:
                  cmd("ls", time_style="iso") is equivalent to
                  "ls --time-style=iso".
                * if a keyword argument is True, RunCommand treats it as a
-                 "switch". cmd("ls", a=True") is equivalent to "ls -a".
+                 "switch". cmd("ls", a=True) is equivalent to "ls -a".
+               * if a keyword argument is False, RunCommand ignores it.
+                 cmd("ls", a=False) is equivalent to "ls".
 
         In addition to these conventions, bear in mind that if you specified a
         command when you created this object, that command will always be used
@@ -612,7 +615,6 @@ class RunCommand:
             * if _viewer is True, a Viewer
             * if _viewer is False and _bg is True, an invoke Result
             * if _viewer is False and _bg is False, an invoke Runner
-
         """
         rkwargs = keyfilter(
             lambda k: k.startswith("_") and not k.strip("_").isnumeric(),
