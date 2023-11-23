@@ -16,17 +16,17 @@ import time
 from types import ModuleType
 from typing import (
     Any, Callable, Hashable, Iterable, MutableMapping, Optional, Sequence,
-    Mapping
+    Mapping, Collection, Union
 )
 
-from cytoolz import first
 from dustgoggles.dynamic import exc_report
 import rich.console
 import yaml
+from rich.style import Style
 
 
 def stamp() -> str:
-    """sorthand for standardized text event stamp"""
+    """create standardized text event stamp"""
     return f"{gethostname()} {dt.datetime.utcnow().isoformat()[:-7]}: "
 
 
@@ -41,14 +41,39 @@ def logstamp(extra: int = 0) -> str:
 
 
 HOSTESS_CONSOLE = rich.console.Console()
+"""convenient shared rich console"""
 
 
-def console_and_log(message, level="info", style=None):
+def console_and_log(
+    message: Any,
+    level: str = "info",
+    style: Optional[Union[str, Style]] = None
+):
+    """
+    print a message to console and log it with this module's default logger.
+
+    Args:
+        message: object to print and log. must be compatible with both default
+            logger and rich.console.Console.print. strings or numbers are
+            recommended.
+        level: logging level as a string ("info", "warning", etc.)
+        style: optional rich Style or string description of one, e.g. "red"
+    """
     HOSTESS_CONSOLE.print(message, style=style)
     getattr(logging, level)(message)
 
 
-def mb(b, round_to=2):
+def mb(b: int, round_to: Optional[int] = 2) -> float:
+    """
+    utility function to convert B to MB.
+
+    Args:
+        b: how many bytes?
+        round_to: if not None, round output to this many digits.
+
+    Returns:
+        `b` converted from B to MB
+    """
     value = int(b) / 10 ** 6
     if round_to is not None:
         return round(value, round_to)
@@ -56,9 +81,20 @@ def mb(b, round_to=2):
 
 
 def gb(b, round_to=2):
+    """
+    utility function to convert B to GB.
+
+    Args:
+        b: how many bytes?
+        round_to: if not None, round output to this many digits.
+
+    Returns:
+        `b` converted from B to GB
+    """
     value = int(b) / 10 ** 9
     if round_to is not None:
         return round(value, round_to)
+    return value
 
 
 # noinspection PyUnresolvedReferences,PyProtectedMember
@@ -126,28 +162,6 @@ def my_external_ip():
     return requests.get("https://4.ident.me").content.decode()
 
 
-def check_cached_results(path, prefix, max_age=7):
-    cache_filter = filter(lambda p: p.name.startswith(prefix), path.iterdir())
-    try:
-        result = first(cache_filter)
-        timestamp = re.search(
-            r"(\d{4})_(\d{2})_(\d{2})T(\d{2})_(\d{2})_(\d{2})", result.name
-        )
-        cache_age = dt.datetime.now() - dt.datetime(
-            *map(int, timestamp.groups())
-        )
-        if cache_age.days > max_age:
-            return None
-    except StopIteration:
-        return None
-    return result
-
-
-def clear_cached_results(path, prefix):
-    for result in filter(lambda p: p.name.startswith(prefix), path.iterdir()):
-        result.unlink()
-
-
 def record_and_yell(
     message: str, cache: MutableMapping, loud: bool = False, extra: int = 0
 ):
@@ -204,17 +218,28 @@ def notary(
     return note
 
 
-def dcom(string, sep=";", bad=(",", "\n")):
+def dcom(
+    string: str, sep: str = ";", bad: Collection[str] = (",", "\n")
+) -> str:
     """
-    simple string sanitization function. defaults assume that you want to jam
-    the string into a CSV field. assumes you don't care about distinguishing
-    different forbidden characters from one another in the output.
+    simple string sanitization function. the default values assume that you
+    want to jam the string into a CSV field. always assumes you don't care
+    about distinguishing different forbidden characters from one another in
+    the output.
+
+    Args:
+        string: string to sanitize
+        sep: separator to replace 'bad' characters with
+        bad: characters to replace with sep
+
+    Returns:
+        `string` washed clean of bad characters.
     """
     return re.sub(rf"[{re.escape(''.join(bad))}]", sep, string.strip())
 
 
 def unix2dt(epoch: float) -> dt.datetime:
-    """shorthand for dt.datetime.fromtimestamp."""
+    """alias for `dt.datetime.fromtimestamp()`."""
     return dt.datetime.fromtimestamp(epoch)
 
 
@@ -274,8 +299,9 @@ def timeout_factory(
     wait timer.
 
     Args:
-        raise_timeout: if True, raises timeout if waiting > timeout.
-        timeout: timeout in seconds, used only if raise_timeout is True
+        raise_timeout: if True, raises TimeoutError if waiting > timeout.
+            otherwise, this is basically just a stopwatch.
+        timeout: timeout in seconds. Used only if raise_timeout is True.
     """
     starts = []
 

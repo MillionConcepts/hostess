@@ -55,7 +55,7 @@ class Bouncer(FakeBouncer):
     def __init__(
         self,
         ratelimit: float = 0.1,
-        window: int = 1,
+        window: float = 1,
         blockdelay: Optional[float] = None,
     ):
         """
@@ -585,7 +585,7 @@ def make_stat_printer(
 class Recorder:
     """
     wrapper class for arbitrary callable. makes its interface compatible
-    with make_stat_records()
+    with `make_stat_records()`.
     """
 
     def __init__(self, func: Callable):
@@ -742,7 +742,23 @@ class Ticker:
 
 
 @curry
-def ticked(func, label, ticker):
+def ticked(func: Callable, label: str, ticker: Ticker) -> Callable:
+    """
+    Modify func so that it records a tick on ticker whenever it's called.
+    To use with @ syntax, do something like:
+
+    ```
+    @ticked(label='login', ticker=DEFAULT_TICKER)
+    def handle_login(...
+    ```
+    Args:
+        func: function to modify
+        label: label to use for tick
+        ticker: Ticker to tick
+
+    Returns:
+        modified version of `func`
+    """
     @wraps(func)
     def tickoff(*args, **kwargs):
         ticker.tick(label)
@@ -752,3 +768,4 @@ def ticked(func, label, ticker):
 
 
 DEFAULT_TICKER = Ticker()
+"""convenient shared Ticker"""
