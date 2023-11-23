@@ -4,10 +4,10 @@ from pathlib import Path
 
 from dustgoggles.structures import dig_for_value
 
-from hostess.aws.utilities import init_client, clarify_region, autopage
+from hostess.aws.utilities import init_client, clarify_region, autopage, _check_cached_results, _clear_cached_results
 from hostess.config import GENERAL_DEFAULTS
 from hostess.utilities import (
-    check_cached_results, clear_cached_results, filestamp
+    filestamp
 )
 
 
@@ -203,7 +203,7 @@ def get_ec2_basic_price_list(
     cache_path = Path(GENERAL_DEFAULTS["cache_path"])
     prefix = f"ec2_basic_price_list_{region}"
     if reset_cache is False:
-        cached_results = check_cached_results(cache_path, prefix, max_age=7)
+        cached_results = _check_cached_results(cache_path, prefix, max_age=7)
         if cached_results is not None:
             return pickle.load(cached_results.open("rb"))
     if client is None:
@@ -213,7 +213,7 @@ def get_ec2_basic_price_list(
         "credits": get_cpu_credit_rates(region, client),
         "ebs": get_ebs_storage_rates(region, client),
     }
-    clear_cached_results(cache_path, prefix)
+    _clear_cached_results(cache_path, prefix)
     with Path(cache_path, f"{prefix }_{filestamp()}.pkl").open("wb") as stream:
         pickle.dump(prices, stream)
     return prices

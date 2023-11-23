@@ -1,30 +1,18 @@
+from __future__ import annotations
+
 import csv
+import datetime as dt
 from operator import contains
 import os
 import re
-from typing import Optional
+from pathlib import Path
+from typing import Optional, Union, Callable, Any
 
 import boto3
 import boto3.resources.base
 import botocore.client
-from cytoolz import identity, flip
+from cytoolz import identity, flip, first
 from cytoolz.curried import mapcat, get
-
-
-def clear_constructor(semaphore, chunkfile, part_number):
-    """
-    utility function for multipart upload process.
-    deletes file and releases semaphore when chunk
-    completes upload.
-    """
-
-    def clear_when_done(_command, _success, _exit_code):
-        print("part number " + str(part_number) + " upload complete.")
-        os.unlink(chunkfile)
-        semaphore.release()
-        return 0
-
-    return clear_when_done
 
 
 def tag_dict(tag_records, lower=False):
@@ -32,15 +20,50 @@ def tag_dict(tag_records, lower=False):
     return {formatter(tag["Key"]): tag["Value"] for tag in tag_records}
 
 
-def read_aws_config_file(path):
+def parse_aws_identity_file(
+    path: Union[str, Path], profile: Optional[str] = None
+) -> dict[str, str]:
+    """
+    Parse an AWS config, credentials, or downloaded IAM secrets file.
+
+    Args:
+        path: path to file
+        profile: if specified, look for settings for this profile
+            specifically. Otherwise, use the first profile in the file.
+            Ignored if file appears to be an IAM secrets file.
+
+    Returns:
+        `dict` of parsed key-value pairs from identity file.
+
+    Raises:
+        OSError if `profile` is specified but not in identity file, or if
+            identity file is obviously malformatted.
+    """
     with open(path) as config_file:
         lines = config_file.readlines()
     if "," in lines[0]:
+        # this is a downloaded secret key file.
         parsed = next(csv.DictReader(iter(lines)))
         return {"_".join(k.lower().split(" ")): v for k, v in parsed.items()}
     parsed = {}
-    # TODO: allow selection of non-default profiles
-    for line in lines:
+    if profile is not None:
+        try:
+            lineno, _ = first(
+                i for i, l in enumerate(lines)
+                if l.strip().startswith(f"[{profile}")
+            )
+        except StopIteration:
+            raise OSError(f"{profile} not described in identity file")
+    else:
+        try:
+            lineno, _ = first(
+                i for i, l in enumerate(lines) if l.strip().startswith("[")
+            )
+        except StopIteration:
+            raise OSError("Identity file empty or malformatted")
+    for line in lines[lineno + 1:]:
+        if line.strip().startswith("["):
+            break
         try:
             parameter, value = map(str.strip, line.split("="))
             parsed[parameter] = value
@@ -49,24 +72,79 @@ def read_aws_config_file(path):
     return parsed
 
 
-def make_boto_session(profile=None, credential_file=None, region=None):
+def make_boto_session(
+    profile: Optional[str] = None,
+    credential_file: Optional[Union[str, Path]] = None,
+    region: Optional[str] = None
+) -> boto3.Session:
+    """
+    Create a new boto session.
+
+    Args:
+        profile: name of AWS profile to use (default profile if not specified)
+        credential_file: path to credential file (looks in default credential
+            path if not specified)
+        region: name of AWS region, e.g. "us-east-1". (uses profile's default
+            region if not specified)
+
+    Returns:
+        boto session.
+    """
     if credential_file is None:
         return boto3.Session(profile_name=profile, region_name=region)
-    creds = read_aws_config_file(credential_file)
+    creds = parse_aws_identity_file(credential_file)
     for disliked_kwarg in ("user_name", "password"):
         if disliked_kwarg in creds.keys():
             del creds[disliked_kwarg]
     return boto3.Session(**creds, region_name=region)
 
 
-def make_boto_client(service, profile=None, credential_file=None, region=None):
+def make_boto_client(
+    service,
+    profile: Optional[str] = None,
+    credential_file: Optional[Union[str, Path]] = None,
+    region: Optional[str] = None
+) -> botocore.client.BaseClient:
+    """
+    Create a new boto client.
+
+    Args:
+        service: service to create client for, e.g. "ec2"
+        profile: optional name of AWS profile to use (default profile if not
+            specified)
+        credential_file: optional path to credential file (looks in default
+            credential path if not specified)
+        region: optional name of AWS region, e.g. "us-east-1". (uses profile's
+            default region if not specified)
+
+    Returns:
+        boto client for service.
+    """
     session = make_boto_session(profile, credential_file, region)
     return session.client(service)
 
 
 def make_boto_resource(
-    service, profile=None, credential_file=None, region=None
-):
+    service,
+    profile: Optional[str] = None,
+    credential_file: Optional[Union[str, Path]] = None,
+    region: Optional[str] = None
+) -> boto3.resources.base.ServiceResource:
+    """
+    Create a new boto resource.
+
+    Args:
+        service: service to create resource for, e.g. "ec2"
+        profile: optional name of AWS profile to use (default profile if not
+            specified)
+        credential_file: optional path to credential file (looks in default
+            credential path if not specified)
+        region: optional name of AWS region, e.g. "us-east-1". (uses profile's
+            default region if not specified)
+
+    Returns:
+        boto resource for service.
+    """
     session = make_boto_session(profile, credential_file, region)
     return session.resource(service)
 
@@ -76,6 +154,20 @@ def init_client(
     client: Optional[botocore.client.BaseClient] = None,
     session: Optional[boto3.Session] = None,
 ) -> botocore.client.BaseClient:
+    """
+    Utility function used throughout `hostess.aws` to selectively initialize
+    boto clients.
+
+    Args:
+        service: service to produce client for (e.g. "ec2")
+        client: if not None, simply return `client`
+        session: if not None and `client` is None, initialize newly-made
+            client using this session. Otherwise use a default session. Does
+            nothing if `client` is not None.
+
+    Returns:
+        boto client for `service`.
+    """
     if client is not None:
         return client
     if session is not None:
@@ -87,7 +179,21 @@ def init_resource(
     service: str,
     resource: Optional[boto3.resources.base.ServiceResource] = None,
     session: Optional[boto3.Session] = None,
-):
+) -> boto3.resources.base.ServiceResource:
+    """
+    Utility function used throughout `hostess.aws` to selectively initialize
+    boto resources.
+
+    Args:
+        service: service to produce resource for (e.g. "ec2")
+        resource: if not None, simply return `resource`
+        session: if not None and `resource` is None, initialize newly-made
+            resource using this session. Otherwise use a default session. Does
+            nothing if `resource` is not None.
+
+    Returns:
+        boto resource for `service`.
+    """
     if resource is not None:
         return resource
     if session is not None:
@@ -95,7 +201,27 @@ def init_resource(
     return make_boto_resource(service)
 
 
-def tagfilter(description, filters, regex=True):
+def tagfilter(
+    description: dict[str, Any],
+    filters: dict[str, str],
+    regex: bool = True
+) -> bool:
+    """
+    Simple predicate function that permits resource matching based on Arrays of
+        Tags in API responses related to that resource.
+        (See https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_Tag.html).
+
+    Args:
+        description: dict produced from an AWS API response.
+        filters: dict of {tag_name: tag_value}. All tag names must be present,
+            and their values must match the associated tag_values.
+        regex: if True, treat the values of `filters` as regex expressions.
+            if False, treat them as required substrings of tag values.
+
+    Returns:
+        True if all filters pass; False if any fail. Note that a filter will
+            always fail if the API response simply lacks a Tags array.
+    """
     tags = tag_dict(description.get("Tags", []), lower=True)
     # noinspection PyArgumentList
     matcher = flip(contains) if regex is False else re.search
@@ -108,7 +234,25 @@ def tagfilter(description, filters, regex=True):
 
 
 # noinspection PyProtectedMember
-def clarify_region(region=None, boto_obj=None):
+def clarify_region(
+    region: Optional[str] = None, boto_obj: Any = None
+) -> str:
+    """
+    attempt to determine the AWS region associated with an object (presumably
+    some kind of boto object).
+
+    Args:
+        region: if not None, this acts as a strict override: the function
+            simply returns `region`.
+        boto_obj: object whose AWS region to determine.
+
+    Returns:
+        name of AWS region (e.g. 'us-east-2').
+
+    Raises:
+        `AttributeError` if `region` is None and we can't figure out how to read
+            a region from `boto_obj`.
+    """
     if region is not None:
         return region
     if "region_name" in dir(boto_obj):
@@ -118,11 +262,35 @@ def clarify_region(region=None, boto_obj=None):
     raise AttributeError(f"Don't know how to read region from {boto_obj}.")
 
 
-def autopage(client, operation, agg=None, *args, **kwargs):
+def autopage(
+    client: botocore.client.BaseClient,
+    operation: str,
+    agg: Optional[Union[str, Callable]] = None,
+    **api_kwargs
+) -> tuple:
+    """
+    Perform an AWS API call that returns paginated results, greedily page
+    through all of them, and return the aggregated results.
+
+    Args:
+        client: boto Client object to make API call
+        operation: name of API call to perform
+        agg: optional special aggregator. If `agg` is a `str`, it means:
+            'concatenate the values of the key named `agg` from all pages of
+            the response'. if `agg` is callable, it means: 'just feed the
+            pager to `agg` and let it do its thing'. If not specified,
+            aggregate the values of the key whose value is longest in the
+            first response. (This is a heuristic for naively getting the actual
+            responses and ignoring pagination metadata.)
+        **api_kwargs: kwargs to pass to the API call.
+
+    Returns:
+        Tuple of aggregated responses, format depending on `agg`.
+    """
     assert client.can_paginate(operation)
     if isinstance(agg, str):
         agg = mapcat(get(agg))
-    pager = iter(client.get_paginator(operation).paginate(*args, **kwargs))
+    pager = iter(client.get_paginator(operation).paginate(**api_kwargs))
     if agg is not None:
         return tuple(agg(pager))
     page = next(pager)
@@ -131,7 +299,29 @@ def autopage(client, operation, agg=None, *args, **kwargs):
     return tuple(get(aggkey)(page) + list(mapcat(get(aggkey))(pager)))
 
 
-def whoami(client=None, session=None):
+def whoami(
+    client: Optional[botocore.client.BaseClient] = None,
+    session: Optional[boto3.Session] = None
+) -> dict[str, str]:
+    """
+    Make an STS GetCallerIdentity request and return just the essentials from
+    the response.
+
+    Note that _every_ AWS account is allowed to make this request: attempts to
+    deny access to the sts:GetCallerIdentity action don't do anything. That
+    means that if other AWS operations are failing, you can call this function
+    to rule out a couple of very basic failure modes. If it fails, it means
+    that either your credentials for the account are invalid or you can't
+    connect to AWS at all (your network is down or blocking access to the API
+    endpoint).
+
+    Args:
+        client: optional STS client.
+        session: optional boto Session.
+
+    Returns:
+        `dict` with keys 'user_id', 'account', and 'arn'.
+    """
     sts = init_client("sts", client, session)
     response = sts.get_caller_identity()
     return {
@@ -139,3 +329,47 @@ def whoami(client=None, session=None):
         'account': response['Account'],
         'arn': response['Arn']
     }
+
+
+def _check_cached_results(
+    path: Path, prefix: str, max_age: float = 5
+) -> Optional[Path]:
+    """
+    check for a 'fresh' cached API call by string-matching against filename
+    prefix and our standardized in-filename timestamp format.
+
+    Args:
+        path: path to check for results
+        prefix: filename prefix for results
+        max_age: age, in days, after which a result is no longer 'fresh'
+
+    Returns:
+        Path for first matching result, if it is 'fresh'. None if it is not
+            fresh or there is no matching result.
+    """
+    cache_filter = filter(lambda p: p.name.startswith(prefix), path.iterdir())
+    try:
+        result = first(cache_filter)
+        timestamp = re.search(
+            r"(\d{4})_(\d{2})_(\d{2})T(\d{2})_(\d{2})_(\d{2})", result.name
+        )
+        cache_age = dt.datetime.now() - dt.datetime(
+            *map(int, timestamp.groups())
+        )
+        if cache_age.days > max_age:
+            return None
+    except StopIteration:
+        return None
+    return result
+
+
+def _clear_cached_results(folder: Path, pre: str):
+    """
+    quick way to delete all files in folder whose names begin with `pre`.
+
+    Args:
+        folder: folder to clear.
+        pre: filename prefix that triggers deletion.
+    """
+    for result in filter(lambda p: p.name.startswith(pre), folder.iterdir()):
+        result.unlink()

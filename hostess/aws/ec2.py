@@ -45,7 +45,7 @@ from hostess.aws.utilities import (
     init_client,
     init_resource,
     tag_dict,
-    tagfilter,
+    tagfilter, _check_cached_results, _clear_cached_results,
 )
 from hostess.caller import generic_python_endpoint
 from hostess.config import EC2_DEFAULTS, GENERAL_DEFAULTS
@@ -54,8 +54,6 @@ from hostess.ssh import (
 )
 from hostess.subutils import Processlike
 from hostess.utilities import (
-    check_cached_results,
-    clear_cached_results,
     filestamp,
     my_external_ip,
     timeout_factory,
@@ -1158,11 +1156,11 @@ def get_all_instance_types(client=None, session=None, reset_cache=False):
     cache_path = Path(GENERAL_DEFAULTS["cache_path"])
     prefix = f"instance_types_{region}"
     if reset_cache is False:
-        cached_results = check_cached_results(cache_path, prefix, max_age=7)
+        cached_results = _check_cached_results(cache_path, prefix, max_age=7)
         if cached_results is not None:
             return pickle.load(cached_results.open("rb"))
     results = autopage(client, "describe_instance_types")
-    clear_cached_results(cache_path, prefix)
+    _clear_cached_results(cache_path, prefix)
     with Path(cache_path, f"{prefix }_{filestamp()}.pkl").open("wb") as stream:
         pickle.dump(results, stream)
     return results
