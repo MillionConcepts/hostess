@@ -186,15 +186,14 @@ class TCPTalk:
                 id_ += 1
             time.sleep(self.poll)
 
-    def launch_io(self, name):
+    # TODO: should this be running in @trywrap?
+    def launch_io(self, name: Union[str, int]):
         """
         launch a read thread in this server's executor.
         must be run in a thread or it will block and be useless.
+
         Args:
             name: identifier for thread
-
-        Returns:
-            dict with name, any received signal, and any exception raised.
         """
         while self.signals.get(name) is None:
             time.sleep(self.poll)

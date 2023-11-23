@@ -4,7 +4,8 @@ from __future__ import annotations
 import datetime as dt
 import os
 from pathlib import Path
-from typing import Optional, Union, Any, Mapping, Collection
+from typing import Optional, Union, Any, Mapping, Collection, Sequence, \
+    Callable
 
 from google.protobuf.message import Message
 
@@ -20,8 +21,17 @@ from hostess.subutils import (
 from hostess.utilities import get_module
 
 
-def unpack_callargs(arguments: list[pro.PythonObject]):
-    """unpack PythonObject Messages into a dict of kwargs."""
+def unpack_callargs(arguments: Sequence[pro.PythonObject]) -> dict[str, Any]:
+    """
+    unpack PythonObject Messages into a dict of kwargs.
+
+    Args:
+        arguments: sequence of PythonObject Messages
+
+    Returns:
+        dict constructed from deserialized content of `arguments`, suitable
+            for being splatted into a function
+    """
     kwargs = {}
     for arg in arguments:
         if any((arg.value is None, arg.name is None)):
@@ -31,11 +41,19 @@ def unpack_callargs(arguments: list[pro.PythonObject]):
     return kwargs
 
 
-def make_function_call(action: pro.Action):
+def make_function_call(action: pro.Action) -> tuple[dict[str, list], Callable]:
     """
-    factory function for creating a deferred callable, along with caches that
-    will contain the callable's return value, stdout, and stderr (if relevant),
-    from an Action defined in an Instruction.
+    parse an Action Message containing specifications for a function call and
+    create a "deferred" version of a call that matches those specifications.
+
+    Args:
+        action: hostess Action Message that specifies a function call.
+
+    Returns:
+        * caches to capture the deferred call's stdout, stderr, and return
+            value
+        * a "deferred" version of the function call specified by `action`.
+            call it to actually perform the function call.
     """
     if action.func is None:
         raise TypeError("Can't actually do this without a function.")
@@ -65,11 +83,19 @@ def make_function_call(action: pro.Action):
         raise ValueError(f"unknown context {ctx}")
 
 
-def actiondict(action: Message) -> dict:
+def actiondict(action: pro.Action) -> dict[str, Any]:
     """
-    standardized dict for recording running action. results/stdout/stderr
-    may be inserted into this dict. it is suitable for being inserted as a
-    value of a Node.actions dict.
+    construct a standardized dict for recording the results of an action
+    described by `action`.
+
+    Args:
+        action: a pro.Action message
+
+    Returns:
+        a dict initialized from basic identifying information in `action`,
+        intended to be used as a value of a `Node.actions` dict. a dict of
+        results / stdout / stderr caches, as produced by `make_watch_caches()`,
+        can also be legally added to this category of dict.
     """
     return {
         "name": action.name,
@@ -84,7 +110,10 @@ def actiondict(action: Message) -> dict:
 def tail_file(
     position: Optional[int], *, path: Optional[Path] = None, **_
 ) -> tuple[Optional[int], list[str]]:
-    """simple file-tail function for use in Sensors that watch a file."""
+    """
+    simple file-tail function for use in Sensors that watch a file.
+
+    '"""
     if path is None:
         return position, []
     if not path.exists():

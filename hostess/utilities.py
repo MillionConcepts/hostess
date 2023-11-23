@@ -15,7 +15,8 @@ import sys
 import time
 from types import ModuleType
 from typing import (
-    Any, Callable, Hashable, Iterable, MutableMapping, Optional, Sequence
+    Any, Callable, Hashable, Iterable, MutableMapping, Optional, Sequence,
+    Mapping
 )
 
 from cytoolz import first
@@ -298,11 +299,23 @@ def timeout_factory(
     return waiting, unwait
 
 
-def signal_factory(threads: MutableMapping) -> Callable[[Hashable], None]:
+def signal_factory(
+    threads: MutableMapping[Hashable, Optional[int]]
+) -> Callable[[Hashable, Optional[int]], None]:
     """
-    creates a 'signaler' function that simply assigns values to a dict
+    creates a 'signaler' function that simply assigns values to a mapping
     bound in enclosing scope. this is primarily intended as a simple
-    inter-thread communication utility
+    inter-thread communication utility.
+
+    Args:
+        threads: mapping from thread names to None or ints. In normal usage,
+            named threads will poll the key of this mapping corresponding
+            to their name to check for received signals.
+
+    Returns:
+        a process that takes a thread name and an optional integer (default
+            0) and assigns that integer to the corresponding key of the
+            `threads` mapping.
     """
 
     def signaler(name, signal=0):
@@ -337,17 +350,26 @@ def trywrap(func, name):
     return trywrapped
 
 
-def configured(func, config):
+@curry
+def configured(func: Callable, config: Mapping[str, Any]) -> Callable:
+    """
+    decorator that permits dynamic partial evaluation of a function.
+    `configured` splats `config` into all calls to the decorated
+    function, so that its behavior can change along with changes to the
+    contents of `config`.
+
+    Args:
+        func: function to configure
+        config: mapping to use as extra kwargs to func
+
+    Returns:
+        version of `func` that splats `config` into every call.
+    """
     @wraps(func)
     def with_configuration(*args, **kwargs):
         return func(*args, **kwargs, **config)
 
     return with_configuration
-
-
-# just a little printer to show what crashed/completed
-def filterdone(threads):
-    return [(n, t) for n, t in threads.items() if t._state != "RUNNING"]
 
 
 def get_module(module_name: str) -> ModuleType:
@@ -375,10 +397,24 @@ def get_module(module_name: str) -> ModuleType:
     return module
 
 
-def yprint(obj, indent=0, replace_null=True, maxlen=256):
+def yprint(
+    obj: Any,
+    indent: int = 0,
+    replace_null: bool = True,
+    maxlen: int = 256
+) -> str:
     """
     lazy way to pretty-print many objects by using `pyyaml`'s excellent YAML 
-    formatter.
+    formatter. Doesn't work well for everything.
+
+    Args:
+        obj: object to pretty-print
+        indent: indentation in spaces
+        replace_null: if True, replace the YAML value 'null' with 'None'
+        maxlen: maximum length of output
+
+    Returns:
+        mildly stylized YAML representation of `obj`
     """
     try:
         text = yaml.dump(obj)

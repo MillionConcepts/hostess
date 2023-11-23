@@ -620,10 +620,10 @@ class RunCommand:
         don't pass to `__call__`.
 
         Returns:
-            Interface object for executed process of variable type:
-                * if `_viewer=True`, a Viewer
-                * if `_viewer=False` and `_bg=True`, an invoke Result
-                * if `_viewer=False` and `_bg=False`, an invoke Runner
+            Interface object for executed process. of variable type: if
+                `_viewer=True`, a Viewer; if `_viewer=False` and `_bg=True`,
+                an Invoke `Result`; if `_viewer=False` and `_bg=False`, an
+                Invoke `Runner`.
         """
         rkwargs = keyfilter(
             lambda k: k.startswith("_") and not k.strip("_").isnumeric(),
