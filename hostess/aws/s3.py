@@ -1,5 +1,5 @@
 """
-This module provides methods for operations on AWS S3 objects. Its centerpiece
+This module provides managed operations on AWS S3 objects. Its centerpiece
 is a Bucket object providing a high-level interface to operations on a single
 S3 bucket. The original motivation for this module was quickly constructing
 inventories of large buckets in pandas DataFrames.
@@ -34,28 +34,57 @@ import boto3
 import boto3.resources.base
 import boto3.s3.transfer
 import botocore.client
+import pandas as pd
 from cytoolz import keyfilter
 from dustgoggles.func import naturals
 import requests
 
 from hostess.aws.utilities import init_client, init_resource
-# general note: we're largely, although not completely, avoiding use of the
-# boto3 s3.Bucket object, as it performs similar types of abstraction which
-# collide with ours -- for instance, it often prevents us from getting the
-# API's responses, which we in some cases want.
 from hostess.subutils import piped
 from hostess.utilities import console_and_log, infer_stream_length, stamp
 
 
 class Bucket:
+    """
+    Interface to and representation of an S3 bucket. Note that in addition
+    to methods explicitly defined on the class, instances of Bucket also
+    afford access to most of the other functions in this module, partially
+    evaluated so that their "bucket" and "config" arguments refer to that
+    bucket instance and its config. The specific methods are:
+    * abort_multipart_upload()
+    * complete_multipart_upload()
+    * cp()
+    * create_multipart_upload()
+    * freeze()
+    * get()
+    * head()
+    * ls()
+    * put()
+    * put_stream()
+    * put_stream_chunk()
+    * restore()
+    * rm()
+    """
     def __init__(
         self,
         bucket_name: str,
-        client=None,
-        resource=None,
-        session=None,
-        config=None,
+        client: Optional[botocore.client.BaseClient] = None,
+        resource: Optional[boto3.resources.base.ServiceResource] = None,
+        session: Optional[boto3.session.Session] = None,
+        config: Optional[boto3.s3.transfer.TransferConfig] = None,
     ):
+        """
+        Args:
+            bucket_name: name of bucket
+            client: optional boto3 s3 Client. if not specified, creates a
+                default client.
+            resource: optional boto3 s3 Resource. if not specified, creates a
+                default resource.
+            session: optional boto3 s3 Session. if not specified, creates a
+                default session.
+            config: optional boto3 TransferConfig. if not specified, creates a
+                default config.
+        """
         self.client = init_client("s3", client, session)
         self.resource = init_resource("s3", resource, session)
         self.name = bucket_name
@@ -84,7 +113,21 @@ class Bucket:
     restore: Callable
     rm: Callable
 
-    def update_contents(self, prefix="", cache=None):
+    def update_contents(
+        self,
+        prefix: str = "",
+        cache: Optional[Union[str, Path, io.IOBase]] = None
+    ):
+        """
+        recursively scan the contents of the bucket and store the result in
+        self.contents.
+
+        Args:
+            prefix: prefix at which to begin scan. if not passed, scans the
+                entire bucket.
+            cache: optional file or filelike object to write scan results to
+                in addition to storing them in self.contents.
+        """
         self.contents = self.ls(
             recursive=True, prefix=prefix, cache=cache, formatting="contents"
         )
@@ -122,9 +165,15 @@ class Bucket:
         return partial(self.put_stream_chunk, **kwargs), parts, multipart
 
     @property
-    def df(self):
-        import pandas as pd
+    def df(self) -> pd.DataFrame:
+        """
+        Construct a manifest of all known objects in bucket as a pandas
+        DataFrame. If update_contents() has never been called, greedily scan
+        the contents of the bucket rather than returning an empty DataFrame.
 
+        Returns:
+            Manifest of all known objects in bucket.
+        """
         if len(self.contents) == 0:
             self.update_contents()
         return pd.DataFrame(self.contents)
@@ -132,11 +181,28 @@ class Bucket:
     @classmethod
     def bind(
         cls,
-        bucket,
+        bucket: Union[str, "Bucket"],
         client: Optional[botocore.client.BaseClient] = None,
         session: Optional[boto3.Session] = None,
         config: Optional[boto3.s3.transfer.TransferConfig] = None,
-    ):
+    ) -> "Bucket":
+        """
+        Conservative constructor for Bucket. Does not construct a new
+        Bucket if passed a Bucket. Intended primarily as a convenience for
+        other functions in this module that might be either partially
+        evaluated with a Bucket or simply passed the name of a bucket.
+
+        Args:
+            bucket: Bucket or name of bucket
+            client: optional client
+            session: optional session
+            config: optional transferconfig
+
+        Returns:
+            newly-initialized Bucket if bucket is a string; just bucket if
+                bucket is a Bucket.
+
+        """
         if isinstance(bucket, Bucket):
             return bucket
         return Bucket(bucket, client=client, session=session, config=config)
@@ -147,10 +213,10 @@ def put(
     obj: Union[str, Path, io.IOBase, bytes, None] = None,
     key: Optional[str] = None,
     client: Optional[botocore.client.BaseClient] = None,
-    session: Optional[boto3.s3.transfer.TransferConfig] = None,
+    session: Optional[boto3.Session] = None,
     pass_string: bool = False,
-    config=None,
-):
+    config: Optional[boto3.s3.transfer.TransferConfig] = None,
+) -> dict:
     """
     Upload a file or buffer to an S3 bucket
 
@@ -158,8 +224,9 @@ def put(
         bucket: bucket name as str, or Bucket object
         obj: str, Path, or filelike / buffer object to upload; None for
             'touch' behavior
-        key: S3 key. If not specified then str(file_or_buffer) is used -- 
-            will most likely look bad if it's a buffer
+        key: S3 key (fully-qualified 'path' from bucket root). If not
+            specified then str(file_or_buffer) is used. This will most likely
+            look very nasty if it's a buffer.
         client: boto s3 client; makes a default client if None; used only if 
             `bucket` is a bucket name as string and not an already-bound
             Bucket
@@ -188,7 +255,7 @@ def put(
         )
     # or: upload in-memory objects
     # encode string to bytes if we're writing it to S3 object instead
-    # of interpreting it as a path
+    # of interpreting it as a patha
     if isinstance(obj, str) and pass_string:
         obj = io.BytesIO(obj.encode("utf-8"))
     elif isinstance(obj, bytes):
@@ -204,8 +271,26 @@ def get(
     destination: Union[str, Path, io.IOBase, None] = None,
     client: Optional[botocore.client.BaseClient] = None,
     session: Optional[boto3.Session] = None,
-    config=None,
+    config: Optional[boto3.s3.transfer.TransferConfig] = None,
 ) -> tuple[Union[Path, str, io.IOBase], Any]:
+    """
+    fetch an S3 object and write it into a file or filelike object.
+
+    Args:
+        bucket: Bucket or name of bucket
+        key: object key (fully-qualified 'path' relative to bucket root)
+        destination: where to write the retrieved object. May be a path or a
+            filelike object. If not specified, constructs a new BytesIO
+            buffer.
+        client: optional client
+        session: optional session
+        config: optional transfer config
+
+    Returns:
+        A tuple whose elements are:
+            1. the path, string, or buffer we wrote the object to
+            2. the S3 API response
+    """
     # TODO: add more useful error messages for streams opened in text mode
     bucket = Bucket.bind(bucket, client, session)
     if config is None:
@@ -238,6 +323,25 @@ def cp(
     session: Optional[boto3.Session] = None,
     config=None,
 ) -> tuple[Union[Path, str, io.IOBase], Any]:
+    """
+    Copy an S3 object to another location on S3.
+
+    Args:
+        bucket: Bucket or name of bucket that contains the source object
+        source: key of object to copy (fully-qualified 'path' from bucket root)
+        destination: key to copy object to (if not specified, uses source key)
+        destination_bucket: bucket to copy object to (if not
+            specified, uses source bucket)
+        extra_args: ExtraArgs for boto3 bucket object
+        client: optional client
+        session: optional session
+        config: optional transfer config
+
+    Returns:
+        tuple whose elements are:
+            1. S3 URI of new copy
+            2. API response
+    """
     bucket = Bucket.bind(bucket, client, session)
     if config is None:
         config = bucket.config
@@ -256,13 +360,28 @@ def cp(
     return f"s3://{destination_bucket}:{destination}", response
 
 
+# noinspection PyUnusedLocal
 def head(
     bucket: Union[str, Bucket],
     key: str,
     client: Optional[botocore.client.BaseClient] = None,
     session: Optional[boto3.Session] = None,
-    config=None
-) -> dict:
+    config: Optional[boto3.s3.transfer.TransferConfig] = None
+    # TODO: verify types of returned dict values
+) -> dict[str, str]:
+    """
+    Get basic information about an S3 object in a nicely formatted dict.
+
+    Args:
+        bucket: Bucket or name of bucket
+        key: object key (fully-qualified 'path' relative to bucket root)
+        client: optional client
+        session: optional session
+        config: not used (argument exists for signature parity)
+
+    Returns:
+        dict containing a curated selection of object headers.
+    """
     bucket = Bucket.bind(bucket, client, session)
     response = bucket.client.head_object(Bucket=bucket.name, Key=key)
     headers = response['ResponseMetadata'].get('HTTPHeaders', {})
@@ -300,7 +419,34 @@ def ls(
     start_after: str = "",
     cache_only=False,
     config=None,
-) -> Union[tuple, "pd.DataFrame"]:
+) -> Union[tuple, pd.DataFrame, None]:
+    """
+    list objects in a bucket.
+
+    Args:
+        bucket: Bucket or name of bucket
+        prefix: prefix ('folder') to list (if not specified, bucket root)
+        recursive: recursively list all objects in tree rooted at prefix?
+        formatting: how to format list results
+            * "simple": tuple containing object names only
+            * "contents": tuple of dicts containing object names,
+                modification times, etc.
+            * "df": pandas DataFrame produced from contents
+            * "raw": API response as reported by boto3
+        cache: optional file or filelike object to write results to.
+        client: optional client object
+        session: optional session object
+        start_after: begin listing objects only "after" this prefix. intended
+            principally for sequential calls.
+        cache_only: _only_ write results into the specified cache; do not
+            retain them in memory. intended for cases in which the full list
+            would be larger tham memory.
+        config: not used. included for signature parity.
+
+    Returns:
+        Manifest of contents, format dependent on formatting argument, or None
+            if cache_only is True.
+    """
     # TODO: add more useful error messages for streams opened in text mode
     bucket = Bucket.bind(bucket, client, session)
     truncated = True
@@ -358,6 +504,8 @@ def ls(
                     stream.close()
                 if cache_only and (len(responses) > 2):
                     del responses[0]
+    if cache_only is True:
+        return None
     if formatting == "raw":
         return responses
     contents, prefixes = [], []
@@ -374,8 +522,6 @@ def ls(
     if formatting == "contents":
         return tuple(contents)
     if formatting == "df":
-        import pandas as pd
-
         return pd.DataFrame(contents)
     warnings.warn(
         f"formatting class {formatting} not recognized, returning as 'simple'"
@@ -389,7 +535,20 @@ def rm(
     client: Optional[botocore.client.BaseClient] = None,
     session: Optional[boto3.Session] = None,
     config=None,
-):
+) -> dict:
+    """
+    Delete an S3 object.
+
+    Args:
+        bucket: Bucket or name of bucket that contains the object to delete
+        key: key of object to delete (fully-qualified 'path' from bucket root)
+        client: optional client
+        session: optional session
+        config: not used; included for signature parity
+
+    Returns:
+        API response
+    """
     bucket = Bucket.bind(bucket, client, session)
     return bucket.client.delete_object(Bucket=bucket.name, Key=key)
 
@@ -398,8 +557,19 @@ def ls_multipart(
     bucket: Union[str, Bucket],
     client: Optional[botocore.client.BaseClient] = None,
     session: Optional[boto3.Session] = None,
-    config=None,
-):
+    config: Optional[boto3.s3.transfer.TransferConfig] = None
+) -> dict:
+    """
+    List all multipart uploads associated with a bucket.
+    Args:
+        bucket: Bucket or name of bucket
+        client: optional client
+        session: optional session
+        config: optional transfer config
+
+    Returns:
+        API response
+    """
     bucket = Bucket.bind(bucket, client, session, config)
     return bucket.client.list_multipart_uploads(Bucket=bucket.name)
 
@@ -409,8 +579,22 @@ def create_multipart_upload(
     key: str,
     client: Optional[botocore.client.BaseClient] = None,
     session: Optional[boto3.Session] = None,
-    config=None,
-):
+    config: Optional[boto3.s3.transfer.TransferConfig] = None,
+) -> dict:
+    """
+    Prepare an S3 multipart upload. Note that this is not itself an upload
+    operation! It merely _sets up_ an upload.
+
+    Args:
+        bucket: Bucket or name of bucket
+        key: upload target key (fully-qualified 'path' from bucket root)
+        client: optional client
+        session: optional session
+        config: optional transfer config
+
+    Returns:
+        API response
+    """
     bucket = Bucket.bind(bucket, client, session, config)
     return bucket.client.create_multipart_upload(Bucket=bucket.name, Key=key)
 
@@ -422,6 +606,21 @@ def abort_multipart_upload(
     session: Optional[boto3.Session] = None,
     config=None,
 ):
+    """
+    Abort a multipart upload operation.
+
+    Args:
+        bucket: Bucket or name of bucket
+        multipart: API response received when multipart upload operation
+            was created
+        client: optional client
+        session: optional session
+        config: optional transfer config
+
+    Returns:
+        API response
+
+    """
     bucket = Bucket.bind(bucket, client, session, config)
     return bucket.client.abort_multipart_upload(
         Bucket=bucket.name,
@@ -436,8 +635,23 @@ def complete_multipart_upload(
     parts: Mapping,
     client: Optional[botocore.client.BaseClient] = None,
     session: Optional[boto3.Session] = None,
-    config=None,
-):
+    config: Optional[boto3.s3.transfer.TransferConfig] = None,
+) -> dict:
+    """
+    Notify S3 that all parts of an object have been uploaded and it may
+    close the multipart upload operation and actually create the object.
+
+    Args:
+        bucket: bucket or name of object
+        multipart: API response received when multipart upload was created
+        parts: API responses received after uploading each part
+        client: optional client
+        session: optional session
+        config: optional config
+
+    Returns:
+        API response
+    """
     bucket = Bucket.bind(bucket, client, session, config)
     return bucket.client.complete_multipart_upload(
         Bucket=bucket.name,
@@ -454,19 +668,48 @@ def complete_multipart_upload(
 
 def put_stream(
     bucket: Union[str, Bucket],
-    obj: Union[Iterator, Callable, IO, str, Path],
+    obj: Union[Iterator, IO, str, Path],
     key: str,
     client: Optional[botocore.client.BaseClient] = None,
     config=None,
     session: Optional[boto3.Session] = None,
     upload_threads: Optional[int] = 4,
-    download_threads: Optional[int] = None,
+    # download_threads: Optional[int] = None,
     verbose: bool = False,
     explicit_length: Optional[int] = None,
     # TODO: overrides chunksize in config -- maybe make an easier interface
     #  to this
     chunksize: Optional[int] = None,
 ):
+    """
+    Create an S3 object from a byte stream via a managed multipart upload.
+    Useful for uploading large files, but can also handle intermittent streams,
+    larger-than-memory transfers, direct streams from remote URLs, and streams
+    of unknown length.
+
+    Args:
+        bucket: Bucket or name of bucket
+        obj: source of stream to upload. May be a path, a URL, a filelike
+            object, or any iterator that yields bytes.
+        key: key of object to create from stream (fully-qualified 'path'
+            relative to bucket root)
+        client: optional client
+        config: optional transfer config
+        session: optional session
+        upload_threads: number of subprocesses to use for upload (None means
+            upload serially)
+        verbose: print and log progress of streaming upload
+        explicit_length: optional explicit length specification, for streams
+            of known length
+        chunksize: size of individual upload chunks; overrides any setting
+            in config. if stream length is explicitly specified or inferred
+            to be less than chunksize, this function will fall back to a
+            simple put operation.
+
+    Returns:
+        API response to multipart upload completion, or API response from
+            simple upload if stream length < chunksize
+    """
     bucket = Bucket.bind(bucket, client, session, config)
     if config is None:
         config = bucket.config
@@ -505,7 +748,7 @@ def put_stream(
     else:
         raise TypeError("can't determine how to consume bytes from stream.")
     put_chunk, parts, multipart_upload = bucket.chunk_putter_factory(
-        key, upload_threads, download_threads, config, verbose
+        key, upload_threads, None, config, verbose
     )
     try:
         chunk = reader()
@@ -531,7 +774,7 @@ def put_stream(
     )
 
 
-def put_stream_chunk(
+def _put_stream_chunk(
     bucket: Bucket,
     blob: bytes,
     download_cache: list[bytes],
@@ -543,6 +786,7 @@ def put_stream_chunk(
     verbose: bool = False,
     flush: bool = False,
 ):
+    """helper function for put_stream()"""
     download_cache[0] += blob
     if (len(download_cache[0]) < config.multipart_chunksize) and (
         flush is False
@@ -579,8 +823,23 @@ def freeze(
     storage_class: str = "DEEP_ARCHIVE",
     client: Optional[botocore.client.BaseClient] = None,
     session: Optional[boto3.Session] = None,
-    config=None,
+    config: Optional[boto3.s3.transfer.TransferConfig] = None
 ):
+    """
+    Modify the storage class of an object. Intended primarily for
+    moving objects from S3 Standard to one of the Glacier classes.
+
+    Args:
+        bucket: Bucket or name of bucket
+        key: object key (fully-qualified 'path' relative to bucket root)
+        storage_class: target storage class
+        client: optional client
+        session: optional session
+        config: optional transfer config
+
+    Returns:
+        API response
+    """
     bucket = Bucket.bind(bucket, client, session, config)
     return bucket.cp(key, extra_args={"StorageClass": storage_class})
 
@@ -588,12 +847,38 @@ def freeze(
 def restore(
     bucket: Union[str, Bucket],
     key: str,
-    tier: str = "Bulk",
+    tier: Literal["Expedited", "Standard", "Bulk"] = "Bulk",
     days: int = 5,
     client: Optional[botocore.client.BaseClient] = None,
     session: Optional[boto3.Session] = None,
-    config=None,
+    config: Optional[boto3.s3.transfer.TransferConfig] = None
 ):
+    """
+    Issue a request to temporarily restore an object from S3 Glacier Flexible
+    Retrival or Deep Archive to S3 Standard. Note that object restoration is
+    not instantaneous. Depending on retrieval tier and storage class, AWS
+    guarantees retrieval times ranging from 5 minutes to 48 hours. See
+    https://docs.aws.amazon.com/AmazonS3/latest/userguide/restoring-objects-retrieval-options.html
+    for details.
+
+    You can check the progress of restore requests using the head() function
+    in this module.
+
+    Args:
+        bucket: Bucket or name of bucket
+        key: key of object to restore (fully-qualified path from bucket root)
+        tier: retrieval tier. In order of speed and expense, high to low,
+            options are "Expedited", "Standard", and "Bulk". Only "Standard"
+            and "Bulk" are available for Deep Archive.
+        days: number of days object should remain restored before reverting to
+            its Glaciered state
+        client: optional client
+        session: optional session
+        config: optional transfer config
+
+    Returns:
+        RestoreObject API response
+    """
     bucket = Bucket.bind(bucket, client, session, config)
     job_parameters = {"Tier": tier}
     restore_request = {"Days": days, "GlacierJobParameters": job_parameters}
