@@ -19,7 +19,7 @@ from hostess.station.bases import (
 )
 import hostess.station.delegates as delegates
 from hostess.station.handlers import (
-    actiondict,
+    make_actiondict,
     make_function_call,
     tail_file,
     watch_dir,
@@ -39,14 +39,26 @@ keys a dict must have to count as a valid "actiondict" in a Node's actions list
 def init_execution(
     node: Node,
     instruction: Message,
-    key: Hashable,
+    key: Optional[Hashable],
     noid: bool
-):
+) -> tuple[pro.Action, dict, Hashable]:
     """
-    perform standard setup for a 'do' Action.
+    perform setup for a "regular" 'do'-type Instruction. Intended primarily as
+    a component function of the `reported()` decorator.
 
     Args:
+        node: Actor's parent Node (usually a Delegate)
+        instruction: 'do'-type Instruction
+        key: name of / identifier for Instruction's Action. if not specified,
+            generates a random integer.
+        noid: don't insert the Instruction's id into the generated actiondict.
 
+    Returns:
+        action: Action from action field of Instruction, or full Instruction
+            if it contains only a description of the action
+        actiondict: data/metadata dict for the action that this function
+            generated function and inserted into the parent Node's `actions`
+        key: identifier for action
     """
     if instruction.HasField("action"):
         action = instruction.action  # for brevity in execute() methods
@@ -54,7 +66,7 @@ def init_execution(
         action = instruction  # pure description cases
     if key is None:
         key = random.randint(0, int(1e7))
-    node.actions[key] = actiondict(action)
+    node.actions[key] = make_actiondict(action)
     if noid is False:
         node.actions[key]["instruction_id"] = key
     return action, node.actions[key], key
@@ -63,34 +75,54 @@ def init_execution(
 def conclude_execution(
     result: Any,
     status: Optional[str] = None,
-    report: Optional[MutableMapping] = None
+    actiondict: Optional[MutableMapping[str, Any]] = None
 ):
     """
-    common cleanup steps for a 'do' execution. individual Actors, even if they
-    use the @reported decorator that includes this function, may also define
+    conclude a "regular" 'do'-type action, inserting relevant data into its
+    associated actiondict. Intended primarily as a component function of the
+    `reported()` decorator.
+
+    Note that individual Actors, even if they use `reported()`, often define
     additional cleanup steps.
+
+    Args:
+        result: return value of, or Exception raised by, an Actor's execute()
+            method.
+        status: optional status code. if not specified, status will always be
+            "success" unless `result` is an Exception. Primarily intended to
+            allow Actors to describe gracefully-handled failures.
+        actiondict: element of parent Node's `actions` attribute. if not
+            specified, creates an empty dict -- in this case, this function
+            is basically a no-op.
     """
-    report = {} if report is None else report
+    actiondict = {} if actiondict is None else actiondict
     if isinstance(result, Exception):
         # Actors that run commands in subprocesses may insert their own
         # 'streaming' results, which we do not want to overwrite with the
         # exception.
-        report["status"] = "crash"
-        report['exception'] = result
+        actiondict["status"] = "crash"
+        actiondict['exception'] = result
     else:
         # individual actors may have unique failure criteria
-        report["status"] = "success" if status is None else status
-        report['result'] = result
+        actiondict["status"] = "success" if status is None else status
+        actiondict['result'] = result
     # in some cases could check stderr but would have to be careful
     # due to the many processes that communicate on stderr on purpose
-    report["end"] = dt.datetime.utcnow()
-    report["duration"] = report["end"] - report["start"]
+    actiondict["end"] = dt.datetime.utcnow()
+    actiondict["duration"] = actiondict["end"] - actiondict["start"]
 
 
 def reported(executor: Callable) -> Callable:
     """
-    decorator for bound execute() methods of Actors that will handle
-    Instructions from a Station
+    decorator for bound execute() methods of Actors that handle 'do'-type
+    Instructions in a "normal" fashion. Provides standardized setup and
+    conclusion behaviors.
+
+    Args:
+        executor: bound execute() method of associated Actor.
+
+    Returns:
+        version of execute() method with added setup and conclusion steps.
     """
     def with_reportage(
         self,
@@ -105,7 +137,7 @@ def reported(executor: Callable) -> Callable:
             results = executor(self, node, action, key, **kwargs)
         except Exception as ex:
             results = (ex,)
-        conclude_execution(*listify(results), report=report)
+        conclude_execution(*listify(results), actiondict=report)
 
     return with_reportage
 
@@ -126,7 +158,7 @@ class PipeActorPlaceholder(Actor):
 
 
 class FileWriter(Actor):
-    """basic actor to write to a file."""
+    """Simple Actor that writes to a file."""
     def match(self, instruction: Any, **_) -> bool:
         if instruction.action.name != "filewrite":
             raise NoMatch("not a file write instruction")
@@ -161,7 +193,9 @@ class FileWriter(Actor):
     _file = None
     _mode = "a"
     file = property(_get_file, _set_file)
+    """file this Actor writes to"""
     mode = property(_get_mode, _set_mode)
+    """mode this Actor writes in -- one of 'w', 'wb', 'a', or 'ab'."""
     interface = ("file", "mode")
     actortype = "action"
     name = "filewrite"
@@ -169,9 +203,8 @@ class FileWriter(Actor):
 
 class FuncCaller(Actor):
     """
-    Actor to execute Instructions that ask a Node to call a Python
-    function from the node's execution environment. see
-    handlers.make_function_call for serious implementation details.
+    Versatile Actor that handles Instructions to call Python functions.
+    A Station typically makes these using `handlers.make_function_call()`.
     """
 
     def match(self, instruction: Any, **_) -> bool:
@@ -202,8 +235,7 @@ class FuncCaller(Actor):
 
 class SysCaller(Actor):
     """
-    Actor to execute Instructions that ask a Node to run a command
-    in an OS-level interpreter.
+    Versatile Actor that handles Instructions to run OS-level shell commands.
     """
 
     def match(self, instruction: Any, **_) -> bool:
@@ -250,11 +282,13 @@ class SysCaller(Actor):
 
 class LineLogger(Actor):
     """
-    logs all strings passed to it. intended to be attached to a Sensor as a
-    supplement to a Delegate's primary logging.
+    Simple Actor that logs all strings passed to it. intended to be attached
+    to Sensors that need to generate their own logs rather than writing to
+    their parent Delegate's primary log.
     """
 
     def match(self, line, **_):
+        """match only strings"""
         if isinstance(line, str):
             return True
         raise NoMatch("not a string.")
@@ -271,10 +305,15 @@ class LineLogger(Actor):
 
 class ReportStringMatch(Actor):
     """
-    checks whether a string matches any of a sequence of regex patterns.
-    executing it inserts the string into the associated node's list of
-    actionable events, optionally annotated with a path denoting the string's
-    source.
+    Actor that checks whether a string matches any of a sequence of regex
+    patterns. Intended to be used by Sensors that work by tailing a file or
+    other data stream.
+
+    This Actor's `execute()` inserts the string into the parent Delegate's
+    list of actionable events, annotated with a list of all patterns that
+    matched the string, and, optionally, with a string denoting the
+    string's source. the Delegate will use this to construct an Info Message
+    it will include in an Update to its Station.
     """
 
     def match(self, line, *, patterns=(), **_):
@@ -308,10 +347,14 @@ class ReportStringMatch(Actor):
 
 class InstructionFromInfo(DispatchActor):
     """
-    skeleton info Actor for Stations. check, based on configurable criteria,
-    whether a piece of info received in an Update indicates that we should
-    assign a task to some handler Delegate, and if it does, create an Instruction
-    from that info based on an instruction-making function.
+    skeleton Info-handling Actor for Stations. Checks, based on configurable
+    criteria, whether an object unpacked from an Info message included in an
+    Update indicates that the Station should assign a task to some handler
+    Delegate, and, if it does, create an Instruction from that object based on
+    an instruction-making function.
+
+    Note that this Actor is basically abstract by default; its `criteria` and
+    `instruction_maker` properties must be assigned to make it do anything.
     """
 
     def match(self, note, **_) -> bool:
@@ -332,14 +375,20 @@ class InstructionFromInfo(DispatchActor):
     name: str
     actortype = "info"
     instruction_maker: Optional[Callable[[Any], pro.Instruction]] = None
-    criteria: Optional[Sequence[Callable]] = None
+    """function that generates an Instruction from an object"""
+    criteria: Optional[Sequence[Callable[[Any], bool]]] = None
+    """
+    predicate functions that define what objects this Actor can handle. if
+    any of these functions return True when passed an object, the Actor 
+    matches that object.
+    """
 
 
 class FileSystemWatch(Sensor):
     """
     simple Sensor for watching contents of a filesystem. offers an
-    interface for changing target path and regex match patterns. base class
-    tails a file. see DirWatch below for an inheritor that diffs a directory.
+    interface for changing target path and regex match patterns. this base
+    class tails a file. see DirWatch for a subclass that diffs a directory.
     """
 
     def __init__(self, checker=tail_file):
@@ -373,8 +422,11 @@ class FileSystemWatch(Sensor):
     loggers = (LineLogger,)
     name = "filewatch"
     target = property(_get_target, _set_target)
+    """what file does this Sensor watch?"""
     logfile = property(_get_logfile, _set_logfile)
+    """where does this Sensor log its matches?"""
     patterns = property(_get_patterns, _set_patterns)
+    """what patterns does this Sensor look for in the file?"""
     _watched = None
     _logfile = None
     _patterns = ()
@@ -382,6 +434,10 @@ class FileSystemWatch(Sensor):
 
 
 class DirWatch(FileSystemWatch):
+    """
+    like FileSystemWatch, but its `target` property should be a folder, not a
+    file, and its `patterns` property matches newly-appearing filenames.
+    """
     def __init__(self):
         super().__init__(checker=watch_dir)
 
