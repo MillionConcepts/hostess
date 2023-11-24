@@ -85,14 +85,30 @@ class TCPTalk:
             raise
 
     def kill(self, signal: int = 0):
-        """call this to shut down the server."""
+        """
+        immediately shut down, closing the server's socket and attempting to
+        terminate all its threads.
+
+        Args:
+            signal: termination signal to send to threads. changing this
+                number does nothing special by default and is intended for
+                subclasses or application-specific purposes.
+        """
         self.sock.close()
         if "sig" in dir(self):
             # won't be present if we encountered an error on init
             self.sig("all", signal)
         self.status = "terminated"
 
-    def tend(self):
+    def tend(self) -> Optional[list]:
+        """
+        check on all threads we believe to be running. If any of them aren't,
+        relaunch them. Never called automatically.
+
+        Returns:
+            None, if server is still initializing. otherwise, list of
+                Exceptions raised by crashed threads (empty if none crashed).
+        """
         if self.status == "initializing":
             return
         threads = tuple(self.threads.items())
@@ -119,18 +135,50 @@ class TCPTalk:
         self.status = "running"
         return crashed_threads
 
-    def _get_locked(self):
+    def _get_locked(self) -> bool:
+        """getter for self.locked"""
         if self._lock is None:
             return False
         return self._lock.locked()
 
-    def _set_locked(self, _val):
+    def _set_locked(self, _val: bool):
+        """
+        intentionally nonfunctional setter for self.locked. Always raises
+        AttributeError.
+        """
         raise AttributeError("server is not directly lockable")
 
     locked = property(_get_locked, _set_locked)
+    """
+    is the server locked, preventing it from communicating with peers?
+    note that TCPTalk never locks itself. Its optional lockout behavior is
+    intended to be handled by some sort of lock object shared with a handler 
+    application, for cases in which something needs locks for synchronization.
+    """
 
-    def _handle_callback(self, callback, peername, peersock):
-        """inner callback-handler tree for i/o threads"""
+    def _handle_callback(
+        self,
+        callback: Callable,
+        peername: Optional[str],
+        peersock: socket.socket
+    ) -> tuple[Optional[bytes], str, str, str]:
+        """
+        inner callback-handler tree for i/o threads. should only ever be
+        called from an io thread loop (`TCPTalk.launch_io()`).
+
+        Args:
+            callback: one of self._read, self._ack, or self._accept. attached
+                to peersock by self.sel, queued by a call to self.sel.register
+                in an io or selector thread.
+            peername: name of peer, if known (generally ip address).
+            peersock: open socket to peer
+
+        Returns:
+            stream: bytes read from socket, if any
+            event: description of event, primarily for logging
+            peername: existing or newly-discovered peername (usually ip)
+            status: code for event, primarily for control flow
+        """
         if callback.__name__ == "_read":
             self.peers[peername] = True
             try:
@@ -155,13 +203,9 @@ class TCPTalk:
     def queued_descriptors(self):
         return {s[0].fd for s in chain.from_iterable(self.queues.values())}
 
+    # TODO: should this be running in @trywrap?
     def launch_selector(self):
-        """
-        launch the server's selector thread.
-
-        Returns:
-            An dict with name, any received signal, and any exception.
-        """
+        """launch the server's selector thread."""
         id_, cycler = 0, cycle(self.queues.keys())
         try:
             self.sel.register(
@@ -237,8 +281,11 @@ class TCPTalk:
         self, sock: socket.socket
     ) -> tuple[None, str, Optional[tuple], str]:
         """
-        accept-connection callback for i/o threads. in normal operation, sock
-        will be self.sock.
+        accept-connection callback for i/o threads.
+
+        Args:
+            sock: TCP socket we've received a connection request on. in normal
+                operation, this will always be self.sock.
         """
         try:
             conn, addr = sock.accept()
