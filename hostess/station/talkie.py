@@ -38,10 +38,13 @@ class TCPTalk:
         timeout: int = 10,
     ):
         """
+        Note: `TCPTalk` immediately starts running when initialized.
+
         Args:
             host: host for socket
             port: port for socket
-            n_threads: # of i/o threads
+            n_threads: number of i/o threads. server will always launch
+                n_threads + 1 threads; the +1 is its selector thread.
             poll: poll/spool delay for threads
             decoder: optional callable used to decode received messages
             ackcheck: callable for inserting message responses -- this can be

@@ -32,13 +32,14 @@ from hostess.utilities import configured, logstamp, yprint, filestamp
 
 
 class ConsumedAttributeError(AttributeError):
+    """An AttrConsumer's attempt to set a consumed attribute failed."""
     pass
 
 
 class AttrConsumer:
     """
-    implements functionality for "consuming" the attributes of associated
-    objects. designed to permit Nodes and similar objects to promote the
+    Mix-in class that provides functionality for "consuming" attributes of
+    other objects. Designed to permit Nodes and similar objects to promote
     interface properties of attached elements into their own interfaces as
     pseudo-attributes.
     """
@@ -93,7 +94,7 @@ class AttrConsumer:
         # noinspection PyUnresolvedReferences
         return super().__dir__() + list(self.attrefs.keys())
 
-    def _get_interface(self):
+    def _get_interface(self) -> list[str]:
         return [k for k in self.attrefs.keys()]
 
     def _set_interface(self, _):
@@ -103,9 +104,28 @@ class AttrConsumer:
 
 
 class Matcher(AttrConsumer, ABC):
-    """base class for things that can match sequences of actors."""
+    """
+    Abstract mix-in class for Node and Sensor. Provides functionality for
+    matching objects against Actors.
+    """
 
     def match(self, event: Any, category=None, **kwargs) -> list[Actor]:
+        """
+        Check the Matcher's Actors to see which, if any, can handle an event.
+
+        Args:
+            event: object to match Actors against
+            category: optional category of Actor to check; if specified,
+                attempt to match `event` only against Actors whose `category`
+                 attribute is equal to `category`
+            **kwargs: kwargs to pass to Actor.match
+
+        Returns:
+            list of all Actors that matched `event`.
+
+        Raises:
+            NoActorForEvent if no Actors matched `event`.
+        """
         matching_actors = []
         actors = self.filter_actors_by_category(category)
         for actor in actors:
@@ -118,7 +138,23 @@ class Matcher(AttrConsumer, ABC):
             raise NoActorForEvent
         return matching_actors
 
-    def explain_match(self, event: Any, category=None, **kwargs) -> dict[str]:
+    def explain_match(
+        self, event: Any, category=None, **kwargs
+    ) -> dict[str, Union[str, bool]]:
+        """
+        Introspection function for matching process.
+
+        Args:
+            event: object to match Actors against
+            category: optional category of Actors to match `event` against
+            **kwargs: kwargs for `Actor.match()`
+
+        Returns:
+              dict whose keys are the names of Actors and whose values are
+                the output of each actor's `match()` method, or a stringified
+                version of the Exception it raised.
+
+        """
         reasons = {}
         actors = self.filter_actors_by_category(category)
         for actor in actors:
@@ -130,7 +166,18 @@ class Matcher(AttrConsumer, ABC):
                 reasons[actor.name] = f"{type(err)}: {err}"
         return reasons
 
-    def filter_actors_by_category(self, actortype):
+    def filter_actors_by_category(
+        self, actortype: Optional[str]
+    ) -> list[Actor]:
+        """
+        Args:
+            actortype: optional string denoting a category of Actor
+
+        Returns:
+            A list containing all of this object's Actors whose `category`
+                attribute is equal to `category`, or, if `category` is None,
+                simply all of this objcet's Actors.
+        """
         if actortype is None:
             return list(self.actors.values())
         filtered = []
@@ -141,11 +188,21 @@ class Matcher(AttrConsumer, ABC):
                 filtered.append(r)
         return filtered
 
-    def add_element(self, cls: Union[type[Actor], type[Sensor]], name=None):
+    def add_element(
+        self, cls: Union[type[Actor], type[Sensor]], name: Optional[str] = None
+    ):
         """
-        associate an Actor or Sensor with this object, consuming its
-        interface properties and making it available for matching or sensor
-        looping.
+        instantiate an Actor or Sensor and associate it with this object,
+        consuming its interface properties and making it available for
+        matching or sensor looping.
+
+        Args:
+            cls: Actor or Sensor type to instantiate and associate
+            name: optional custom name for element that will be used to
+                identify it in this object's configuration dictionary
+                and properties interface. If not specified, uses the name of
+                the element's class, suffixing incrementing numbers if that
+                name would collide with an already-associated element.
         """
         name = inc_name(cls.name if name is None else name, self.cdict)
         element = cls()
@@ -168,7 +225,14 @@ class Matcher(AttrConsumer, ABC):
 
 
 class Sensor(Matcher, ABC):
-    """base class for watching an input source."""
+    """
+    abstract base class for Node elements that 'watch' some data source.
+    semi-autonomous; runs asynchronously from its parent Node and uses its
+    own Actors to watch the data source and decide what to bother the Node
+    about.
+
+    Sensors should generally only be instantiated by methods of a parent Node.
+    """
 
     def __init__(self):
         super().__init__()
@@ -186,8 +250,17 @@ class Sensor(Matcher, ABC):
         self.memory = None
 
     # TODO: perhaps make this less redundant with superclass add_element
-    def associate_actor(self, cls, name=None):
-        """associate an actor with this Sensor."""
+    def associate_actor(self, cls: type[Actor], name: Optional[str] = None):
+        """
+        instantiate an Actor and associate it with this Sensor.
+
+        Args:
+            cls: type of Actor to instantiate and associate
+            name: optional name for Actor; used to identify it in this Sensor's
+                interface and config. If not specified, defaults to the class
+                name, suffixed with incrementing numbers if it would collide
+                with the name of an already-attached Actor
+        """
         name = inc_name(cls.name if name is None else name, self.actors)
         self.actors[name] = cls()
         self.actors[name].owner, self.actors[name].name = self, name
@@ -201,17 +274,41 @@ class Sensor(Matcher, ABC):
                 (f"{name}_{prop}", getattr(self.actors[name], prop))
             )
 
-    def add_element(self, cls: type[Actor], name=None):
+    def add_element(self, cls: type[Actor], name: Optional[str] = None):
+        """
+        use special Sensor association behavior, and don't permit Sensor mise
+        en abyme.
+        """
         if issubclass(cls, Sensor):
             raise TypeError("cannot add Sensors to a Sensor.")
         self.associate_actor(cls, name)
 
     def _log(self, *args, **kwargs):
-        return self.owner._log(
+        """
+        call owning Node's log function. automatically include the fact that
+        this Sensor generated the log entry.
+        """
+        self.owner._log(
             *args, category="sensor", sensor=self.name, **kwargs
         )
 
-    def check(self, node, **check_kwargs):
+    def check(self, node: Node, **check_kwargs):
+        """
+        Main pointy-end function for Sensor.
+
+        Use this Sensor's `checker()` method to look for new events and, if
+        there are any, match them against this Sensor's Actors
+
+        Args:
+            node: Node to inform about any matching events. In normal
+                operation, this argument will never be explicitly passed: it
+                will always be this Sensor's owning Node, and will always be
+                partially evaluated into this method during `Sensor.__init__`.
+            **check_kwargs: kwargs to pass to `self.checker()`. Will also
+                never be explicitly passed in normal operation; if there are
+                any, they will be automatically taken from the "check" item of
+                this Sensor's `config` dict.
+        """
         step = "check"  # for error logging
         try:
             self.memory, events = self.checker(self.memory, **check_kwargs)
@@ -254,19 +351,36 @@ class Sensor(Matcher, ABC):
         pass
 
     poll = property(_get_poll, _set_poll)
+    """
+    when this `Sensor` is running in a Node's `sensor_loop()` function, this
+    sets interval in seconds between subsequent calls to `self.check()`. If
+    not set, it defaults to the poll rate of the parent Node. 
+    """
     _poll = None
     has_individual_pollrate = False
     base_config = MPt({})
     checker: Callable
+    """
+    data-fetching function called by `self.check()`. Must be defined in 
+    implementations of this class.
+    """
     actions: tuple[type[Actor]] = ()
+    """
+    default Actors associated with this class. `Sensor.__init__()` 
+    instantiates and attaches an Actor of each specified type.
+    """
     loggers: tuple[type[Actor]] = ()
+    """same, but for logging-only Actors."""
     name: str
     class_interface = ("poll",)
     interface = ()
 
 
 class Actor(ABC):
-    """base class for conditional responses to events."""
+    """
+    abstract base class enabling conditional responses to events. Actors
+    should generally only be instantiated from methods of a parent Matcher.
+    """
 
     def __init__(self):
         matchp = inspect.getfullargspec(self.match).kwonlyargs
@@ -281,12 +395,33 @@ class Actor(ABC):
 
     def match(self, event: Any, **_) -> bool:
         """
-        match is expected to return True if an event matches and raise
-        NoMatch if it does not.
+        Determine if this Actor can / should handle a given event.
+        Must be implemented in concrete subclasses of Actor.
+
+        Args:
+            event: event to match.
+            **_: placeholder for kwargs defined in a subclass.
+
+        Returns:
+            True if this Actor can handle `event`.
+
+        Raises:
+            NoMatch if this Actor cannot handle `event`.
         """
         raise NotImplementedError
 
     def execute(self, node: Node, event: Any, **kwargs) -> Any:
+        """
+        This method defines what an Actor does with objects it matches. Must
+        be implemented in concrete subclasses of Actor.
+
+        Args:
+            node: parent Node of this Actor. In normal operation, this
+                argument will never be explicitly passed, but instead
+                partially evaluated into this method in `Actor.__init__()`.
+            event: object to do something with.
+            **kwargs: placeholder for kwargs defined in a subclass.
+        """
         raise NotImplementedError
 
     name: str
@@ -299,7 +434,7 @@ class Actor(ABC):
 
 class DispatchActor(Actor, ABC):
     """
-    abstract subclass for actors intended to dispatch instructions from
+    abstract class for Actors intended to dispatch Instructions from
     Stations to Nodes.
     """
 
@@ -311,7 +446,26 @@ class DispatchActor(Actor, ABC):
             "target_picker",
         )
 
-    def pick(self, station: "Station", message: Message, **_):
+    def pick(self, station: "Station", instruction: Message, **_):
+        """
+        Pick which of a Station's Delegates to send an Instruction to.
+
+        Args:
+            station: Parent Station. in normal operation, will never be
+                explicitly passed.
+            instruction: Instruction Message to dispatch.
+            **_: placeholder for kwargs defined in concrete subclasses.
+
+        Returns:
+            Name of selected Delegate.
+
+        Raises:
+            `NoMatchingDelegate` if no Delegate matches rules defined by this
+                Actor's target_name, target_picker, or target_actor
+                attributes, including if the Station has no Delegates.
+            `TypeError` if this Actor's target_name, target_picker, and
+                target_actor attributes are all None.
+        """
         if all(
             t is None
             for t in (self.target_name, self.target_actor, self.target_picker)
@@ -323,7 +477,9 @@ class DispatchActor(Actor, ABC):
         if self.target_actor is not None:
             targets = [n for n in targets if self.target_actor in n["actors"]]
         if self.target_picker is not None:
-            targets = [n for n in targets if self.target_picker(n, message)]
+            targets = [
+                n for n in targets if self.target_picker(n, instruction)
+            ]
         not_busy = [n for n in targets if n.get("busy") is False]
         if len(targets) == 0:
             raise NoMatchingDelegate
@@ -333,44 +489,82 @@ class DispatchActor(Actor, ABC):
         return not_busy[0]["name"]
 
     target_name: Optional[str] = None
+    """if set, dispatch only to Delegates named exactly target_name."""
     target_actor: Optional[str] = None
+    """
+    if set, dispatch only to Delegates that have an Actor named target_actor.
+    """
     target_picker: Optional[Callable[[dict, Message], str]] = None
+    """
+    function that can be used to define more complex Delegate selection 
+    behaviors.
+    """
 
 
 class DoNotUnderstand(ValueError):
-    """the node does not know how to interpret this instruction."""
+    """This Delegate does not know how to interpret this Instruction."""
 
 
 class NoActorForEvent(DoNotUnderstand):
-    """no actor matches this instruction."""
+    """This Matcher has no Actor that matches this Event."""
 
 
 class NoTaskError(DoNotUnderstand):
-    """control node issued a 'do' instruction with no attached task."""
+    """
+    This Delegate received a 'do' Instruction, but the Instruction included
+    neither an Action Message or a description of a task to perform.
+    """
 
 
 class NoConfigError(DoNotUnderstand):
-    """control node issued a 'configure' instruction with no config."""
+    """
+    This Delegate received a 'configure' Instruction, but the Instruction
+    did not specify what to configure.
+    """
 
 
 class NoInstructionType(DoNotUnderstand):
-    """control node issued an instruction with no type."""
+    """
+    This Delegate received an Instruction that did not specify what type of
+    Instruction it was.
+    """
 
 
 class NoMatch(Exception):
-    """actor does not match instruction. used for control flow."""
+    """
+    This Actor does not match an event passed to its `check()` method. This
+    Exception is used primarily for control flow.
+    """
 
 
 class NoMatchingDelegate(Exception):
-    """no nodes are available that match this action."""
+    """
+    A Station, possibly via one of its Actors, attempted to dispatch an
+    Instruction to one of its Delegates, but found no appropriate Delegate.
+    """
 
 
 class AllBusy(Exception):
-    """all nodes we could dispatch this instruction to are busy."""
+    """
+    A Station, possibly via one of its Actors, attempted to dispatch an
+    Instruction to one of its Delegates, but all appropriate Delegates for the
+    Instruction were busy.
+    """
 
 
 def inc_name(name: str, config: Mapping[str]) -> str:
-    """add an incrementing numerical suffix to a prospective duplicate key"""
+    """
+    If a string would duplicate an existing key of a dictionary, add a
+    numerical suffix to it to prevent collisions.
+
+    Args:
+        name: key caller would like to add to `config`
+        config: mapping caller would like to use `name` as a key in
+
+    Returns:
+        `name` if it does not duplicate any key of `config`; `name` with a
+            unique-within-keys-of-config numerical suffix if it does.
+    """
     if name in config:
         matches = filter(lambda k: re.match(name, k), config)
         name = f"{name}_{len(tuple(matches)) + 1}"
@@ -378,15 +572,29 @@ def inc_name(name: str, config: Mapping[str]) -> str:
 
 
 def element_dict(elements: Collection[Union[Actor, Sensor]]) -> dict[str, str]:
-    """sensor title formatter for identify_elements or similar tasks"""
+    """
+    Actor/Sensor title formatter for `identify_elements()` or similar
+    introspection methods.
+    """
     return {
         k: f"{v.__class__.__module__}.{v.__class__.__name__}"
         for k, v in elements
     }
 
 
-def validate_instruction(instruction):
-    """first-pass instruction validation"""
+def validate_instruction(instruction: Message):
+    """
+    First-pass Instruction validation function. Called by Delegates on
+        Instruction receipt; can also be used as an independent validator.
+
+    Args:
+        instruction: Instruction to validate.
+
+    Raises:
+        NoInstructionType if `instruction` does not have a defined type.
+        NoConfigError if a 'configure' Instruction does not specify a config.
+        NoTaskError if a 'do' instruction does not specify a task to perform.
+    """
     if enum(instruction, "type") == "unknowninst":
         raise NoInstructionType
     if enum(instruction, "type") == "configure" and instruction.config is None:
@@ -396,7 +604,11 @@ def validate_instruction(instruction):
 
 
 class Node(Matcher, ABC):
-    """base class for Delegates and Stations."""
+    """
+    Abstract base class for Delegates and Stations. Defines core behavior like
+    running Sensors, spooling events to Actors, managing a TCPTalk server,
+    constructing an interface, starting up, shutting down, and logging.
+    """
 
     def __init__(
         self,
@@ -477,9 +689,16 @@ class Node(Matcher, ABC):
             self.server, self.server_events, self.inbox = None, None, None
 
     def _set_logfile(self):
+        """
+        concrete subclasses must define rules for constructing log filenames.
+        """
         raise NotImplementedError
 
     def start(self):
+        """
+        Start the Node's main loop and, if it is supposed to have one, its
+        TCPTalk server.
+        """
         if self.__started is True:
             raise EnvironmentError("Node already started.")
         self._log("starting", category="system")
@@ -489,15 +708,32 @@ class Node(Matcher, ABC):
         self.state = "nominal"
         self._log("completed start", category="system")
 
-    def nodeid(self):
-        """basic identifying information for node."""
+    def nodeid(self) -> dict[str, Union[str, int]]:
+        """
+        get basic identifying information for this Node.
+
+        Returns:
+            dict whose keys are "name", "pid", and "host".
+        """
         return {
             "name": self.name,
             "pid": os.getpid(),
             "host": socket.gethostname(),
         }
 
-    def add_element(self, cls: Union[type[Actor], type[Sensor]], name=None):
+    def add_element(
+        self, cls: Union[type[Actor], type[Sensor]], name: Optional[str] = None
+    ):
+        """
+        Instantiate an Actor or Sensor and associate it with this Node.
+
+        Args:
+            cls: type of Actor or Sensor to instantiate and associate.
+            name: optional name for Actor or Sensor used to identify it in
+                this Node's interface/config. name of its class will be used
+                if not specified, plus a numerical suffix if it would collide
+                with the name of an already-attached element.
+        """
         logname = name if name is not None else cls.name
         self._log(
             f"adding element", cls=str(cls), name=logname, category="system"
@@ -507,7 +743,7 @@ class Node(Matcher, ABC):
             f"added element", cls=str(cls), name=logname, category="system"
         )
 
-    def busy(self):
+    def busy(self) -> bool:
         """are we too busy to do new stuff?"""
         # TODO: or maybe explicitly check threads? do we want a free one?
         #  idk
@@ -516,14 +752,25 @@ class Node(Matcher, ABC):
         return False
 
     def _main_loop(self):
-        """you need to define a main loop when you use this base class"""
+        """
+        Implementations of Node must define what they actually do when they're
+        running. Should only be executed in a thread, and only by
+        `Node._start()`.
+        """
         raise NotImplementedError
 
     def _shutdown(self, exception: Optional[Exception] = None):
-        """subclasses must define a way to shut down"""
+        """Implementations of Node must define specific shutdown behavior."""
         raise NotImplementedError
 
-    def shutdown(self, exception=None):
+    def shutdown(self, exception: Optional[Exception] = None):
+        """
+        Shut down the Node.
+
+        Args:
+            exception: Unhandled Exception that stopped the Node's main loop,
+                if any.
+        """
         self.locked = True
         self.state = "shutdown" if exception is None else "crashed"
         self._log(
@@ -542,10 +789,14 @@ class Node(Matcher, ABC):
             )
         self.is_shut_down = True
 
-    def _start(self):
+    def _start(self) -> Optional[Exception]:
         """
-        private method to start the node. should only be executed by the
-        public start() method.
+        private method to start the Node. should only be executed by
+        `Node.start()`.
+
+        Returns:
+            Exception that stopped the Node's main loop, if any. None on
+                intentional shutdown.
         """
         for name, sensor in self.sensors.items():
             self.threads[name] = self.exc.submit(self._sensor_loop, sensor)

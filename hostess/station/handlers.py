@@ -83,7 +83,7 @@ def make_function_call(action: pro.Action) -> tuple[dict[str, list], Callable]:
         raise ValueError(f"unknown context {ctx}")
 
 
-def actiondict(action: pro.Action) -> dict[str, Any]:
+def make_actiondict(action: pro.Action) -> dict[str, Any]:
     """
     construct a standardized dict for recording the results of an action
     described by `action`.
