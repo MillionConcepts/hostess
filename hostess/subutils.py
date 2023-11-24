@@ -84,7 +84,7 @@ class DispatchBuffer:
         return
 
 
-def _wait_on(it):
+def _wait_on(it: Any):
     """
     Block until it completes.
 
@@ -238,9 +238,10 @@ class Dispatcher(Composition):
 
         Returns:
               a function that takes one or no arguments. If it is called
-              with no argument, it immediately fires the callback. If it
-              is called with an object with a .wait method, it first calls
-              its .wait method. It returns whatever executing the step returns.
+                  with no argument, it immediately fires the callback. If it
+                  is called with an object with a .wait method, it first calls
+                  its .wait method.
+                  This function returns whatever executing the step returns.
         """
         return partial(dispatch_callback, self, signaler, step)
 
@@ -567,12 +568,9 @@ class RunCommand:
         non-standard calling conventions, like the ffmpeg command below.
 
         Examples:
-
-        ```
-        cmd('ls')
-        cmd('cp -r /path/to/folder /path/to/other/folder')
-        cmd('ffmpeg -i first.mp4 -filter:v "crop=100:10:20:200" second.mp4')
-        ```
+            * `cmd('ls')`
+            * `cmd('cp -r /path/to/folder /path/to/other/folder')`
+            * `cmd('ffmpeg -i first.mp4 -filter:v "crop=100:10:20:200" second.mp4')`
 
         **2**
 
@@ -749,8 +747,8 @@ class Viewer:
     def wait_for_output(
         self,
         stream: Literal["out", "err", "any"] = "any",
-        poll=0.05,
-        timeout=10
+        poll: float = 0.05,
+        timeout: float = 10
     ):
         """
         Block until the Viewer receives output on the specified stream (or its
@@ -786,7 +784,7 @@ class Viewer:
         runclass: Optional[invoke.Runner] = None,
         cbuffer: Optional[CBuffer] = None,
         **kwargs: Any,
-    ):
+    ) -> "Viewer":
         """
         Construct a `Viewer` from a command. This is the most convenient
         constructor for `Viewer` and should generally be preferred to
@@ -796,7 +794,7 @@ class Viewer:
             command: Either a shell command as a string, or an existing
                 `RunCommand` object.
             args: additional arguments for the executed shell command. See
-                `RunCommand` for a detailed description of behavior.
+                `RunCommand.__call__()` for a detailed description of behavior.
             ctx: optional Invoke `Context` for Viewer. Just creates a new one
                 if not specified.
             runclass: underlying Invoke `Runner` class for `Viewer`. if not

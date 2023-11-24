@@ -1,37 +1,39 @@
 """
-implementations of Actor and Sensor base classes, along with some helper
-functions.
+concrete implementations of Actor and Sensor base classes, along with some
+helper functions.
 """
-
 from __future__ import annotations
 
 import datetime as dt
-import random
-import re
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Callable, Optional, Hashable, MutableMapping, Sequence
+import random
+import re
+from typing import Any, Callable, Hashable, MutableMapping, Optional, Sequence
 
 from dustgoggles.structures import listify
 from google.protobuf.message import Message
 
+from hostess.station.bases import (
+    Actor, DispatchActor, Node, NoMatch, Sensor
+)
 import hostess.station.delegates as delegates
-from hostess.station.station import Station
-import hostess.station.proto.station_pb2 as pro
-from hostess.station.bases import Sensor, Actor, NoMatch, Node, \
-    DispatchActor
 from hostess.station.handlers import (
-    make_function_call,
     actiondict,
+    make_function_call,
     tail_file,
     watch_dir,
 )
 from hostess.station.messages import unpack_obj
+import hostess.station.proto.station_pb2 as pro
+from hostess.station.station import Station
 from hostess.subutils import RunCommand
 
-# keys a dict must have to count as a valid "actiondict" for inclusion in
-# a Node's actions list
+
 NODE_ACTION_FIELDS = frozenset({"id", "start", "stop", "status", "result"})
+"""
+keys a dict must have to count as a valid "actiondict" in a Node's actions list
+"""
 
 
 def init_execution(
@@ -40,7 +42,12 @@ def init_execution(
     key: Hashable,
     noid: bool
 ):
-    """'invariant' start of a 'do' execution"""
+    """
+    perform standard setup for a 'do' Action.
+
+    Args:
+
+    """
     if instruction.HasField("action"):
         action = instruction.action  # for brevity in execute() methods
     else:

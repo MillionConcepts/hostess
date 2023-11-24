@@ -52,7 +52,7 @@ from hostess.config import EC2_DEFAULTS, GENERAL_DEFAULTS
 from hostess.ssh import (
     find_ssh_key, find_conda_env, jupyter_connect, NotebookConnection, SSH
 )
-from hostess.subutils import Processlike
+from hostess.subutils import Processlike, Viewer
 from hostess.utilities import (
     filestamp,
     my_external_ip,
@@ -194,6 +194,11 @@ def _move_print_heads(err_head, out_head, process):
 
 
 class Instance:
+    """
+    Interface to an EC2 instance. Enables permitting state control,
+    monitoring, and remote procedure calls.
+    """
+
     def __init__(
         self,
         description: Union[InstanceIdentifier, InstanceDescription],
@@ -205,10 +210,6 @@ class Instance:
         use_private_ip: bool = False,
     ):
         """
-        Interface for an EC2 instance, permitting state control, monitoring,
-        and remote process calls. Uses a combination of direct SSH access and
-        EC2 API calls.
-
         Args:
             description: unique identifier for the instance, either its public
                 / private IP (whichever is accessible from where you're
@@ -406,8 +407,8 @@ class Instance:
 
         Returns:
             "state" if it is not running or transitioning to running;
-                comma-separated list of missing ip/uname/key if any;
-                Otherwise False.
+                comma-separated list of "ip"/"uname"/"key" if any are missing.
+                Otherwise False (meaning it looks ready).
         """
         if self.state not in ("running", "pending"):
             return "state"
@@ -447,6 +448,10 @@ class Instance:
         raise ConnectionError(errstring)
 
     def _drop_ssh(self):
+        """
+        close an existing SSH connection and attempt to purge it from memory.
+        should only be called by other methods of Instance.
+        """
         self._ssh.close()
         del self._ssh
         self._ssh = None
@@ -461,7 +466,7 @@ class Instance:
         **kwargs
     ) -> Processlike:
         """
-        run a command in the instance's default interpreter via SSH.
+        run a command in the instance's default interpreter.
 
         Args:
             *args: args to pass to `self._ssh`.
@@ -485,17 +490,32 @@ class Instance:
     def con(
         self,
         *args,
-        _poll=0.05,
-        _timeout=None,
-        _return_viewer=False,
+        _poll: float = 0.05,
+        _timeout: Optional[float] = None,
+        _return_viewer: bool = False,
         **kwargs
-    ):
+    ) -> Optional[Viewer]:
         """
         pretend you are running a command on the instance while looking at a
-        terminal emulator, pausing for output and pretty-printing it to stdout.
+        terminal emulator. pauses for output and pretty-prints it to stdout.
 
-        like Instance.command with _wait=True, _quiet=False, but does not
-        return a process abstraction. fun in interactive environments.
+        like Instance.command with _wait=True, _quiet=False. Does not return
+        a process abstraction by default (pass _return_viewer=True if you want
+        one). Fun in interactive environments.
+
+        Only arguments unique to con() are described here; others are as
+        Instance.command().
+
+        Args:
+            _poll: polling rate for process output, in seconds
+            _timeout: if not None, raise a TimeoutError if this many seconds
+                pass before receiving additional output from process (or
+                process exit).
+            _return_viewer: if True, return a Viewer for the process once it
+                exits. Otherwise, return None.
+
+        Returns:
+            A Viewer if _return_viewer is True; otherwise None.
         """
         process = self.command(*args, **kwargs)
         if _timeout is not None:

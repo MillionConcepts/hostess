@@ -91,7 +91,7 @@ class Profiler:
 
     def context(self, label: str = "") -> PContext:
         """
-        create a context manager that provides profiling for a section of code.
+        create a context manager that profiles a section of code.
 
         Args:
             label: label for the code section, possibly shared between
@@ -101,7 +101,7 @@ class Profiler:
         return PContext(self, label)
 
     def reset(self):
-        """clear this profilers, removing all existing readings."""
+        """clear this Profiler, removing all existing readings."""
         self.labels = defaultdict(self._newcaches)
 
     def _newcaches(self) -> dict:
@@ -210,16 +210,20 @@ def val_ids(mapping: Mapping[Hashable, Any]) -> set[int]:
 
 def _maybe_release_locals(localdict, frame):
     """
-    the locals dict of the top-level module frame is the
-    same as its globals dict, and retrieving it from the frame here
-    gives us the actual dict. we do NOT want to delete all members
-    of the top-level module frame here.
-    conversely, locals dicts retrieved from lower frames are just
-    copies. modifying them will not affect the locals available in
-    those frames. HOWEVER, references to everything in those copies
-    will hang around forever until _that_ frame fully dies, and
-    clearing the copy is the only reliable way to prevent that from
-    happening.
+    Possibly purge a dictionary, depending on the name of `frame`'s code.
+
+    Tedious description of technical rationale:
+
+    the `locals` dict of the top-level module frame is the same as its
+    `globals` dict. retrieving it from a frame gives us the _actual_ `globals`
+    `dict`, not a view into it. we do NOT want to casually delete all members
+    of the top-level module while pretending to merely inspect it.
+
+    conversely, `locals` `dicts` retrieved from lower frames are only copies.
+    copies. modifying them will not affect the actual namespaces of those
+    frames. HOWEVER, references to everything in those copies will hang around
+    forever until _that_ frame fully dies, and clearing the copies is the only
+    reliable way to prevent that from happening.
     """
     if frame.f_code.co_name != "<module>":
         localdict.clear()
@@ -233,7 +237,7 @@ def namespace_ids(
 ) -> set[int]:
     """
     find ids of all top-level objects in the combined namespace(s) of
-    a frame or frames
+    a frame or frames/
     """
     if frames is None:
         frames = [currentframe().f_back]
@@ -576,6 +580,7 @@ def analyze_references(
             & ~(TYPE(REF) ∈ EXCLUDE_TYPES)
             & (TYPE(REF) ∈ PERMIT_TYPES | PERMIT_TYPES = ∅)
             ```
+
     4. references from obj to itself are never included. This may change
        in the future.
 
@@ -585,8 +590,7 @@ def analyze_references(
             obj. gc.get_referents and gc.get_referrers are the intended and
             tested values.
         filter_primitive: ignore 'primitive' (str, bool, &c) objects?
-        filter_history: attempt to ignore 'history' objects (intended for
-            ipython)?
+        filter_history: attempt to ignore ipython 'history' objects?\
         filter_scopedict: ignore _direct_ references to the locals, globals,
             and builtins dicts of all frames in stack (_not_ the values of
             these dictionaries?)

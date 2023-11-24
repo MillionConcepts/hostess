@@ -134,7 +134,7 @@ class Station(bases.Node):
 
     def queue_task(self, delegate: str, instruction: pro.Instruction):
         """
-        queue an Unstruction for a Delegate and set up tracking for its state.
+        queue an Instruction for a Delegate and set up tracking for its state.
         this method is intended for "do" Instructions that contain Actions, not
         Instructions we do not want to track in the same way (like config).
         The default InstructionFromInfo Actor uses this method to queue the
@@ -397,7 +397,7 @@ class Station(bases.Node):
     def unfinished_delegates(self) -> list[dict[str, Any]]:
         """
         get metadata dicts for all still-running Delegates executing in local
-        context (i.e., the same interpreter process).
+        context (this Station's process).
         """
         unfinished = []
         for n in filter(lambda x: "obj" in x, self.delegates):
