@@ -161,7 +161,7 @@ class TCPTalk:
         callback: Callable,
         peername: Optional[str],
         peersock: socket.socket
-    ) -> tuple[Optional[bytes], str, str, str]:
+    ) -> tuple[Any, str, Optional[tuple[str, int]], str]:
         """
         inner callback-handler tree for i/o threads. should only ever be
         called from an io thread loop (`TCPTalk.launch_io()`).
@@ -170,13 +170,14 @@ class TCPTalk:
             callback: one of self._read, self._ack, or self._accept. attached
                 to peersock by self.sel, queued by a call to self.sel.register
                 in an io or selector thread.
-            peername: name of peer, if known (generally ip address).
+            peername: name of peer, if known (tuple of (ip, fileno)).
             peersock: open socket to peer
 
         Returns:
-            stream: bytes read from socket, if any
+            stream: decoded or raw bytes read from socket, if any
             event: description of event, primarily for logging
-            peername: existing or newly-discovered peername (usually ip)
+            peername: existing or newly-discovered peername (ip, fileno), or
+                None if we still don't know it
             status: code for event, primarily for control flow
         """
         if callback.__name__ == "_read":
@@ -188,7 +189,8 @@ class TCPTalk:
                 # attempting to unregister an already-unregistered conn
                 return None, "guard", peername, "already unregistered"
         elif callback.__name__ == "_ack":
-            # callback is self._ack
+            # callback is self._ack (usually a partially-evaluated version of
+            # it constructed in self._read())
             stream, event, status = callback(peersock)
             # remove peer from peering-lock dict
             self.peers.pop(peername, None)
@@ -200,7 +202,13 @@ class TCPTalk:
             stream, event, status = None, "skipped", "invalid callback"
         return stream, event, peername, status
 
-    def queued_descriptors(self):
+    def queued_descriptors(self) -> set[int]:
+        """
+        Returns:
+             set of all file descriptors for currently-queued sockets.
+                Primarily for selector thread loop but can also be used
+                diagnostically.
+        """
         return {s[0].fd for s in chain.from_iterable(self.queues.values())}
 
     # TODO: should this be running in @trywrap?
@@ -279,13 +287,21 @@ class TCPTalk:
 
     def _accept(
         self, sock: socket.socket
-    ) -> tuple[None, str, Optional[tuple], str]:
+    ) -> tuple[None, str, Optional[tuple[str, int]], str]:
         """
         accept-connection callback for i/o threads.
 
         Args:
             sock: TCP socket we've received a connection request on. in normal
                 operation, this will always be self.sock.
+
+        Returns:
+            stream: always None. (present for signature compatibility)
+            event: "blocking" if accepting connection would block; "accept"
+                on successful accept
+            peername: name of peer on successful accept (tuple of ip address,
+                fileno). None if blocking (because peer name is not known).
+            status: "blocking on self" if blocking, "ok" on successful accept
         """
         try:
             conn, addr = sock.accept()
@@ -296,20 +312,78 @@ class TCPTalk:
         self.sel.register(conn, selectors.EVENT_READ, self._read)
         return None, "accept", conn.getpeername(), "ok"
 
-    def _read(self, conn: socket.socket) -> tuple[bytes, str, str]:
+    def _trydecode(self, stream: bytes) -> tuple[Any, str, str]:
         """
-        read-from-socket callback for read threads. attached to keys by `sel`.
+        inner stream-decode handler function for self.read().
+
+        Args:
+            stream: bytes received from peer.
+
+        Returns:
+            stream: output of self.decoder, if successful; undecoded stream
+                if not.
+            event: "decoded {nbytes}" on successful decode; "read {nbytes}"
+                on failed decode
+            status: "ok" if successful; description of decode error if not
+        """
+        nbytes = len(stream)
+        try:
+            stream = self.decoder(stream)
+            event, status = f"decoded {nbytes}", "ok"
+        except KeyboardInterrupt:
+            raise
+        except Exception as ex:
+            event, status = f"read {nbytes}", f"decode error;{type(ex)};{ex}"
+        return stream, event, status
+
+    def _tryread(self, peersock: socket.socket) -> tuple[Optional[bytes], str]:
+        """
+        inner read-individual-chunk-from-socket handler for `read`
+
+        Args:
+            peersock: open socket to read chunk from
+
+        Returns:
+            data: bytes read from peersock, if any
+            status: "streaming" if receive operation was successful;
+                "unavailable" if peer is temporarily unavailable
+
+        Raises:
+            OSError, for any OSError other than temporary unavailability
+        """
+        status = "streaming"
+        try:
+            data = peersock.recv(self.chunksize)
+        except OSError as ose:
+            if "temporarily" not in str(ose):
+                raise
+            return None, "unavailable"
+        return data, status
+
+    def _read(self, peersock: socket.socket) -> tuple[Any, str, str]:
+        """
+        read-from-socket callback for i/o threads.
+
+        Args:
+            peersock: open socket to peer
+
+        Returns:
+            stream: output of self.decoder on successful read and decode;
+                bytes read from peersock on successful read and failed decode;
+                None on failed read
+            event: description of read/decode length or read/decode error
+            status: "ok" if everything went well, error code if not
         """
         event, status, stream = None, "unk", b""
         try:
-            self.sel.unregister(conn)
+            self.sel.unregister(peersock)
             waiting, unwait = timeout_factory(timeout=self.timeout)
-            stream, length = conn.recv(self.chunksize), None
+            stream, length = peersock.recv(self.chunksize), None
             length = read_header(stream)["length"]
             while waiting() >= 0:  # syntactic handwaving. breaks w/exception.
                 if (length is not None) and (len(stream) >= length):
                     break
-                data, status = self._tryread(conn)
+                data, status = self._tryread(peersock)
                 if status == "unavailable":
                     time.sleep(self.delay)
                     continue
@@ -318,58 +392,61 @@ class TCPTalk:
             # tell the selector the socket is ready for an `ack` callback
             stream, event, status = self._trydecode(stream)
             self.sel.register(
-                conn, selectors.EVENT_WRITE, curry(self._ack)(stream)
+                peersock, selectors.EVENT_WRITE, curry(self._ack)(stream)
             )
         except BrokenPipeError:
-            self.peers.pop(conn.getpeername(), None)
+            self.peers.pop(peersock.getpeername(), None)
             status = "broken pipe"
         except TimeoutError:
-            self.peers.pop(conn.getpeername(), None)
+            self.peers.pop(peersock.getpeername(), None)
             status = "timed out"
         except KeyError as ke:
             if "is not registered" in str(ke):
-                status = f"{conn} already unregistered"
+                status = f"{peersock} already unregistered"
             else:
                 raise
         except BlockingIOError:
-            self.peers.pop(conn.getpeername(), None)
-            status = f"cleared blocking socket {conn.getpeername()}"
+            self.peers.pop(peersock.getpeername(), None)
+            status = f"cleared blocking socket {peersock.getpeername()}"
         except (IOError, OSError) as err:
             status = f"{type(err)}: {str(err)}"
         event = f"read {len(stream)}" if event is None else event
         return stream, event, status
 
-    def _tryread(self, conn: socket.socket) -> tuple[Optional[bytes], str]:
-        """inner read-individual-chunk-from-socket handler for `read`"""
-        status = "streaming"
-        try:
-            data = conn.recv(self.chunksize)
-        except OSError as ose:
-            if "temporarily" not in str(ose):
-                raise
-            return None, "unavailable"
-        return data, status
+    def _ack(
+        self, data: Any, peersock: socket.socket
+    ) -> tuple[None, str, str]:
+        """
+        acknowledgement callback for read threads. calls self.ackcheck if we
+        have one; if we don't, just sends an empty comm to the peer.
 
-    def _ack(self, data, conn: socket.socket) -> tuple[None, str, str]:
-        """
-        receipt-of-message acknowledgement callback for read threads.
-        attached to keys by the selector.
         Args:
-            conn: open socket to peer.
+            data: decoded object or raw bytes read from peersock.
+                this is typically not passed directly but rather curried into
+                a copy of _ack() constructed in _read().
+            peersock: open socket to peer.
+
+        Returns:
+            stream: always None. for signature compatibility
+            event: "ack attempt" if attempt failed; for successful ack, if
+                we have an ackcheck function, whatever status code it returned,
+                or "sent_ack" if we don't have an ackcheck
+            status: empty string if we have no response; "ok" on successful
+                ack; description of error on failed ack
         """
         try:
-            self.sel.unregister(conn)
-            response, status = make_comm(b""), "sent_ack"
+            self.sel.unregister(peersock)
+            response, event = make_comm(b""), "sent_ack"
             if self.ackcheck is not None:
-                response, status = self.ackcheck(conn, data)
+                response, event = self.ackcheck(peersock, data)
             if response is None:
-                return None, status, ""
+                return None, event, ""
             waiting, unwait = timeout_factory(timeout=self.timeout)
             while len(response) > 0:
                 try:
                     # attempt to send chunk of designated size...
                     payload = response[: self.chunksize]
-                    sent = conn.send(payload)
+                    sent = peersock.send(payload)
                     unwait()
                     # ...but only truncate by amount we successfullly sent
                     response = response[sent:]
@@ -381,7 +458,7 @@ class TCPTalk:
                     waiting()
                     time.sleep(self.delay)
             time.sleep(0.1)
-            return None, status, "ok"
+            return None, event, "ok"
         except (KeyError, ValueError) as kve:
             if "is not registered" in str(kve):
                 # someone else got here firs
@@ -390,20 +467,22 @@ class TCPTalk:
         except TimeoutError as te:
             return None, "ack attempt", f"{te}"
 
-    def _trydecode(self, stream):
-        """inner stream-decode handler function for `read`"""
-        nbytes = len(stream)
-        try:
-            stream = self.decoder(stream)
-            event, status = f"decoded {nbytes}", "ok"
-        except KeyboardInterrupt:
-            raise
-        except Exception as ex:
-            event, status = f"read {nbytes}", f"decode error;{type(ex)};{ex}"
-        return stream, event, status
+    def _check_peerage(
+        self, key: Union[selectors.SelectorKey, socket.socket]
+    ) -> tuple[Optional[tuple[str, int]], bool]:
+        """
+        check to see if another thread is already handling a peer. essentially
+        a synchronization lock function.
 
-    def _check_peerage(self, key: Union[selectors.SelectorKey, socket.socket]):
-        """check already-peered lock."""
+        Args:
+            key: socket to peer, or selector key wrapping socket
+
+        Returns:
+            peername: tuple of (ip, fileno), or None if connection on socket is
+                not yet accepted or socket is already closed
+            peered: True if another thread is handling the peer, False if not
+                (including if the socket is pending/unreadable)
+        """
         try:
             if hasattr(key, "fileobj"):
                 # noinspection PyUnresolvedReferences
@@ -412,10 +491,34 @@ class TCPTalk:
                 peer = key.getpeername()
             return peer, peer in self.peers
         except OSError:
+            # most likely indicates that socket is already closed, or that
+            # this is an incoming, not-yet-accepted connection
             return None, False
 
 
-def read_from_socket(headerread, sock, timeout):
+def read_from_socket(
+    headerread: Optional[Callable[[bytes], dict]],
+    sock: socket.socket,
+    timeout: float
+) -> bytes:
+
+    """
+    one-shot read-all-data-from-socket function
+
+    Args:
+        headerread: optional function to read data header in order to
+            determine total data size
+        sock: open socket to peer
+        timeout: timeout duration
+
+    Returns:
+        bytes received from peer
+
+    Raises:
+        TimeoutError if any attempt to read a chunk of data takes more than
+            timeout seconds
+    """
+    # TODO: check that timeout is working
     # TODO, maybe: move _tryread?
     waiting, unwait = timeout_factory(timeout=timeout)
     data = sock.recv(16384)
@@ -443,9 +546,36 @@ def read_from_socket(headerread, sock, timeout):
 
 
 def tcp_send(
-    data, host, port, timeout=10, delay=0, chunksize=None, headerread=None
-) -> tuple[Any, Optional[int]]:
-    """simple utility for one-shot TCP send."""
+    data: bytes,
+    host: str,
+    port: int,
+    timeout: float = 10,
+    delay: float = 0,
+    chunksize: Optional[float] = None,
+    headerread: Optional[Callable[[bytes], dict]] = None
+) -> tuple[Union[str, bytes], Optional[int]]:
+    """
+    one-shot send-data-over-TCP-and-get-response utility.
+
+    Args:
+        data: data to send
+        host: hostname (usually ip address or 'localhost') of recipient
+        port: port number of recipient
+        timeout: how long to wait for successful connection / send (s)
+        delay: delay between sends to socket (s)
+        chunksize: chunk size for sends; None means unchunked unless a nonzero
+            `delay` is specified, in which case chunk size defaults to 16384
+        headerread: optional function to decode response header, specifically
+            in order to determine intended length of response
+
+    Returns:
+        response: response, if successfully received (possibly an empty
+            bytestring); "timeout" on timeout, "connection refused" on failed
+            connection
+        sockname: file descriptor for socket, if a connection was ever
+            established; None if not
+
+    """
     sockname = None
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         try:
@@ -472,8 +602,14 @@ def tcp_send(
 
 # TODO: consider benchmarking pos-only / unnested versions
 @wraps(tcp_send)
-def stsend(data, host, port, timeout=10, delay=0, chunksize=None):
-    """wrapper for tcpsend that autoencodes data as hostess comms."""
+def stsend(
+    data, host, port, timeout=10, delay=0, chunksize=None
+):
+    """
+    wrapper for `tcp_send()` that autoencodes data as hostess comms. Used by
+    Delegates to send comms to their Station.
+    See `tcp_send()` for a full description of arguments and return values.
+    """
     return tcp_send(
         make_comm(data),
         host,
