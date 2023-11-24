@@ -747,6 +747,7 @@ class Node(Matcher, ABC):
         """are we too busy to do new stuff?"""
         # TODO: or maybe explicitly check threads? do we want a free one?
         #  idk
+        # noinspection PyProtectedMember
         if self.exc._work_queue.qsize() > 0:
             return True
         return False
@@ -769,7 +770,8 @@ class Node(Matcher, ABC):
 
         Args:
             exception: Unhandled Exception that stopped the Node's main loop,
-                if any.
+                if any. Should be None if called explicitly or as part of
+                a graceful shutdown workflow.
         """
         self.locked = True
         self.state = "shutdown" if exception is None else "crashed"
@@ -795,8 +797,8 @@ class Node(Matcher, ABC):
         `Node.start()`.
 
         Returns:
-            Exception that stopped the Node's main loop, if any. None on
-                intentional shutdown.
+            Unhandled Exception that stopped the Node's main loop, if any.
+                None on intentional shutdown.
         """
         for name, sensor in self.sensors.items():
             self.threads[name] = self.exc.submit(self._sensor_loop, sensor)
@@ -826,9 +828,13 @@ class Node(Matcher, ABC):
         self, element_type: Optional[Literal["actors", "sensors"]] = None
     ) -> dict[str, str]:
         """
-        return a dict with names and classes of node's attached elements.
-        intended primarily to produce a lightweight version of identifying
-        information for transmission.
+        create a dict with names and classes of node's attached elements.
+        intended as lightweight monitoring information; used to help format
+        state for the `situation` app.
+
+        Returns:
+            dict whose keys are actor and sensor names and whose values are
+                the outputs of `element_dict()` called on the
         """
         if element_type is None:
             elements = chain(self.actors.items(), self.sensors.items())

@@ -237,7 +237,7 @@ def namespace_ids(
 ) -> set[int]:
     """
     find ids of all top-level objects in the combined namespace(s) of
-    a frame or frames/
+    a frame or frames.
     """
     if frames is None:
         frames = [currentframe().f_back]

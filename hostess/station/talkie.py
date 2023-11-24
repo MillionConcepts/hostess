@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import atexit
+from concurrent.futures import ThreadPoolExecutor
+from functools import wraps
+from itertools import chain, cycle
 import selectors
 import socket
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
-from functools import wraps
-from itertools import cycle, chain
 from typing import Optional, Callable, Union, Any
 
 from hostess.station.comm import make_comm, read_header, read_comm
@@ -15,8 +15,8 @@ from hostess.station.messages import Mailbox
 from hostess.utilities import (
     curry,
     logstamp,
-    timeout_factory,
     signal_factory,
+    timeout_factory,
 )
 
 
@@ -25,10 +25,10 @@ class TCPTalk:
 
     def __init__(
         self,
-        host,
-        port,
-        n_threads=4,
-        poll=0.01,
+        host: str,
+        port: int,
+        n_threads: int = 4,
+        poll: float = 0.01,
         decoder: Optional[Callable] = read_comm,
         ackcheck: Optional[Callable] = None,
         executor: Optional[ThreadPoolExecutor] = None,
@@ -41,8 +41,9 @@ class TCPTalk:
         Note: `TCPTalk` immediately starts running when initialized.
 
         Args:
-            host: host for socket
-            port: port for socket
+            host: hostname for server's socket, either an ip address or a
+                resolvable name like "localhost"
+            port: port number for server's socket
             n_threads: number of i/o threads. server will always launch
                 n_threads + 1 threads; the +1 is its selector thread.
             poll: poll/spool delay for threads
@@ -54,7 +55,7 @@ class TCPTalk:
             lock: optional lock, if the tcp server should be subject to an
                 external lockout
             chunksize: chunk size for reading responses from socket
-            delay: time to wait before checking socket again on bad reads
+            delay: time to wait before checking socket again after failed read
             timeout: timeout on socket
         """
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -606,7 +607,12 @@ def tcp_send(
 # TODO: consider benchmarking pos-only / unnested versions
 @wraps(tcp_send)
 def stsend(
-    data, host, port, timeout=10, delay=0, chunksize=None
+    data: bytes,
+    host: str,
+    port: int,
+    timeout: float = 10,
+    delay: float = 0,
+    chunksize: Optional[int] = None
 ):
     """
     wrapper for `tcp_send()` that autoencodes data as hostess comms. Used by
