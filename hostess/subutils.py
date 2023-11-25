@@ -144,7 +144,7 @@ def done_callback(
 
     Returns:
          result of dispatcher "done" step executed with return value of
-         locally-defined callback() function.
+            locally-defined callback() function.
     """
 
     def callback():
