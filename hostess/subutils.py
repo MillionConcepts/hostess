@@ -104,7 +104,7 @@ def _submit_callback(callback: Callable[[Any], Any], waitable: Any) -> Future:
     Args:
         callback: function to run in the thread. must take at least one
             argument.
-        waitable: object to call function with, presumably something it's
+        waitable: object to call `callback` with, presumably something it's
             waiting on.
 
     Returns:
@@ -569,6 +569,7 @@ class RunCommand:
 
         Examples:
 
+            >>> cmd = RunCommand()
             >>> cmd('ls')
             >>> cmd('cp -r /path/to/folder /path/to/other/folder')
             >>> cmd('ffmpeg -i first.mp4 -filter:v "crop=100:10:20:200" second.mp4')
@@ -576,16 +577,19 @@ class RunCommand:
         **2**
 
         Construct the shell command using multiple arguments to `__call__`.
-        This can be simpler if you need to invoke a command in different
-        ways based on program state (as an alternative to complex string
-        formatting).
+        This allows you to treat the shell command more like a Python function,
+        which can be simpler and less error-prone than dynamic string
+        formatting when you would like to pass variable parameters to a
+        command.
 
-        RunCommand uses the following parsing rules. They are compatible
-        with most, although not all, shell commands:
+        RunCommand uses the following rules to parse args and kwargs into
+        shell command strings. They are compatible with most, although not all,
+        shell programs:
 
-       * The first positional argument is the shell command name. This is
-         mandatory if you did not bind a command to this object when
-         creating it. The parsed command string always starts with this.
+       * RunCommand treats the first positional argument like a shell command
+         name. This means that passing a positional argument is mandatory if
+         you did not bind a command to the RunCommand when creating it. The
+         parsed command string always starts with this argument.
        * Subsequent positional arguments are command parameters. By
          default, the parser places them at the end of the command string,
          after any command options. Pass `_args_at_end=False` to place them
@@ -690,10 +694,11 @@ class RunCommand:
 class Viewer:
     """
     encapsulates an instance of a `RunCommand` subclass or other process
-    abstraction. performs a variety of automated output handling,
-    initialization, and metadata tracking, and prevents the abstraction from
-    throwing errors or unexpectedly blocking in REPL environments.
-    `Viewer.from_command()` is the preferred constructor for most purposes.
+    abstraction. performs a variety of automated output handling, process
+    initialization, and metadata tracking operations, and also prevents the
+    abstraction from throwing errors or unexpectedly blocking in REPL
+    environments. `Viewer.from_command()` is the preferred constructor for
+    most purposes.
 
     `Viewer` pretends to inherit most of the attributes of its encapsulated
     process abstraction, so in addition to attributes explicitly defined on
@@ -752,14 +757,15 @@ class Viewer:
         timeout: float = 10
     ):
         """
-        Block until the Viewer receives output on the specified stream (or its
-        process exits).
+        Block until the Viewer receives output on the specified stream(s) or
+            its process exits.
 
         Args:
             stream: "out" to wait for output on stdout, "err" to wait for
                 output on stderr, "any" for either.
             poll: poll rate (seconds)
-            timeout: how long to wait before raising a TimeoutError (seconds)
+            timeout: how long to wait between successive outputs before
+                raising a TimeoutError (seconds)
         """
         if self.done:
             return
@@ -798,9 +804,9 @@ class Viewer:
                 `RunCommand.__call__()` for a detailed description of behavior.
             ctx: optional Invoke `Context` for Viewer. Just creates a new one
                 if not specified.
-            runclass: underlying Invoke `Runner` class for `Viewer`. if not
-                specified, defaults to the default runclass of `command`, if
-                it has one, and the default runclass of `RunCommand` if it
+            runclass: underlying Invoke `Runner` class for this `Viewer`. if
+                not specified, defaults to the default runclass of `command`,
+                if it has one, and the default `runclass` of `RunCommand` if it
                 does not.
             cbuffer: context buffer for `Viewer`. Creates a new `CBuffer` if
                 not specified.
@@ -809,7 +815,7 @@ class Viewer:
                 description of behavior.
 
         Returns:
-            a Viewer constructed from the command.
+            a `Viewer` constructed from `command` .
         """
         if cbuffer is None:
             cbuffer = CBuffer()
@@ -953,22 +959,22 @@ def make_call_redirect(
     process is always responsible for polling the pipes; watched_process()
     provides a more automated alternative.
 
-    This mutates the return signature of the modified function: it always
-    returns None. Its output, if any, redirects to the 'result' Pipe.
+    This mutates the return signature of the modified function so that it
+    always returns None. It redirects its return value to the 'result' Pipe.
 
-    Note that this cannot be used with the @ decorator syntax because it
-    returns a tuple.
+    Note that this function cannot be used with the `@` decorator syntax
+    because it returns a `tuple`.
 
     Args:
         func: function to be modified.
-        fork: if True, execute func in a double-forked, mostly-daemonized
+        fork: if True, execute `func` in a double-forked, mostly-daemonized
             process when called.
 
     Returns:
         redirected_func: the modified function
         pipes: a dict of `Pipe` objects `redirected_func` will redirect its
-            output to (if and when it is ever called). keys are "out"
-            (stdout), "err" (stderr), and "result" (return value).
+            output to. keys are "out" (stdout), "err" (stderr), and "result"
+            (return value).
     """
     r_here, r_there = Pipe()
     o_here, o_there = Pipe()
