@@ -1078,14 +1078,15 @@ def get_canonical_images(
     session=None,
 ) -> list[dict]:
     """
-    fetch the subset of official Canonical images we might
-    plausibly want to offer as defaults to users. this will still
-    generally return hundreds of images and take > 1.5 seconds because
-    of the number of unsupported daily builds available.
+    fetch the subset of official (we refuse to make the obvious pun) Ubuntu
+    Amazon Machine Images from Canonical that we might plausibly want to offer
+    as defaults to users. This will generally return hundreds of images and
+    take > 1.5 seconds because of the number of unsupported daily builds
+    available, so we cache the results with a one-week shelf life.
     """
     client = init_client("ec2", client, session)
-    # this perhaps excessive-looking optimization is intended to reduce the
-    # time of the API call and the chance we will pick a 'bad' image.
+    # this perhaps excessive-looking optimization is intended to reduce not
+    # only call time but also the chance that we will pick a 'bad' image --
     # Canonical generally drops LTS images at a quicker cadence than 7 months.
     month_globs = [
         f"{(dt.datetime.now() - dt.timedelta(days=30 * n)).isoformat()[:7]}*"

@@ -563,9 +563,9 @@ class RunCommand:
 
         **1**
 
-        Pass the shell command as a literal string. This can be
-        simpler in many cases, and is mandatory for programs with
-        non-standard calling conventions, like the ffmpeg command below.
+        Pass the shell command as a string. This can be simpler in many cases,
+        and is mandatory for programs with non-standard calling conventions,
+        like the `ffmpeg` command below.
 
         Examples:
 
