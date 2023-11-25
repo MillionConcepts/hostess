@@ -220,10 +220,11 @@ def _maybe_release_locals(localdict, frame):
     of the top-level module while pretending to merely inspect it.
 
     conversely, `locals` `dicts` retrieved from lower frames are only copies.
-    copies. modifying them will not affect the actual namespaces of those
-    frames. HOWEVER, references to everything in those copies will hang around
-    forever until _that_ frame fully dies, and clearing the copies is the only
-    reliable way to prevent that from happening.
+    modifying them will not affect the actual namespaces of those frames.
+    HOWEVER, references to everything in those copies will hang around forever
+    until _that_ frame fully dies, which, in most programs, will badly confuse
+    the Python garbage collector and cause horrible memory leaks. clearing the
+    copies is the only reliable way to prevent that from happening.
     """
     if frame.f_code.co_name != "<module>":
         localdict.clear()
