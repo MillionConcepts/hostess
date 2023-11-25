@@ -10,13 +10,13 @@ import socket
 import threading
 from abc import ABC
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, Future
 from functools import partial
 from itertools import chain
 from pathlib import Path
 from random import shuffle
 from types import MappingProxyType as MPt
-from typing import Any, Callable, Mapping, Union, Optional, Literal, Collection
+from typing import Any, Callable, Mapping, Union, Optional, Literal, Collection, Hashable
 
 from cytoolz import valmap
 from dustgoggles.dynamic import exc_report
@@ -26,6 +26,7 @@ import yaml
 from google.protobuf.pyext._message import Message
 
 from hostess.station.handlers import flatten_for_json, json_sanitize
+from hostess.station.messages import Mailbox
 from hostess.station.proto_utils import enum
 from hostess.station.talkie import TCPTalk
 from hostess.utilities import configured, logstamp, yprint, filestamp
@@ -832,6 +833,10 @@ class Node(Matcher, ABC):
         intended as lightweight monitoring information; used to help format
         state for the `situation` app.
 
+        Args:
+            element_type: "actors" or "sensors" to describe only Actors or
+                Sensors. if None, describe both.
+
         Returns:
             dict whose keys are actor and sensor names and whose values are
                 the outputs of `element_dict()` called on the
@@ -854,7 +859,27 @@ class Node(Matcher, ABC):
     def __repr__(self):
         return self.__str__()
 
-    def _log(self, event, **extra_fields):
+    def _log(
+        self,
+        event: Any,
+        **extra_fields
+    ):
+        """
+        construct a JSON object from an event and write it into this Node's
+            log file.
+
+        Args:
+            event: object to format as JSON object and write to log. this
+                function will try to unnest dicts and protobuf
+                Messages, and is also very happy with simple objects like
+                strings, but will try its best to make a decent JSON
+                representation of anything you pass it. nevertheless, large or
+                complex objects are less likely to produce good results.
+            **extra_fields: extra stuff to write into JSON object. kwarg names
+                specify named fields of the object. Special formatting is
+                available for Exceptions. These arguments should not be large
+                or nested objects.
+        """
         exkeys = [
             k for k, v in extra_fields.items() if isinstance(v, Exception)
         ]
@@ -871,6 +896,7 @@ class Node(Matcher, ABC):
             stream.write(",\n")
 
     def _get_config(self):
+        """getter for config property"""
         props, params = {}, defaultdict(dict)
         for prop in self.interface:
             try:
@@ -883,22 +909,47 @@ class Node(Matcher, ABC):
         return {"interface": props, "cdict": dict(params)}
 
     def _get_n_threads(self):
+        """getter for n_threads property"""
         return self._n_threads
 
-    def _set_n_threads(self, n_threads):
+    def _set_n_threads(self, n_threads: int):
+        """setter for n_threads property"""
         self._n_threads = n_threads
         if self.exc is None:
             return
         self.exc._max_workers = n_threads
 
-    exc = None
-    inbox = None
+    exc: Optional[ThreadPoolExecutor] = None
+    """
+    shared thread pool for main loop, Sensor loops, some types of Actor 
+    execution, and TCP server io and select threads. Note that attached Actors 
+    and Sensors that launch threads are not required to launch them in this
+    object. Always None if Node not yet started.
+    """
+    inbox: Optional[Mailbox] = None
+    """Optional Mailbox for incoming protobuf Messages."""
     config = property(_get_config)
+    """
+    dict with items 'interface' and 'cdict', describing settable/gettable 
+    properties and configurable parameters respectively
+    """
     locked = property(_is_locked, _set_locked)
+    """is this Node locked?"""
     __started = False
-    threads = None
-    server = None
+    threads: Optional[dict[Hashable, Future]] = None
+    """
+    dict of currently-running or not-yet-cleaned threads running in this 
+    Node's `exc` pool. Always None if Node is not yet started.
+    """
+    server: Optional[TCPTalk] = None
+    """optional hostess.station.talkie.TCPTalk server."""
     server_events = None
     state = "stopped"
+    """Node state description"""
     _ackcheck: Optional[Callable] = None
+    """
+    optional function used as `Node.server`'s `ackcheck` argument; can be used
+    to implement response spooling, dispatching, etc.
+    """
     logfile: Path
+    """path to log file"""

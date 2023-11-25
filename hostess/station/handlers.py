@@ -1,22 +1,23 @@
-"""helper functions for actors."""
+"""shared helper functions for Station objects"""
 from __future__ import annotations
 
 import datetime as dt
 import os
 from pathlib import Path
-from typing import Optional, Union, Any, Mapping, Collection, Sequence, \
-    Callable
+from typing import (
+    Any, Callable, Collection, Mapping, Optional, Sequence, Union
+)
 
 from google.protobuf.message import Message
 
-import hostess.station.proto.station_pb2 as pro
 from hostess.station.messages import unpack_obj
+import hostess.station.proto.station_pb2 as pro
 from hostess.station.proto_utils import enum, m2d
 from hostess.subutils import (
-    make_watch_caches,
     defer,
-    watched_process,
     deferinto,
+    make_watch_caches,
+    watched_process,
 )
 from hostess.utilities import get_module
 
@@ -50,10 +51,11 @@ def make_function_call(action: pro.Action) -> tuple[dict[str, list], Callable]:
         action: hostess Action Message that specifies a function call.
 
     Returns:
-        * caches to capture the deferred call's stdout, stderr, and return
-            value
-        * a "deferred" version of the function call specified by `action`.
-            call it to actually perform the function call.
+        caches: dict of lists the deferred call will write its stdout, stderr,
+            and return values into
+        deferred: partially-evaluated and wrapped function constructed from
+            the function call specification in `action`. call it to actually
+            perform the action.
     """
     if action.func is None:
         raise TypeError("Can't actually do this without a function.")
@@ -93,9 +95,7 @@ def make_actiondict(action: pro.Action) -> dict[str, Any]:
 
     Returns:
         a dict initialized from basic identifying information in `action`,
-        intended to be used as a value of a `Node.actions` dict. a dict of
-        results / stdout / stderr caches, as produced by `make_watch_caches()`,
-        can also be legally added to this category of dict.
+            intended to be used as a value of a `Node.actions` dict.
     """
     return {
         "name": action.name,
@@ -113,6 +113,16 @@ def tail_file(
     """
     simple file-tail function for use in Sensors that watch a file.
 
+    Args:
+        position: byte offset from start of file at which to begin reading.
+            if None, start at the beginning of the file.
+        path: path to file. Typically partially evaluated into the function by
+            the Sensor, not explicilty passed.
+
+    Returns:
+        end: position of last read byte of file, or None if the file
+            doesn't exist.
+        lines: all lines of file between `position` and `end`.
     '"""
     if path is None:
         return position, []
@@ -135,7 +145,9 @@ def tail_file(
 def watch_dir(
     contents: list[str], *, path: Optional[Path] = None, **_
 ) -> tuple[Optional[list[str]], list[str]]:
-    """simple ls diff for use by Sensors that watch a directory."""
+    """
+    simple ls-like diff for use by Sensors intended that watch a directory.
+    """
     if path is None:
         return contents, []
     if not path.exists():
@@ -158,6 +170,11 @@ SKIPKEYS = frozenset(
         'config'
     }
 )
+"""
+keys of Node-internal data structures that we don't generally want to write 
+into logs, either because they often have huge values or because they're 
+generally redundant.
+"""
 
 
 def json_sanitize(
@@ -167,7 +184,25 @@ def json_sanitize(
     skipkeys: Collection[str] = SKIPKEYS,
     depth: int = 0,
     skip: bool = False
-):
+) -> Union[str, int, float, list[str], dict[str, Union[str, dict[str, str]]]]:
+    """
+    Attempt to make an object representable in JSON, with standardized
+    formatting conventions that include automated skipping, truncation, etc.
+    Primarily intended as a helper function for `flatten_for_json()`.
+
+    Args:
+        value: object to make representable
+        maxlen: maximum length of string representations of elements of
+            sanitized object
+        maxdepth: maximum depth to dig into nested objects.
+        skipkeys: keys or fields to omit from output.
+        depth: current dig depth. automatically incremented in recursive calls
+            to this function.
+        skip: if True, just return the literal string '<skipped>'
+
+    Returns:
+        JSON-sanitized version of `value`.
+    """
     if skip is True:
         return "<skipped>"
     if isinstance(value, Message):
@@ -200,8 +235,20 @@ def flatten_for_json(
     maxlen: int = 128,
     maxdepth: int = 3,
     skipkeys: Collection[str] = SKIPKEYS
-) -> dict:
-    """simple log-formatting function."""
+) -> dict[str, str]:
+    """
+    simple log-formatting function.
+
+    Args:
+        event: protobuf Message or dict to flatten
+        maxlen: maximum length for stringified values of flattened dict
+        maxdepth: maximum depth to dig into `event` before truncating
+        skipkeys: keys / Message field of `event` to ignore in logginc
+
+    Returns:
+         flattened version of `event` w/stringified values, possibly truncated,
+            ready to be passed to `json.dump()`.
+    """
     # TODO: if this ends up being unperformant with huge messages, do something
     if isinstance(event, Message):
         event = m2d(event)
