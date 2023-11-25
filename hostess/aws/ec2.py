@@ -600,6 +600,9 @@ class Instance:
                 or we have tried to connect `maxtries` times.
             maxtries: max number of times to attempt connection (5s delay in
                 between).
+
+        Returns:
+            API response if `return_response` is True; otherwise None.
         """
         response = self.instance_.start()
         self.update()
@@ -619,14 +622,27 @@ class Instance:
 
         Args:
             return_response: if True, return API response.
+
+        Return:
+            API response if `return_response` is True; otherwise None.
         """
         response = self.instance_.stop()
         self.update()
         if return_response is True:
             return response
 
-    def terminate(self, return_response=False):
-        """Terminate (aka delete) the instance."""
+    def terminate(self, return_response: bool = False) -> Optional[dict]:
+        """
+        Terminate (aka delete) the instance. The royal road to cloud cost
+        management. Please note that this action is permanent and cannot be
+        undone.
+
+        Args:
+            return_response: if True, return the API response.
+
+        Returns:
+            API response if `return_response` is True; otherwise None.
+        """
         response = self.instance_.terminate()
         self.update()
         if return_response is True:
@@ -666,7 +682,7 @@ class Instance:
 
     @connectwrap
     def read(self, source, *args, **kwargs):
-        """copy source file from instance into memory using scp."""
+        """copy source file from instance into memory over SSH."""
         buffer = io.BytesIO()
         self._ssh.get(source, buffer, *args, **kwargs)
         buffer.seek(0)
@@ -675,7 +691,7 @@ class Instance:
     @connectwrap
     def read_csv(self, source, encoding='utf-8', **csv_kwargs):
         """
-        reads csv-like file from remote host into pandas DataFrame using scp.
+        reads csv-like file from remote host into pandas DataFrame over SSH.
         """
         import pandas as pd
 
@@ -695,9 +711,7 @@ class Instance:
         else:
             pip = f"{self.conda_env(env)}/bin/pip"
         try:
-            result = self.command(
-                f"{pip} show package-name {package}"
-            ).stdout
+            result = self.command(f"{pip} show package-name {package}").stdout
             return re.search(r"Location:\s+(.*?)\n", result).group(1)
         except UnexpectedExit:
             raise OSError("pip show did not run successfully")
