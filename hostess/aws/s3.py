@@ -288,9 +288,8 @@ def get(
         config: optional transfer config
 
     Returns:
-        A tuple whose elements are:
-            1. the path, string, or buffer we wrote the object to
-            2. the S3 API response
+        outpath: the path, string, or buffer we wrote the object to
+        response: the S3 API response
     """
     # TODO: add more useful error messages for streams opened in text mode
     bucket = Bucket.bind(bucket, client, session)
@@ -339,9 +338,8 @@ def cp(
         config: optional transfer config
 
     Returns:
-        tuple whose elements are:
-            1. S3 URI of new copy
-            2. API response
+        uri: S3 URI of newly-created copy
+        response: API response
     """
     bucket = Bucket.bind(bucket, client, session)
     if config is None:

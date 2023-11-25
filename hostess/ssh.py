@@ -41,9 +41,8 @@ def open_tunnel(
         remote_port: port on remote end of tunnel
 
     Returns:
-        tuple whose elements are:
-            0: `Process` abstraction for the tunnel process
-            1: dict of metadata about the tunnel
+        tunnel_process: `Process` abstraction for the tunnel process
+        tunnel_metadata: dict of metadata about the tunnel
     """
 
     def target():
@@ -435,7 +434,7 @@ def jupyter_connect(
 
     Returns:
         structure containing results of tunneled notebook execution,
-        including a callable to terminate the Notebook
+            including a callable to terminate the Notebook
     """
     booktype = 'notebook' if lab is False else 'lab'
     if env is not None:

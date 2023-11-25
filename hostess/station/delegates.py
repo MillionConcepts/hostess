@@ -140,11 +140,10 @@ class Delegate(bases.Node):
             instruction_id: numerical identifier of Action to check.
 
         Returns:
-            tuple whose elements are:
-                0: None if the Action terminated successfully or hasn't yet
-                    terminated; the Exception the Action raised if it didn't
-                    terminate successfully.
-                1: True if the Action has terminated; False if not.
+            exception: None if the Action terminated successfully or hasn't yet
+                terminated; the Exception the Action raised if it didn't
+                terminate successfully.
+            done: True if the Action has terminated; False if not.
         """
         try:
             self.threads[f"Instruction_{instruction_id}"].result(0)

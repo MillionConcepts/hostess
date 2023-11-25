@@ -568,6 +568,7 @@ class RunCommand:
         non-standard calling conventions, like the ffmpeg command below.
 
         Examples:
+
             >>> cmd('ls')
             >>> cmd('cp -r /path/to/folder /path/to/other/folder')
             >>> cmd('ffmpeg -i first.mp4 -filter:v "crop=100:10:20:200" second.mp4')
