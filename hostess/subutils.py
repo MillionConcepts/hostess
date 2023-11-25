@@ -939,7 +939,10 @@ def piped(func: Callable, block: bool = True) -> Callable:
     return through_pipe
 
 
-def make_call_redirect(func, fork=False):
+def make_call_redirect(
+    func: Callable,
+    fork: bool = False
+) -> tuple[Callable, dict[str, Pipe]]:
     """
     the middle sibling of the piped() / make_call_redirect() /
     watched_process() family.
@@ -962,9 +965,10 @@ def make_call_redirect(func, fork=False):
             process when called.
 
     Returns:
-        * the modified function
-        * a dictionary of pipes the function will redirect its output to
-            (if and when it is ever called).
+        redirected_func: the modified function
+        pipes: a dict of `Pipe` objects `redirected_func` will redirect its
+            output to (if and when it is ever called). keys are "out"
+            (stdout), "err" (stderr), and "result" (return value).
     """
     r_here, r_there = Pipe()
     o_here, o_there = Pipe()
