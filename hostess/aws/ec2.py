@@ -365,7 +365,7 @@ class Instance:
         self.key, self.key_errstring = str(self.passed_key), None
 
     def _prep_connection(
-        self, *, lazy=True, maxtries: int = 5, delay: float = 1
+        self, *, lazy: bool = True, maxtries: int = 5, delay: float = 1
     ):
         """
         try to prep, and optionally establish, a SSH connection to the
@@ -375,7 +375,7 @@ class Instance:
         anyway by then, or should be).
 
         Args:
-            lazy: don'y establish the connection immediately;  wait until some
+            lazy: don't establish the connection immediately; wait until some
                 method needs it. other arguments do nothing if this is True.
             maxtries: maximum times to re-attempt failed connections
             delay: how many seconds to wait after subsequent attempts
