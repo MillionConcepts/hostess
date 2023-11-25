@@ -1,11 +1,11 @@
-"""utilities for interpreting and constructing specific Messages."""
+"""utilities for interpreting and constructing hostess protobuf Messages."""
 
 from __future__ import annotations
 
-import datetime as dt
 from ast import literal_eval
-from itertools import accumulate
+import datetime as dt
 from functools import cached_property, cache
+from itertools import accumulate
 import json
 from operator import add, attrgetter
 import random
@@ -21,9 +21,9 @@ from dustgoggles.structures import dig_for_values
 from google.protobuf.internal.well_known_types import Duration, Timestamp
 from google.protobuf.message import Message
 from google.protobuf.pyext._message import (
-    ScalarMapContainer,
     RepeatedCompositeContainer,
     RepeatedScalarContainer,
+    ScalarMapContainer,
 )
 from more_itertools import split_when, all_equal
 import numpy as np
@@ -32,22 +32,41 @@ from hostess.station.comm import make_comm
 from hostess.station.proto import station_pb2 as pro
 from hostess.station.proto_utils import (
     enum,
+    make_duration,
     make_timestamp,
     proto_formatdict,
-    make_duration,
 )
 from hostess.utilities import mb, yprint
 
 
 def byteorder() -> str:
-    """what is the system byteorder (as struct.Struct wants to hear it)"""
+    """
+    format system byteorder for inclusion in a struct.Struct format string.
+
+    Returns:
+        "<" on little-endian platforms, ">" on big-endian platforms.
+    """
     return "<" if sys.byteorder == "little" else ">"
 
 
-def scalarchar(scalar) -> tuple[str, Optional[str]]:
+def scalarchar(
+    scalar: Union[str, bytes, int, float, list, tuple, bool, None]
+) -> tuple[str, Optional[str]]:
     """
-    what is the correct struct code for this object? also return a description
-    of the 'string' type if it is str, bytes, or NoneType
+    Determine an appropriate format code and, if necessary, byte string type
+    identifier for a 'scalar' object, to be used as a component of a
+    struct.Struct format string.
+
+    Args:
+        scalar: object for which to determine code / identifier
+
+    Returns:
+        code: format code for `scalar` suitable for inclusion in struct string
+        string_identifier: "none" if scalar is `None`; "str" if scalar is a
+            `str`; "bytes" if scalar is a `bytes`; `None` otherwise.
+
+    Raises:
+        TypeError if `scalar` is not actually a scalar (as defined here).
     """
     if not isinstance(scalar, (str, bytes, int, float, bool, NoneType)):
         raise TypeError(f"{type(scalar)} is not supported by scalarchar.")
@@ -60,13 +79,33 @@ def scalarchar(scalar) -> tuple[str, Optional[str]]:
 
 def obj2scanf(obj) -> tuple[str, Optional[str]]:
     """
-    construct a struct / scanf string for an object, along with a description
-    of the 'string' type if it is str, bytes, or None. can handle most basic
-    data types, as well as unmixed lists or tuples of the same, although it's
-    silly to use it on lists or tuples containing mixed data types or many
-    distinct strings/bytestrings -- it would be easier just to pickle them
-    or dump them as JSON, because the struct string will be long enough to
-    cancel out any benefits of the terser binary packing.
+    construct a struct / scanf format string for `obj`, along with a code for
+    the 'string' type if it is `str`, `bytes`, or `NoneType` (struct strings
+    represent all these types with 's', so an additional code is required for
+    recipients to reconstruct them as the correct Python type).
+
+    This function accepts most primitive Python types, as well as lists or
+    tuples of primitive types. Does not accept sequences of mixed 'string'
+    types.
+
+    Note that this function is generally not useful for lists or tuples
+    containing mixed data types or many distinct strings/bytestrings. It will
+    in general be more efficient to serialize them some other way, because the
+    struct string itself will often be long enough to negate the benefits of
+    terse binary packing.
+
+    Args:
+        obj: object for which to construct format string
+
+    Returns:
+        format_string: format string for `obj`
+        string_code: "none" if `obj` is `None` or a `list` / `tuple` of `None`;
+            "str" if `obj` is a `str` or a `list` '/ `tuple` of `str`;
+            "bytes" if scalar is a `bytes` or a `list` / `tuple` of `bytes`;
+            `None` otherwise.
+
+    Raises:
+        TypeError if `obj2scanf()` does not know how to handle `obj`'s type.
     """
     if not isinstance(
         obj, (str, bytes, int, float, list, tuple, bool, NoneType)
@@ -85,8 +124,17 @@ def obj2scanf(obj) -> tuple[str, Optional[str]]:
 
 def default_arg_packing(kwargs: dict[str, Any]) -> list[pro.PythonObject]:
     """
-    pack a kwarg dict into a list of pro.PythonObjects to be inserted into a
-    Message.
+    convert a dict that represents kwargs for a function call into a list of
+    pro.PythonObjects.
+
+    Args:
+        kwargs: `dict` containing keyword arguments for a function call, in the
+            same format you would use if you were to locally execute
+            `target_function(**kwargs)`
+
+    Returns:
+        list of pro.PythonObject Messages giving names and serialized values
+            of `kwargs`
     """
     interp = []
     for k, v in kwargs.items():
@@ -99,7 +147,20 @@ def default_arg_packing(kwargs: dict[str, Any]) -> list[pro.PythonObject]:
 def pack_obj(obj: Any, name: str = "") -> pro.PythonObject:
     """
     default function for serializing an in-memory object as a pro.PythonObject
-    Message.
+    Message. If `obj` is "scalar", serialize it using simple struct formatting;
+    if it is a `np.ndarray` of non-object type, use its `ndarray.tobytes()`
+    representation; otherwise, serialize it using `dill`. This is a good
+    function for general-purpose object passing, and is used extensively in
+    internal Node behaviors. However, it may in some cases be more efficient
+    to implement serialization functions optimized for specific data formats.
+
+    Args:
+        obj: object to serialize as a `pro.PythonObject` Message.
+        name: optional name for `obj` in Message; useful if you intend the
+            recipient to pass `obj` as a keyword argument to a function.
+
+    Returns:
+        `obj` serialized as a `pro.PythonObject`.
     """
     if isinstance(obj, pro.PythonObject):
         return obj
@@ -130,8 +191,23 @@ def pack_obj(obj: Any, name: str = "") -> pro.PythonObject:
 
 
 # TODO: optional base64 encoding for some channels
-def make_action(description=None, **fields):
-    """construct a default pro.Action message"""
+def make_action(description: Optional[dict[str, str]] = None, **fields):
+    """
+    construct a default pro.Action message.
+
+    Args:
+        description: optional dict to use as "description" field of Action.
+            For terse task descriptions to agents that may only need to hear
+            a single name or number to know what to do.
+        **fields: kwargs to interpret as fields of Action Message. Must
+            include "call" if description is None.
+
+    Returns:
+        a pro.Action Message.
+
+    Raises:
+        TypeError if you specified neither a description or a call.
+    """
     if fields.get("id") is None:
         fields["id"] = random.randint(int(1e7), int(1e8))
     action = pro.Action(description=description, **fields)
@@ -148,8 +224,7 @@ def make_function_call_action(
     **action_fields,
 ) -> pro.Action:
     """
-    make an Action describing a function call task to be inserted into an
-    Instruction.
+    make a pro.Action Message specifying a Python function call.
     """
     if "name" not in action_fields:
         action_fields["name"] = func
@@ -169,8 +244,24 @@ def update_instruction_timestamp(instruction: pro.Instruction):
     instruction.MergeFrom(pro.Instruction(time=make_timestamp()))
 
 
-def make_instruction(instructiontype, **kwargs) -> pro.Instruction:
-    """make an Instruction Message."""
+def make_instruction(instructiontype: str, **kwargs) -> pro.Instruction:
+    """
+    Standardized factory function for Instruction Messages. This is generally
+    the most convenient and reliable way to create an Instruction for a
+    Station to send to a Delegate. `Station` uses it by default to create
+    'configure' and 'shutdown'-type Instructions, and it is an essential
+    component of most `InstructionFromInfo.instruction_maker` functions.
+
+    Automatically adds a timestamp and a random id to the Instruction.
+
+    Args:
+        instructiontype: type of instruction to make, typically 'do',
+            'configure', or 'stop'.
+        kwargs: Message fields and values to include in Instruction.
+
+    Returns:
+        a hostess Instruction protobuf Message.
+    """
     if kwargs.get("id") is None:
         kwargs["id"] = random.randint(int(1e7), int(1e8))
     instruction = pro.Instruction(
@@ -182,7 +273,19 @@ def make_instruction(instructiontype, **kwargs) -> pro.Instruction:
 
 
 def unpack_obj(obj: pro.PythonObject) -> Any:
-    """default deserialization function for pro.PythonObject Messages"""
+    """
+    Default deserialization function for pro.PythonObject Messages. Used
+    extensively in internal Node behaviors and by stock Actors. Good for
+    general-purpose object passing, although it may in some cases be more
+    efficient to implement fancier deserialization optimized for a specific
+    application's data models or formats.
+
+    Args:
+        obj: hostess PythonObject Message.
+
+    Returns:
+        object deserialized from `obj`.
+    """
     if enum(obj, "compression") not in ("nocompression", None):
         # TODO: handle inline compression
         raise NotImplementedError
@@ -210,8 +313,21 @@ def unpack_obj(obj: pro.PythonObject) -> Any:
 
 def task_msg(actiondict: dict, steps=None) -> pro.TaskReport:
     """
-    construct a TaskReport from an action dict (like the ones produced by
-    watched_process and derivatives) to add to an Update.
+    construct a hostess TaskReport Message from an actiondict (a `dict` of
+    the format produced by `make_actiondict()` and expected by `Delegates` as
+    values of their `actions` attribute). Delegates call this function to
+    help construct Updates to a Station describing the results of a completed
+    task (whether successful or failed).
+
+    Args:
+        actiondict: dict containing data from and metadata about a completed
+            task (see `handlers.make_actiondict()` for format).
+        steps: Placeholder for 'pipeline' behavior. Not currently implemented;
+            must always be None.
+
+    Returns:
+        A hostess TaskReport that can be used as the "completion"
+            field of a hostess Update.
     """
     if steps is not None:
         raise NotImplementedError
@@ -229,26 +345,36 @@ def task_msg(actiondict: dict, steps=None) -> pro.TaskReport:
     )
 
 
-def event_body(event):
-    return event["content"]["body"]
-
-
 class Msg:
     """
-    helper class for hostess proto Messages. designed to be 'immutable';
-    users should construct a new Msg rather than modifying one inplace.
+    Helper class for hostess protobuf Messages. Allows hostess classes to
+    (usually) abstract away protobuf-specific qualities of Messages. Also
+    Improves efficiency of internal  Node operations by caching encode/decode
+    operations.
+
+    Although Msg is not _actually_ immutable, it should be treated as if it
+    were immutable due to its aggressive caches. If the 'content' of a Msg
+    needs to change, you should always construct a new one rather than
+    modifying it inplace.
     """
 
-    def __init__(self, message):
+    def __init__(self, message: Message):
+        """
+        Args:
+            message: protobuf Message, preferably a hostess-specific protobuf
+                Message.
+        """
         self.message, self.sent = message, False
         self.size = self.message.ByteSize()
 
     @cached_property
     def comm(self):
+        """self.message serialized into a hostess comm."""
         return make_comm(self.message)
 
     @cache
     def unpack(self, field=None):
+        """"""
         if field is None:
             return unpack_message(self.message)
         try:
@@ -334,7 +460,7 @@ class Mailbox:
         elif isinstance(thing, Msg):
             return thing
         # 'inbox' case
-        return Msg(event_body(thing))
+        return Msg(thing["content"]["body"])
 
     def __getitem__(self, key):
         return self.messages[key]

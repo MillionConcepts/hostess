@@ -837,7 +837,7 @@ class Viewer:
 
 
 def defer(func: Callable, *args: Any, **kwargs: Any) -> Callable[[], Any]:
-    """"
+    """
     Defer a function call.
 
     Args:
