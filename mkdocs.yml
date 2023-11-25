@@ -9,7 +9,7 @@ plugins:
       python:
         options:
           filters: []
-          show_signature_annotations: true
+          show_signature_annotations: false
 
 nav:
   - 'index.md'
