@@ -7,7 +7,8 @@ import random
 import sys
 import time
 from types import MappingProxyType as MPt, ModuleType
-from typing import Union, Literal, Optional, Type, Any, Mapping
+from typing import Union, Literal, Optional, Type, Any, Mapping, Hashable, \
+    Sequence
 
 from dustgoggles.dynamic import exc_report
 from dustgoggles.structures import rmerge
@@ -274,9 +275,13 @@ class Delegate(bases.Node):
             while self.threads['exit_report'].running():
                 time.sleep(0.1)
 
-    def _send_exit_report(self, exception=None):
+    def _send_exit_report(self, exception: Optional[Exception] = None):
         """
         send Update to Station informing it that Delegate is exiting (and why).
+
+        Args:
+            exception: unhandled Exception that caused Delegate's main loop
+                to exit. None on intentional shutdown.
         """
         self.state = "crashed" if exception is not None else "shutdown"
         msg = self._base_message(reason='exiting')
@@ -311,21 +316,28 @@ class Delegate(bases.Node):
         self.talk_to_station(self._base_message(reason="heartbeat"))
         self.reset_update_timer()
 
-    def _match_task_instruction(self, event) -> list[bases.Actor]:
+    def _match_task_instruction(
+        self, instruction: pro.Instruction
+    ) -> list[bases.Actor]:
         """
         wrapper for self.match that specifically checks for actors that can
         execute a task described in an Instruction.
+
+        Args:
+            instruction: Instruction containing a task.
+
+        Returns:
+            list of this Delegate's Actors that match the Instruction.
+
+        Raises:
+            NoActorForEvent if none of this Delegate's Actors match.
         """
         try:
-            return self.match(event, "action")
+            return self.match(instruction, "action")
         except StopIteration:
             raise bases.NoActorForEvent(
-                str(self.explain_match(event, "action"))
+                str(self.explain_match(instruction, "action"))
             )
-
-    def _do_actions(self, actions, instruction, key, noid):
-        for action in actions:
-            action.execute(self, instruction, key=key, noid=noid)
 
     def _configure_from_instruction(self, instruction: Message):
         cp_for_log, cd_for_log = {}, {}
@@ -410,18 +422,38 @@ class Delegate(bases.Node):
             # noinspection PyTypeChecker
             self._reply_to_instruction(instruction, status, err)
 
-    def execute_do_instruction(self, instruction: pro.Instruction):
+    def _execute_task_with_actors(
+        self,
+        actors: Sequence[bases.Actor],
+        instruction: pro.Instruction,
+        key: Optional[Hashable],
+        noid: bool
+    ):
         """
-        execute a "do" Instruction (an Instruction specifying an action).
-        typically called from the _handle_instruction() workflow.
+        helper function for execute_do_instruction(). run each matching Actor
+        in sequence.
 
         Args:
-            instruction: Instruction to execute.
+            actors: matching actors (output of _match_task_instruction())
+            instruction: "do" Instruction
+            key: instruction id or randomly-generated key
+            noid: True if the instruction didn't come with an id (should never
+                happen), False normally
         """
-        actions = self._match_task_instruction(instruction)
-        if actions is None:
-            # return
-            pass
+        for actor in actors:
+            actor.execute(self, instruction, key=key, noid=noid)
+
+    def execute_do_instruction(self, instruction: pro.Instruction):
+        """
+        identify matching Actors and execute a "do" Instruction (an
+        Instruction specifying an action). typically called from the
+        _handle_instruction() workflow.
+
+        Args:
+            instruction: Instruction to match and execute.
+        """
+        # this will raise NoActorForEvent if none match
+        actors = self._match_task_instruction(instruction)
         if instruction.id is None:
             # this should really never happen, but...
             key, noid, noid_infix = (
@@ -434,7 +466,7 @@ class Delegate(bases.Node):
         threadname = f"Instruction_{noid_infix}{key}"
         # TODO: this could get sticky for the multi-step case
         self.threads[threadname] = self.exc.submit(
-            self._do_actions, actions, instruction, key, noid
+            self._execute_task_with_actors, actors, instruction, key, noid
         )
 
     def _trysend(self, message: Message):
@@ -471,8 +503,20 @@ class Delegate(bases.Node):
             self.locked = False
         return response
 
-    def _interpret_response(self, response):
-        """interpret a response from the Station."""
+    def _interpret_response(self, response: bytes) -> str:
+        """
+        interpret a response from the Station. If it contains an Instruction,
+        append it to this Delegate's instruction_queue.
+
+        Args:
+            response: bytes containing a hostess com received from the Station.
+
+        Returns:
+            "err" if the comm failed to decode properly, "ok" if the comm
+                decoded properly but did not contain an Instruction (like a
+                simple acknowledgment comm), "instruction" if the comm
+                contained an Instruction.
+        """
         decoded = read_comm(response)
         if isinstance(decoded, dict):
             if decoded['err']:
@@ -484,8 +528,20 @@ class Delegate(bases.Node):
             return "instruction"
         return "ok"
 
-    def talk_to_station(self, message):
-        """send a Message to the Station and queue any returned Instruction."""
+    def talk_to_station(self, message: pro.Message) -> Union[str, bytes]:
+        """
+        send a Message to the Station and queue any returned Instruction.
+
+        Args:
+            message: hostess protobuf Message to send to the Station
+
+        Returns:
+             status code for exchange: "ok" if successful but no Instruction
+                received (simple acknowledgement comm received);
+                "timeout" or "connection refused" for failed connections;
+                "err" for receipt of bytes we could not decode as a comm;
+                "instruction" if successful and comm contained an Instruction
+        """
         response = self._trysend(message)
         if response not in ('timeout', 'connection refused'):
             response = self._interpret_response(response)
@@ -495,16 +551,30 @@ class Delegate(bases.Node):
             )
         return response
 
-    def _running_actions_message(self):
+    def _running_actions_message(self) -> list[pro.TaskReport]:
+        """
+        helper function for constructing Updates.
+
+        Returns:
+            list of TaskReport Messages, one for each currently-running action.
+        """
         running = filter(
             lambda a: a.get('status') == 'running', self.actions.values()
         )
         return list(map(task_msg, running))
 
-    def _base_message(self, **fields):
+    def _base_message(self, **fields) -> pro.Update:
         """
-        construct a dict with the basic components of an Update message --
-        time, the delegate's ID, etc.
+        construct a basic Update message.
+
+        Args:
+            **fields: dict of Update field names + values to add to the base
+                Update.
+
+        Returns:
+            a pro.Update message suitable for sending to the Station. Contains
+                delegate id, timestamp, delegate state, running actions, and
+                anything passed in **fields.
         """
         # noinspection PyProtectedMember
         return pro.Update(
@@ -522,11 +592,20 @@ class Delegate(bases.Node):
             **fields
         )
 
-    # TODO: why are we doing part of this here and part in _base_message?
-    def _insert_state(self, message: Message):
-        """insert the Delegate's current state information into a Message."""
-        if not message.HasField("state"):
-            return
+    # TODO: untangle this + _base_message() workflow
+    def _insert_state(self, message: pro.Update) -> pro.Update:
+        """
+        insert the Delegate's current state information into an Update.
+
+        Called immediately before every attempt to send an Update to the
+        Station.
+
+        Args:
+            message: Update to update.
+
+        Returns:
+            the updated Update.
+        """
         state = pro.DelegateState(
             interface=pack_obj(self.config['interface']),
             cdict=pack_obj(self.config['cdict']),
@@ -539,11 +618,20 @@ class Delegate(bases.Node):
         return message
 
     def _reply_to_instruction(
-        self, instruction, status: str, err: Optional[Any] = None
+        self,
+        instruction: pro.Instruction,
+        status: Literal["bad_request", "wilco"],
+        err: Optional[Any] = None
     ):
         """
         send a reply Update to an Instruction informing the Station that we
         will or won't do the thing.
+
+        Args:
+            instruction: received Instruction
+            status: "wilco" if we'll do it, "bad_request" if we won't/can't
+            err: Object -- a code or Exception, usually -- explaining a
+                "bad_request" status. None if status is "wilco".
         """
         msg = self._base_message()
         msg.MergeFrom(pro.Update(reason=status, instruction_id=instruction.id))
@@ -553,8 +641,20 @@ class Delegate(bases.Node):
         self.talk_to_station(msg)
 
     def add_actionable_event(
-        self, event, category: Optional[Union[str, Sensor]] = None
+        self,
+        event: Any,
+        category: Optional[Union[str, Sensor]] = None
     ):
+        """
+        Queue an actionable event, usually received from a Sensor, for
+        transmission to the Station. This method is most often called by an
+        Actor.
+
+        Args:
+            event: object we'd like Station to know about
+            category: optional label for type of event or originating Sensor,
+                used to update self.infocount
+        """
         if isinstance(category, Sensor):
             category = category.name
         if category is not None:
@@ -567,8 +667,8 @@ class Delegate(bases.Node):
 
 class HeadlessDelegate(Delegate):
     """
-    simple Delegate implementation that just does stuff on its own. right now
-    mostly for testing/prototyping but could easily be useful.
+    simple Delegate implementation that just does stuff on its own. mostly for
+    testing/prototyping but could easily be useful.
     """
 
     def __init__(self, *args, **kwargs):
