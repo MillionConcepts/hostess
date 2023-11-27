@@ -7,9 +7,10 @@ import os
 from pathlib import Path
 import time
 from typing import (
-    Any, Callable, Collection, Hashable, Mapping, Optional, Union
+    Any, Callable, Collection, Hashable, Mapping, Optional, Union, Literal, IO
 )
 
+import fabric.transfer
 from dustgoggles.func import zero, filtern
 from dustgoggles.structures import listify
 from fabric import Connection
@@ -142,29 +143,112 @@ class SSH(RunCommand):
         ssh.__init__(conn=conn, key=key)
         return ssh
 
-    def get(self, *args, **kwargs):
-        """copy a file from the remote host."""
-        return self.conn.get(*args, **kwargs)
-
-    def put(self, *args, **kwargs):
-        """copy a file to the remote host."""
-        return self.conn.put(*args, **kwargs)
-
-    def read_csv(self, fname: str, **csv_kwargs) -> pd.DataFrame:
+    def put(
+        self,
+        source: Union[str, Path, IO],
+        target: Union[str, Path],
+        *args,
+        literal_str: bool = False,
+        **kwargs
+    ) -> dict:
         """
-        read a CSV file from the remote host into a pandas DataFrame.
+        write local file or object to target file on remote host.
 
         Args:
-            fname: path to CSV file on remote host.
-            csv_kwargs: kwargs to pass to pd.read_csv.
+            source: filelike object or path to local file
+            target: write path on remote host
+            args: additional arguments to pass to underlying put method
+            literal_str: if True and `source` is a `str`, write `source`
+                into `target` as text rather than interpreting `source` as a
+                path
+            kwargs: additional kwargs to pass to underlying put command
 
         Returns:
-            DataFrame created from contents of remote CSV file.
+            dict giving transfer metadata: local, remote, host, and port
         """
-        buffer = io.StringIO()
-        buffer.write(self.get(fname).decode())
+        if isinstance(source, str) and (literal_str is True):
+            source = io.StringIO(source)
+        elif not isinstance(source, (str, Path, io.StringIO, io.BytesIO)):
+            raise TypeError("Source must be a string, Path, or IO.")
+        return unpack_transfer_result(
+            self.conn.put(source, target, *args, **kwargs)
+        )
+
+    def get(
+        self,
+        source: Union[str, Path],
+        target: Union[str, Path, IO],
+        *args,
+        **kwargs
+    ) -> dict:
+        """
+        copy file from remote to local.
+
+        Args:
+            source: path to file on remote host
+            target: path to local file, or a filelike object (such as
+                io.BytesIO)
+            *args: args to pass to underlying get method
+            **kwargs: kwargs to pass to underlying get method
+
+        Returns:
+            dict giving transfer metadata: local, remote, host, and port
+        """
+        return unpack_transfer_result(
+            self.conn.get(source, target, *args, **kwargs)
+        )
+
+    def read(
+        self,
+        source: str,
+        mode: Literal['r', 'rb'] = 'r',
+        encoding: str = 'utf-8',
+        as_buffer: bool = False
+    ) -> Union[io.BytesIO, io.StringIO, bytes, str]:
+        """
+        read a file from the remote host directly into memory.
+
+        Args:
+            source: path to file on remote host.
+            mode: 'r' to read file as text; 'rb' to read file as bytes
+            encoding: encoding for text, used only if `mode` is 'r'
+            as_buffer: if True, return BytesIO/StringIO; if False, return
+                bytes/str
+
+        Returns:
+            Buffer containing contents of remote file
+        """
+        if mode not in ('r', 'rb'):
+            raise TypeError("mode must be 'r' or 'rb'")
+        buffer = io.BytesIO()
+        self.get(source, buffer)
         buffer.seek(0)
-        return pd.read_csv(buffer, **csv_kwargs)
+        if mode == 'r':
+            stringbuf = io.StringIO()
+            stringbuf.write(buffer.read().decode(encoding))
+            stringbuf.seek(0)
+            buffer = stringbuf
+        if as_buffer is True:
+            return buffer
+        return buffer.read()
+
+    def read_csv(
+        self, source: str, encoding='utf-8', **csv_kwargs
+    ) -> pd.DataFrame:
+        """
+        read a CSV-like file from the remote host into a pandas DataFrame.
+
+        Args:
+            source: path to CSV-like file on remote host
+            encoding: encoding for text
+            csv_kwargs: kwargs to pass to pd.read_csv
+
+        Returns:
+            DataFrame created from contents of remote CSV file
+        """
+        return pd.read_csv(
+            self.read(source, 'r', encoding, True), **csv_kwargs
+        )
 
     def tunnel(
         self,
@@ -302,6 +386,9 @@ def find_conda_env(cmd: RunCommand, env: str = None) -> str:
 
     Returns:
         absolute path to root directory of conda environment.
+
+    Raises:
+        FileNotFoundError if environment cannot be found.
     """
     env = "base" if env is None else env
     suffix = f"/envs/{env}" if env != "base" else ""
@@ -477,18 +564,42 @@ def find_ssh_key(
             in hostess.config.GENERAL_DEFAULTS['secrets_folders']
 
     Returns:
-        path to keyfile, or None if not found.
+        path to keyfile
+
+    Raises:
+        FileNotFoundError, if no key found
     """
+    checked = []
     if paths is None:
         paths = list(GENERAL_DEFAULTS["secrets_folders"]) + [os.getcwd()]
     for directory in filter(lambda p: p.exists(), map(Path, listify(paths))):
         # TODO: public key option
-        matching_private_keys = filter(
-            lambda x: "private key" in Magic().from_file(x),
-            filter(lambda x: keyname in x.name, Path(directory).iterdir()),
-        )
         try:
+            matching_private_keys = filter(
+                lambda x: "private key" in Magic().from_file(x),
+                filter(lambda x: keyname in x.name, Path(directory).iterdir()),
+            )
             return next(matching_private_keys)
         except StopIteration:
-            continue
-    return None
+            checked.append(f"{directory}")
+        except PermissionError:
+            checked.append(f"(permission denied) {directory}")
+    raise FileNotFoundError(f"Looked in: {'; '.join(checked)}")
+
+
+def unpack_transfer_result(result: fabric.transfer.Result) -> dict:
+    """
+    summarize a fabric transfer Result.
+
+    Args:
+        result: Result of a get, put, or similar SSH operation.
+
+    Returns:
+        dict giving local and remote transfer targets, hostname, and port.
+    """
+    return {
+        'local': result.local,
+        'remote': result.remote,
+        'host': result.connection.host,
+        'port': result.connection.port
+    }

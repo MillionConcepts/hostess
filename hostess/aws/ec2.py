@@ -5,6 +5,7 @@ from functools import cache, partial, wraps
 import io
 from itertools import chain
 import os
+from multiprocessing import Process
 from pathlib import Path
 import pickle
 from random import choices
@@ -19,13 +20,14 @@ from typing import (
     MutableMapping,
     Optional,
     Sequence,
-    Union, IO
+    Union, IO, Any
 )
 
 import boto3.resources.base
 import botocore.client
 
 import botocore.exceptions
+import fabric.transfer
 from cytoolz.curried import get
 import dateutil.parser as dtp
 from dustgoggles.func import gmap, zero
@@ -47,7 +49,8 @@ from hostess.aws.utilities import (
     tag_dict,
     tagfilter, _check_cached_results, _clear_cached_results,
 )
-from hostess.caller import generic_python_endpoint
+from hostess.caller import generic_python_endpoint, CallerCompressionType, \
+    CallerSerializationType, CallerUnpackingOperator
 from hostess.config import EC2_DEFAULTS, GENERAL_DEFAULTS
 from hostess.ssh import (
     find_ssh_key, find_conda_env, jupyter_connect, NotebookConnection, SSH
@@ -58,6 +61,11 @@ from hostess.utilities import (
     my_external_ip,
     timeout_factory,
 )
+
+InstanceState = Literal[
+    "running", "stopped", "terminated", "stopping", "pending", "shutting-down"
+]
+"""valid EC2 instance state names"""
 
 InstanceIdentifier = str
 """
@@ -71,6 +79,10 @@ InstanceDescription = dict[str, Union[dict, str]]
 concise version of an EC2 API Instance data structure 
 (see https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_Instance.html)
 """
+
+
+class NoKeyError(OSError):
+    """we're trying to do things over SSH, but can't find a valid keyfile."""
 
 
 def connectwrap(func):
@@ -345,14 +357,15 @@ class Instance:
         if self.key is not None:
             return
         if self.passed_key is None:
-            found = find_ssh_key(self.instance_.key_name)
-            if found is None:
+            try:
+                found = find_ssh_key(self.instance_.key_name)
+            except FileNotFoundError as fe:
                 self.key_errstring = (
                     f"Couldn't find a keyfile for the instance. The keyfile "
                     f"may not be in the expected path, or its filename might "
                     f"not match the AWS key name ({self.instance_.key_name}). "
                     f"Try explicitly specifying the path by setting the .key "
-                    f"attribute or passing the key= argument."
+                    f"attribute or passing the key= argument. {fe}"
                 )
             else:
                 self.key, self.key_errstring = str(found), None
@@ -383,22 +396,29 @@ class Instance:
         if self.is_connected:  # nothing to do
             return
         self._maybe_find_key()
+        if self.key_errstring is not None:
+            # we want to raise this error immediately
+            raise NoKeyError(self.key_errstring)
         self._update_ssh_info()
         if self._ssh is None:
             self._ssh = SSH.connect(self.ip, self.uname, self.key)
         if lazy is True:
             return
+        connection_error = None
         for attempt in range(maxtries):
             try:
                 self._ssh.conn.open()
                 return
-            except (AttributeError, SSHException, NoValidConnectionsError):
+            except (
+                AttributeError, SSHException, NoValidConnectionsError
+            ) as ce:
+                connection_error = ce
                 time.sleep(delay)
                 self.update()
         raise ConnectionError(
-            "Unable to establish SSH connection to instance. It may not yet "
-            "be ready to accept SSH connections, or something might "
-            "be wrong with configuration."
+            f"Unable to establish SSH connection to instance. It may not yet "
+            f"be ready to accept SSH connections, or something might be wrong "
+            f"with configuration. Reported error: {connection_error}"
         )
 
     def _check_unready(self) -> Union[str, bool]:
@@ -656,66 +676,136 @@ class Instance:
         *args,
         literal_str: bool = False,
         **kwargs
-    ):
+    ) -> dict:
         """
-        write local file or object over SSH to target file on instance.
+        write local file or object to target file on instance.
 
         Args:
-            source: filelike object or path to file
+            source: filelike object or path to local file
             target: write path on instance
-            args: additional arguments to pass to underlying put command
+            args: additional arguments to pass to underlying put method
             literal_str: if True and `source` is a `str`, write `source`
                 into `target` as text rather than interpreting `source` as a
                 path
             kwargs: additional kwargs to pass to underlying put command
+
+        Returns:
+            dict giving transfer metadata: local, remote, host, and port
         """
-        if isinstance(source, str) and (literal_str is True):
-            source = io.StringIO(source)
-        elif not isinstance(source, (str, Path, io.StringIO, io.BytesIO)):
-            raise TypeError("Object must be a string, Path, or filelike.")
-        return self._ssh.put(source, target, *args, **kwargs)
+        return self._ssh.put(
+            source, target, *args, literal_str=literal_str, **kwargs
+        )
 
     @connectwrap
-    def get(self, source, target, *args, **kwargs):
-        """copy source file from instance to local target file with scp."""
+    def get(
+        self,
+        source: Union[str, Path],
+        target: Union[str, Path, IO],
+        *args,
+        **kwargs
+    ) -> dict:
+        """
+        copy file from instance to local.
+
+        Args:
+            source: path to file on instance
+            target: path to local file, or a filelike object (such as
+                io.BytesIO)
+            *args: args to pass to underlying get method
+            **kwargs: kwargs to pass to underlying get method
+
+        Returns:
+            dict giving transfer metadata: local, remote, host, and port
+        """
         return self._ssh.get(source, target, *args, **kwargs)
 
     @connectwrap
-    def read(self, source, *args, **kwargs):
-        """copy source file from instance into memory over SSH."""
-        buffer = io.BytesIO()
-        self._ssh.get(source, buffer, *args, **kwargs)
-        buffer.seek(0)
-        return buffer
+    def read(
+        self,
+        source,
+        mode: Literal['r', 'rb'] = 'r',
+        encoding='utf-8'
+    ) -> Union[io.BytesIO, io.StringIO]:
+        """
+        read a file from the instance directly into memory.
+
+        Args:
+            source: path to file on instance
+            mode: 'r' to read file as text; 'rb' to read file as bytes
+            encoding: encoding for text, used only if `mode` is 'r'
+
+        Returns:
+            Buffer containing contents of remote file
+        """
+        return self._ssh.read(source, mode, encoding)
 
     @connectwrap
     def read_csv(self, source, encoding='utf-8', **csv_kwargs):
         """
-        reads csv-like file from remote host into pandas DataFrame over SSH.
-        """
-        import pandas as pd
+        read a CSV-like file from the instance into a pandas DataFrame.
 
-        buffer = io.StringIO()
-        buffer.write(self.read(source).read().decode(encoding))
-        buffer.seek(0)
-        return pd.read_csv(buffer, **csv_kwargs)
+        Args:
+            source: path to CSV-like file on instance
+            encoding: encoding for text
+            csv_kwargs: kwargs to pass to pd.read_csv
+
+        Returns:
+            DataFrame created from contents of remote CSV file
+        """
+        return self._ssh.read_csv(source, encoding, csv_kwargs)
 
     @cache
-    def conda_env(self, env):
+    def conda_env(self, env: str = "base") -> str:
+        """
+        Find the root directory of a named conda environment on the instance.
+
+        Args:
+            env: name of conda environment
+
+        Returns:
+            absolute path to root directory of conda environment.
+
+        Raises:
+            FileNotFoundError if environment cannot be found.
+        """
         return find_conda_env(self._ssh, env)
 
     @cache
-    def find_package(self, package, env=None):
+    @connectwrap
+    def find_package(self, package: str, env: Optional[str] = None) -> str:
+        """
+        Find the location of an installed Python package on the instance using
+        `pip show`.
+
+        Args:
+            package: name of package (e.g. 'requests')
+            env: optional name of conda environment. If None, uses whatever
+                `pip` is on the remote user's $PATH, if any.
+
+        Returns:
+            Absolute path to parent directory of package (e.g.
+                "/home/ubuntu/miniforge3/lib/python3.12/site-packages")
+
+        Raises:
+            OSError if unable to execute `pip show`; FileNotFoundError if
+                package doesn't appear to be installed
+        """
         if env is None:
             pip = "pip"
         else:
             pip = f"{self.conda_env(env)}/bin/pip"
         try:
-            result = self.command(f"{pip} show package-name {package}").stdout
-            return re.search(r"Location:\s+(.*?)\n", result).group(1)
-        except UnexpectedExit:
-            raise OSError("pip show did not run successfully")
-        except (AttributeError, IndexError):
+            result = self.command(
+                f"{pip} show {package}", _wait=True
+            )
+            if len(result.stderr) > 0:
+                raise OSError(
+                    f"pip show did not run successfully: {result.stderr[0]}"
+                )
+            return re.search(
+                r"Location:\s+(.*?)\n", ''.join(result.stdout)
+            ).group(1)
+        except AttributeError:
             raise FileNotFoundError("package not found")
 
     def compile_env(self):
@@ -723,75 +813,155 @@ class Instance:
         pass
 
     def update(self):
-        """Update locally available information about the instance."""
+        """Refresh information about the instance's state and ip address."""
         self.instance_.load()
         self.state = self.instance_.state["Name"]
         self.ip = getattr(self.instance_, f"{self.address_type}_ip_address")
 
-    def wait_until(self, state):
-        """Pause execution until the instance state is met.
-        Will update locally available information."""
-        assert state in [
-            "running",
-            "stopped",
-            "terminated",  # likely useful
-            "stopping",
-            "pending",
-            "shutting-down",
-        ]  # unlikely
+    def wait_until(self, state: Literal[InstanceState], timeout: float = 65):
+        """
+        Pause execution until the instance reaches the specified state.
+        Automatically updates `state` and `ip` attributes.
+
+        Args:
+            state: name of target instance state
+            timeout: how long, in seconds, to wait before timing out
+        """
+
+        # noinspection PyUnresolvedReferences
+        assert state in InstanceState.__args__
+        waiting, _ = timeout_factory(timeout=timeout)
         while self.state != state:
+            waiting()
             self.update()
-            continue
 
-    def wait_until_running(self):
-        """Pause execution until the instance state=='running'
-        Will update the locally available information by default."""
-        self.wait_until("running")
+    def wait_until_running(self, timeout: float = 65):
+        """
+        Alias for Instance.wait_until('running')
 
-    def wait_until_stopped(self):
-        """Pause execution until the instance state=='stopped'
-        Will update the locally available information by default."""
-        self.wait_until("stopped")
+        Args:
+            timeout: how long, in seconds, to wait until timing out
+        """
+        self.wait_until("running", timeout)
 
-    def wait_until_terminated(self):
-        """Pause execution until the instance state=='stopped'
-        Will update the locally available information by default."""
-        self.wait_until("terminated")
+    def wait_until_started(self, timeout: float = 65):
+        """
+        Additional alias for Instance.wait_until('running')
 
-    def reboot(self, wait_until_running=True):
-        """Reboot the instance. Pause execution until done."""
-        self.stop()
-        self.wait_until_stopped()
-        self.start()
-        if wait_until_running:
-            self.wait_until_running()
+        Args:
+            timeout: how long, in seconds, to wait until timing out
+        """
+        self.wait_until("running", timeout)
 
-    def restart(self, wait_until_running=True):
-        # an alias for reboot()
-        self.reboot(wait_until_running=wait_until_running)
+    def wait_until_stopped(self, timeout: float = 65):
+        """
+        Alias for Instance.wait_until('stopped')
 
-    def tunnel(self, local_port, remote_port):
-        self._prep_connection()
+        Args:
+            timeout: how long, in seconds, to wait before timing out
+        """
+        self.wait_until("stopped", timeout)
+
+    def wait_until_terminated(self, timeout: float = 65):
+        """
+        Alias for Instance.wait_until('terminated')
+
+        Args:
+            timeout: how long, in seconds, to wait before timing out
+        """
+        self.wait_until("terminated", timeout)
+
+    def reboot(
+        self,
+        wait: bool = True,
+        hard: bool = False,
+        timeout: float = 65
+    ):
+        """
+        Reboot or hard-restart the instance. Note that a hard
+        restart will change the instance's ip unless it has been assigned a
+        static ip. The Instance object will automatically handle this, but
+        other code/processes using it will need to be informed.
+
+        Args:
+            wait: if True, block until instance state reaches 'running' again.
+            hard: if True, perform a 'hard' restart: fully shut the instance
+                down and start it up again. if False, perform a 'soft' restart.
+                Note that AWS will automatically switch to a 'hard' restart if
+                its attempt at a soft restart fails.
+            timeout: seconds to wait for state transitions before timing out.
+        """
+        if hard is True:
+            self.stop()
+            self.wait_until_stopped(timeout)
+            self.start()
+        else:
+            self.instance_.reboot()
+        if wait is True:
+            self.wait_until_running(timeout)
+
+    def restart(
+        self, wait: bool = True, hard: bool = False, timeout: float = 65
+    ):
+        """alias for Instance.reboot()."""
+        self.reboot(wait, hard, timeout)
+
+    @connectwrap
+    def tunnel(
+        self,
+        local_port: int,
+        remote_port: int
+    ) -> tuple[Process, dict[str, Union[int, str, Path]]]:
+        """
+        create an SSH tunnel between a local port and a remote port.
+
+        Args:
+            local_port: port number for local end of tunnel.
+            remote_port: port number for remote end of tunnel.
+
+        Returns:
+            tunnel_process: `Process` abstraction for the tunnel process
+            tunnel_metadata: dict of metadata about the tunnel
+        """
         self._ssh.tunnel(local_port, remote_port)
         return self._ssh.tunnels[-1]
 
     @connectwrap
     def call_python(
         self,
-        module=None,
-        func=None,
-        payload=None,
+        module: str,
+        func: Optional[str] = None,
+        payload: Any = None,
         *,
-        interpreter=None,
-        env=None,
-        compression=None,
-        serialization=None,
-        splat="",
-        payload_encoded=False,
-        print_result=True,
-        filter_kwargs=True,
+        compression: CallerCompressionType = None,
+        serialization: CallerSerializationType = None,
+        interpreter: Optional[str] = None,
+        env: Optional[str] = None,
+        splat: CallerUnpackingOperator = "",
+        payload_encoded: bool = False,
+        print_result: bool = True,
+        filter_kwargs: bool = True,
         **command_kwargs,
     ):
+        """
+
+        Args:
+            module:
+            func:
+            payload:
+            interpreter:
+            env:
+            compression:
+            serialization:
+            splat:
+            payload_encoded:
+            print_result:
+            filter_kwargs:
+            **command_kwargs:
+
+        Returns:
+
+        """
         if (interpreter is not None) and (env is not None):
             raise ValueError(
                 "Please pass either the name of a conda environment or the "
