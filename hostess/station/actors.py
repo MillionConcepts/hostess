@@ -108,7 +108,7 @@ def conclude_execution(
         actiondict['result'] = result
     # in some cases could check stderr but would have to be careful
     # due to the many processes that communicate on stderr on purpose
-    actiondict["end"] = dt.datetime.utcnow()
+    actiondict["end"] = dt.datetime.now(dt.UTC)
     actiondict["duration"] = actiondict["end"] - actiondict["start"]
 
 

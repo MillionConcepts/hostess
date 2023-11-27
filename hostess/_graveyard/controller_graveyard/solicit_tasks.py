@@ -93,7 +93,7 @@ def execute_pipeline_script(
 ):
     if interpreter is None:
         interpreter = sys.executable
-    start_time = dt.datetime.utcnow()
+    start_time = dt.datetime.now(dt.UTC)
     out_list, err_list = [], []
     if output_parser_func is None:
         output_parser_func = default_output_parser
@@ -139,10 +139,10 @@ def execute_pipeline_script(
                 "error",
             )
         parsed_output |= cleanup_dict
-    end_time = dt.datetime.utcnow()
+    end_time = dt.datetime.now(dt.UTC)
     return {
-        "start_time": start_time.isoformat()[:-7],
-        "end_time": end_time.isoformat()[:-7],
+        "start_time": start_time.isoformat()[:-13],
+        "end_time": end_time.isoformat()[:-13],
         "total_duration": (end_time - start_time).total_seconds(),
     } | parsed_output
 

@@ -286,7 +286,7 @@ def unpack_obj(obj: pro.PythonObject) -> Any:
     Returns:
         object deserialized from `obj`.
     """
-    if enum(obj, "compression") not in ("nocompression", None):
+    if enum(obj, "compression") != 'uncompressed':
         # TODO: handle inline compression
         raise NotImplementedError
     if enum(obj, "serialization") == "json":

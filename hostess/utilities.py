@@ -27,7 +27,7 @@ from rich.style import Style
 
 def stamp() -> str:
     """create standardized text event stamp"""
-    return f"{gethostname()} {dt.datetime.utcnow().isoformat()[:-7]}: "
+    return f"{gethostname()} {dt.datetime.now(dt.UTC).isoformat()[:-13]}: "
 
 
 def filestamp() -> str:
@@ -37,7 +37,7 @@ def filestamp() -> str:
 
 def logstamp(extra: int = 0) -> str:
     """shorthand for standardized text timestamp only (no hostname)"""
-    return f"{dt.datetime.utcnow().isoformat()[:(-7 + extra)]}"
+    return f"{dt.datetime.now(dt.UTC).isoformat()[:(-13 + extra)]}"
 
 
 HOSTESS_CONSOLE = rich.console.Console()

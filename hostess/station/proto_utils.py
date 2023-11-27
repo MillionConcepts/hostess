@@ -5,7 +5,7 @@ hostess-specific messages -- these are more generic utilities.
 
 import datetime as dt
 from types import MappingProxyType as MPt
-from typing import Union, Optional
+from typing import Optional, Union
 
 import google.protobuf.json_format
 from google.protobuf.descriptor import FieldDescriptor, Descriptor
@@ -21,8 +21,9 @@ PROTO_TYPES = MPt(
         for k in dir(FieldDescriptor) if k.startswith("TYPE")
     }
 )
-# just an alias
+"""mapping from protobuf type codes to types"""
 m2d = google.protobuf.json_format.MessageToDict
+"""alias for google.protobuf.json_format.MessageToDict"""
 
 
 def proto_formatdict(
@@ -31,6 +32,14 @@ def proto_formatdict(
     """
     return a (possibly nested) dict showing the legal fields of a protobuf
     message or message type.
+
+    Args:
+        proto: protobuf Message or Descriptor whose format to describe
+
+    Returns:
+        dict whose keys are field names and whose values are protobuf data
+            types or nested dicts (representing child Messages) of the same
+            format.
     """
     # i.e., it's a descriptor
     if hasattr(proto, 'fields_by_name'):
@@ -48,7 +57,15 @@ def proto_formatdict(
 
 
 def make_duration(delta: Union[dt.timedelta, float]) -> Duration:
-    """create a Duration Message from a UNIX time or a dt.timedelta object"""
+    """
+    create a Duration Message from a float or a dt.timedelta object.
+
+    Args:
+        delta: total duration -- if a float, always represents seconds.
+
+    Returns:
+         a protobuf Duration Message specifying the same timespan as `delta`
+    """
     duration = Duration()
     if isinstance(delta, float):
         duration.FromSeconds(delta)
@@ -60,7 +77,14 @@ def make_duration(delta: Union[dt.timedelta, float]) -> Duration:
 def make_timestamp(datetime: Optional[dt.datetime] = None) -> Timestamp:
     """
     create a Timestamp Message from either the current time or a dt.datetime
-    object
+    object.
+
+    Args:
+        datetime: if None, make a Timestamp from the current time. if a
+            dt.datetime, make a Timestamp from it.
+
+    Returns:
+        protobuf Timestamp Message.
     """
     timestamp = Timestamp()
     if datetime is None:
@@ -71,10 +95,26 @@ def make_timestamp(datetime: Optional[dt.datetime] = None) -> Timestamp:
 
 
 def enum(message: Message, field: str) -> Union[str, int]:
-    """get the string value of an enum field in a message."""
-    for desc, val in message.ListFields():
-        if desc.enum_type is None:
-            continue
+    """
+    get the string or int value of an enum field in a protobuf Message. (If
+    you directly access the field with the Python API, you will get the enum
+    key instead of its value, which is generally less useful.)
+
+    Args:
+        message: protobuf Message containing an enum field
+        field: name of enum field
+
+    Returns:
+        enum value of `field`; None if `field` is not present in message
+    """
+    for desc in message.DESCRIPTOR.fields:
         if desc.name != field:
             continue
-        return desc.enum_type.values_by_number[val].name
+        try:
+            return desc.enum_type.values_by_number[
+                getattr(message, field)
+            ].name
+        except AttributeError:
+            raise TypeError(f"{field} is not an enum")
+    raise KeyError(f"{field} is not a field of message")
+

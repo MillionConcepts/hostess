@@ -81,8 +81,8 @@ def _construct_basic_action():
     actiondict = {
         'result': [0],
         'name': 'imagestats',
-        'start': dt.datetime.utcnow(),
-        'end': dt.datetime.utcnow(),
+        'start': dt.datetime.now(dt.UTC),
+        'end': dt.datetime.now(dt.UTC),
         'status': 'success',
         'instruction_id': 3,
         'id': 2

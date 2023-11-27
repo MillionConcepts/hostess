@@ -18,7 +18,6 @@ from hostess.station.situation.interface_organizers import (
 from hostess.station.situation.widgets import DictColumn, ConnectionStatus
 from hostess.station.station import get_port_from_shared_memory
 
-# patterns defining sorting/retention of TreeNodes
 STATION_PATTERNS = {
     "sort": (
         lambda l: (len(l) == 2) and (l[1] == "actors"),
@@ -26,6 +25,7 @@ STATION_PATTERNS = {
     ),
     "protect": (lambda l: (len(l) == 4) and l[1] == "tasks",),
 }
+"""patterns defining sorting/retention of TreeNodes for Station pane"""
 DELEGATE_PATTERNS = {
     "sort": (
         lambda l: (len(l) == 3) and (l[2] == "actors"),
@@ -33,6 +33,7 @@ DELEGATE_PATTERNS = {
     ),
     "protect": (lambda l: (len(l) == 4) and l[1] == "running",),
 }
+"""patterns defining sorting/retention of TreeNodes for Delegate pane"""
 
 
 class Logfiles:

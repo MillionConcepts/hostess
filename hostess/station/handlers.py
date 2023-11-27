@@ -101,7 +101,7 @@ def make_actiondict(action: pro.Action) -> dict[str, Any]:
         "name": action.name,
         "id": action.id,
         "description": action.description,
-        "start": dt.datetime.utcnow(),
+        "start": dt.datetime.now(dt.UTC),
         "stop": None,
         "status": "running",
     }
