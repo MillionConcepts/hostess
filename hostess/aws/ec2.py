@@ -13,6 +13,7 @@ from random import choices
 from string import ascii_lowercase
 from typing import (
     Any,
+    Callable,
     Collection,
     IO,
     Literal,
@@ -86,20 +87,6 @@ concise version of an EC2 API Instance data structure
 
 class NoKeyError(OSError):
     """we're trying to do things over SSH, but can't find a valid keyfile."""
-
-
-def connectwrap(func):
-    @wraps(func)
-    def tryconnect(instance, *args, **kwargs):
-        # noinspection PyProtectedMember
-        instance._prep_connection()
-        try:
-            return func(instance, *args, **kwargs)
-        except (SSHException, NoValidConnectionsError):
-            instance.connect()
-            return func(instance, *args, **kwargs)
-
-    return tryconnect
 
 
 def summarize_instance_description(
@@ -182,7 +169,7 @@ def ls_instances(
 
 def instances_from_ids(
     ids, resource=None, session=None,
-        **instance_kwargs: Union[str, botocore.client.baseClient, boto3.resources.base.ServiceResource,
+        **instance_kwargs: Union[str, botocore.client.BaseClient, boto3.resources.base.ServiceResource,
                                  boto3.Session, Path, bool]
 ):
     resource = init_resource("ec2", resource, session)
@@ -203,6 +190,7 @@ class Instance:
     def __init__(
         self,
         description: Union[InstanceIdentifier, InstanceDescription],
+        *,
         uname: str = GENERAL_DEFAULTS["uname"],
         key: Optional[Path] = None,
         client: Optional[botocore.client.BaseClient] = None,
@@ -280,7 +268,7 @@ class Instance:
         wait=True,
         connect: bool = False,
         maxtries: int = 40,
-        **instance_kwargs: Union[str, botocore.client.baseClient, boto3.resources.base.ServiceResource,
+        **instance_kwargs: Union[str, botocore.client.BaseClient, boto3.resources.base.ServiceResource,
                                  boto3.Session, Path, bool]
     ) -> "Instance":
         """
@@ -485,11 +473,11 @@ class Instance:
     def command(
         self,
         command: str,
-        *args,
+        *args: Union[int, str, float],
         _viewer: bool = True,
         _wait: bool = False,
         _quiet: bool = True,
-        **kwargs
+        **kwargs: Union[int, str, float, bool]
     ) -> Processlike:
         """
         run a command in the instance's default interpreter.
@@ -524,11 +512,11 @@ class Instance:
     def con(
         self,
         command: str,
-        *args,
+        *args: Union[int, str, float],
         _poll: float = 0.05,
         _timeout: Optional[float] = None,
         _return_viewer: bool = False,
-        **kwargs
+        **kwargs: Union[int, str, float, bool]
     ) -> Optional[Viewer]:
         """
         pretend you are running a command on the instance while looking at a
@@ -673,9 +661,9 @@ class Instance:
         self,
         source: Union[str, Path, IO],
         target: Union[str, Path],
-        *args,
+        *args: Any,
         literal_str: bool = False,
-        **kwargs
+        **kwargs: Any
     ) -> dict:
         """
         write local file or object to target file on instance.
@@ -701,8 +689,8 @@ class Instance:
         self,
         source: Union[str, Path],
         target: Union[str, Path, IO],
-        *args,
-        **kwargs
+        *args: Any,
+        **kwargs: Any
     ) -> dict:
         """
         copy file from instance to local.
@@ -1083,7 +1071,7 @@ class Cluster:
         self.fleet_request = None
 
     def _async_method_call(
-        self, method_name: str, *args, **kwargs
+        self, method_name: str, *args: Any, **kwargs: Any
     ) -> list[Any]:
         """
         Internal wrapper function: make multithreaded calls to a specified
@@ -1107,7 +1095,8 @@ class Cluster:
             time.sleep(0.01)
         return [f.result() for f in futures]
 
-    def command(self, command: str, *args, **kwargs: Union[bool, str, int, float]) -> list[Processlike, ...]:
+    def command(self, command: str, *args: Union[str, int, float], **kwargs: bool
+                ) -> list[Processlike, ...]:
         """
         Call a shell command on all this Cluster's Instances. See
         `Instance.command()` for further documentation.
@@ -1115,7 +1104,8 @@ class Cluster:
         Args:
             command: command name/string
             *args: args to pass to `Instance.command()`
-            **kwargs: kwargs to pass to `Instance.command()`
+            **kwargs: kwargs to pass to `Instance.command()`.
+                Only meta-options are recommended.
 
         Returns:
             list containing results of `command()` from each Instance.
@@ -1123,7 +1113,11 @@ class Cluster:
         return self._async_method_call("command", command, *args, **kwargs)
 
     def commands(
-        self, commands: Sequence[str], *args, **kwargs
+        self,
+        commands: Sequence[str],
+        op: Literal["and", "xor", "then"] = "then",
+        _con: bool = False,
+        **kwargs: bool
     ) -> list[Processlike, ...]:
         """
         Call a sequence of shell commands on all this Cluster's Instances. See
@@ -1131,35 +1125,46 @@ class Cluster:
 
         Args:
             commands: command names/strings
-            *args: args to pass to `Instance.commands()`
-            **kwargs: kwargs to pass to `Instance.commands()`
+            op: logical operator to connect commands.
+            _con: run 'console-style', pretty-printing rather than
+                returning output (will look message with lots of Instances)
+            **kwargs: kwargs to pass to `Instance._ssh()`.
+                Only meta-options are recommended.
 
         Returns:
             list containing results of `commands()` from each Instance.
         """
-        return self._async_method_call("commands", commands, *args, **kwargs)
+        return self._async_method_call("commands", commands, op, _con, **kwargs)
 
-    def call_python(self, *args, **kwargs) -> list[Processlike, ...]:
+    def call_python(self,
+                    module: str,
+                    func: Optional[str] = None,
+                    payload: Any = None,
+                    **kwargs: Union[
+                        bool,
+                        str,
+                        CallerCompressionType,
+                        CallerSerializationType,
+                        CallerUnpackingOperator]
+                    ) -> list[Processlike, ...]:
         """
         Call a Python function on all this Cluster's Instances. See
         `Instance.call_python()` for further documentation.
 
         Args:
-            *args: args to pass to `Instance.call_python()`
+            module: name of, or path to, the target module
+            func: name of the function to call.
+            payload: object from which to constrct func's call arguments.
             **kwargs: kwargs to pass to `Instance.call_python()`
 
         Returns:
             list containing results of `call_python()` from each Instance.
         """
-        return self._async_method_call("call_python", *args, **kwargs)
+        return self._async_method_call("call_python", module, func, payload, **kwargs)
 
     def start(self, *args, **kwargs) -> list:
         """
-        Start all Instances. See `Instance.start()` for further documentation.
-
-        Args:
-            *args: args to pass to `Instance.start()`
-            **kwargs: kwargs to pass to `Instance.start()`
+        Start all Instances. See `Instance.start()` for further documentation / valid args and kwargs.
 
         Returns:
             list containing results of `start()` from each Instance.
@@ -1168,11 +1173,7 @@ class Cluster:
 
     def stop(self, *args, **kwargs) -> list:
         """
-        Stop all Instances. See `Instance.stop()` for further documentation.
-
-        Args:
-            *args: args to pass to `Instance.stop()`
-            **kwargs: kwargs to pass to `Instance.stop()`
+        Stop all Instances. See `Instance.stop()` for further documentation / valid args and kwargs.
 
         Returns:
             list containing results of `stop()` from each Instance.
@@ -1182,11 +1183,7 @@ class Cluster:
     def terminate(self, *args, **kwargs) -> list:
         """
         Terminate all Instances. See `Instance.terminate()` for further
-        documentation.
-
-        Args:
-            *args: args to pass to `Instance.terminate()`
-            **kwargs: kwargs to pass to `Instance.terminate()`
+        documentation  / valid arg and kwargs.
 
         Returns:
             list containing results of `terminate()` from each Instance.
@@ -1248,8 +1245,8 @@ class Cluster:
     def from_descriptions(
         cls,
         descriptions: Collection[InstanceDescription],
-        *args,
-        **kwargs
+        **kwargs: Union[str, Path, botocore.client.BaseClient.
+                        boto3.resources.base.ServiceResource, boto3.Session, bool]
     ) -> "Cluster":
         """
         Construct a Cluster from InstanceDescriptions, as produced by
@@ -1258,13 +1255,12 @@ class Cluster:
         Args:
             descriptions: InstanceDescriptions to initialize Instances from
                 and subsequently collect into a Cluster.
-            *args: args to pass to the Instance constructor
             **kwargs: kwargs to pass to the Instance constructor
 
         Returns:
             a Cluster including an Instance for each description.
         """
-        instances = [Instance(d, *args, **kwargs) for d in descriptions]
+        instances = [Instance(d, **kwargs) for d in descriptions]
         return cls(instances)
 
     @classmethod
@@ -1277,7 +1273,7 @@ class Cluster:
         client: Optional[botocore.client.BaseClient] = None,
         session: Optional[boto3.session] = None,
         wait: bool = True,
-        **instance_kwargs: Union[str, botocore.client.baseClient, boto3.resources.base.ServiceResource,
+        **instance_kwargs: Union[str, botocore.client.BaseClient, boto3.resources.base.ServiceResource,
                                  boto3.Session, Path, bool],
     ) -> "Cluster":
         """
@@ -2145,3 +2141,17 @@ def authorize_ssh_ingress_from_ip(
             print(f"** {ip} already authorized for SSH ingress for {sg.id} **")
         else:
             raise
+
+
+def connectwrap(func: Callable[[Instance, ...], Any]) -> Callable[[Instance, ...], Any]:
+    @wraps(func)
+    def tryconnect(instance, *args, **kwargs):
+        # noinspection PyProtectedMember
+        instance._prep_connection()
+        try:
+            return func(instance, *args, **kwargs)
+        except (SSHException, NoValidConnectionsError):
+            instance.connect()
+            return func(instance, *args, **kwargs)
+
+    return tryconnect

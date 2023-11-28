@@ -266,7 +266,7 @@ def autopage(
     client: botocore.client.BaseClient,
     operation: str,
     agg: Optional[Union[str, Callable]] = None,
-    **api_kwargs
+    **api_kwargs: Any
 ) -> tuple:
     """
     Perform an AWS API call that returns paginated results, greedily page
