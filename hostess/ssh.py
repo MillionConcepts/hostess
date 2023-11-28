@@ -499,7 +499,9 @@ def stop_jupyter_factory(
     Returns:
         function that, when passed anything with a `wait` method, calls that
             method, and once it finishes, attempts to stop the Jupyter server
-            running on the specified port.
+            running on the specified port. If called with no arguments or with
+            an object with no `wait` method, attempts to stop the server
+            immediately.
     """
     def stop_it(waitable: Any = None):
         if waitable is not None:
