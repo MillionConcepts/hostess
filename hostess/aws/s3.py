@@ -321,7 +321,7 @@ def cp(
     extra_args: Optional[Mapping[str, str]] = None,
     client: Optional[botocore.client.BaseClient] = None,
     session: Optional[boto3.Session] = None,
-    config=None,
+    config: Optional[boto3.s3.transfer.TransferConfig] = None,
 ) -> tuple[Union[Path, str, io.IOBase], Any]:
     """
     Copy an S3 object to another location on S3.
@@ -410,14 +410,14 @@ def head(
 def ls(
     bucket: Union[str, Bucket],
     prefix: str = "",
-    recursive=False,
+    recursive: bool = False,
     formatting: Literal["simple", "contents", "df", "raw"] = "simple",
     cache: Union[str, Path, io.IOBase, None] = None,
     client: Optional[botocore.client.BaseClient] = None,
     session: Optional[boto3.Session] = None,
     start_after: str = "",
-    cache_only=False,
-    config=None,
+    cache_only: bool = False,
+    config: Optional[boto3.s3.transfer.TransferConfig] = None,
 ) -> Union[tuple, pd.DataFrame, None]:
     """
     list objects in a bucket.
@@ -603,8 +603,8 @@ def abort_multipart_upload(
     multipart: Mapping,
     client: Optional[botocore.client.BaseClient] = None,
     session: Optional[boto3.Session] = None,
-    config=None,
-):
+    config: Optional[boto3.s3.transfer.TransferConfig] = None,
+) -> dict:
     """
     Abort a multipart upload operation.
 
@@ -694,7 +694,7 @@ def put_stream(
     obj: Union[Iterator, IO, str, Path],
     key: str,
     client: Optional[botocore.client.BaseClient] = None,
-    config=None,
+    config: Optional[boto3.s3.transfer.TransferConfig] = None,
     session: Optional[boto3.Session] = None,
     upload_threads: Optional[int] = 4,
     # download_threads: Optional[int] = None,
@@ -703,7 +703,7 @@ def put_stream(
     # TODO: overrides chunksize in config -- maybe make an easier interface
     #  to this
     chunksize: Optional[int] = None,
-):
+) -> dict:
     """
     Create an S3 object from a byte stream via a managed multipart upload.
     Useful for uploading large files, but can also handle intermittent streams,

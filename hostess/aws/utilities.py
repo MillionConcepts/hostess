@@ -100,7 +100,7 @@ def make_boto_session(
 
 
 def make_boto_client(
-    service,
+    service: str,
     profile: Optional[str] = None,
     credential_file: Optional[Union[str, Path]] = None,
     region: Optional[str] = None
@@ -125,7 +125,7 @@ def make_boto_client(
 
 
 def make_boto_resource(
-    service,
+    service: str,
     profile: Optional[str] = None,
     credential_file: Optional[Union[str, Path]] = None,
     region: Optional[str] = None

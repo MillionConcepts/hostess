@@ -125,11 +125,11 @@ def ls_instances(
     identifier: Optional[InstanceIdentifier] = None,
     states: Sequence[str] = ("running", "pending", "stopping", "stopped"),
     raw_filters: Optional[Sequence[Mapping[str, str]]] = None,
-    client=None,
-    session=None,
+    client: Optional[botocore.client.BaseClient] = None,
+    session: Optional[boto3.Session] = None,
     long: bool = False,
     tag_regex: bool = True,
-    **tag_filters,
+    **tag_filters: str,
 ) -> tuple[Union[InstanceDescription, dict]]:
     """
     `ls` for EC2 instances.
@@ -143,7 +143,7 @@ def ls_instances(
         session: optional boto3 Session object
         long: if not True, return InstanceDescriptions, including only the
             most regularly-pertinent information, flattened, with succinct
-            field names. Otherwise return a flattened version of the full API
+            field names. Otherwise, return a flattened version of the full API
             response.
         tag_regex: regex patterns for tag matching.
         tag_filters: filters to interpret as tag name / value pairs before 
@@ -181,7 +181,9 @@ def ls_instances(
 
 
 def instances_from_ids(
-    ids, resource=None, session=None, **instance_kwargs
+    ids, resource=None, session=None,
+        **instance_kwargs: Union[str, botocore.client.baseClient, boto3.resources.base.ServiceResource,
+                                 boto3.Session, Path, bool]
 ):
     resource = init_resource("ec2", resource, session)
     instances = []
@@ -278,7 +280,8 @@ class Instance:
         wait=True,
         connect: bool = False,
         maxtries: int = 40,
-        **instance_kwargs
+        **instance_kwargs: Union[str, botocore.client.baseClient, boto3.resources.base.ServiceResource,
+                                 boto3.Session, Path, bool]
     ):
         """
         launch a single instance. This is a thin wrapper for
@@ -585,7 +588,7 @@ class Instance:
             return self.con(hs.chain(commands, op), **kwargs)
         return self.command(hs.chain(commands, op), **kwargs)
 
-    def notebook(self, **connect_kwargs) -> NotebookConnection:
+    def notebook(self, **connect_kwargs: Union[int, str, bool]) -> NotebookConnection:
         """
         execute a Jupyter Notebook on the instance and establish a tunnel for
         local access.
@@ -719,10 +722,11 @@ class Instance:
     @connectwrap
     def read(
         self,
-        source,
+        source: Union[str, Path],
         mode: Literal['r', 'rb'] = 'r',
-        encoding='utf-8'
-    ) -> Union[io.BytesIO, io.StringIO]:
+        encoding: str = 'utf-8',
+        as_buffer: bool = False
+    ) -> Union[io.BytesIO, io.StringIO, bytes, str]:
         """
         read a file from the instance directly into memory.
 
@@ -730,14 +734,16 @@ class Instance:
             source: path to file on instance
             mode: 'r' to read file as text; 'rb' to read file as bytes
             encoding: encoding for text, used only if `mode` is 'r'
+            as_buffer: if True, return BytesIO/StringIO; if False, return
+                bytes/str
 
         Returns:
             Buffer containing contents of remote file
         """
-        return self._ssh.read(source, mode, encoding)
+        return self._ssh.read(source, mode, encoding, as_buffer)
 
     @connectwrap
-    def read_csv(self, source, encoding='utf-8', **csv_kwargs):
+    def read_csv(self, source: Union[str, Path], encoding: str = 'utf-8', **csv_kwargs):
         """
         read a CSV-like file from the instance into a pandas DataFrame.
 
@@ -1268,7 +1274,8 @@ class Cluster:
         client: Optional[botocore.client.BaseClient] = None,
         session: Optional[boto3.session] = None,
         wait: bool = True,
-        **instance_kwargs,
+        **instance_kwargs: Union[str, botocore.client.baseClient, boto3.resources.base.ServiceResource,
+                                 boto3.Session, Path, bool],
     ) -> "Cluster":
         """
         Launch a fleet of Instances and collect them into a Cluster. See
@@ -1822,7 +1829,7 @@ def create_security_group(
 
     Returns:
         A boto3 SecurityGroup resource providing an interface to the newly-
-        created security group.
+            created security group.
     """
     client = init_client("ec2", client, session)
     try:
@@ -2095,7 +2102,7 @@ def revoke_ingress(
 
 
 def authorize_ssh_ingress_from_ip(
-    sg, ip=None, force_modification_of_default_sg=False,
+    sg: "SecurityGroup", ip: Optional[str] = None, force_modification_of_default_sg: bool = False,
 ):
     """
     Args:

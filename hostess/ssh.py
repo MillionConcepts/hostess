@@ -212,7 +212,7 @@ class SSH(RunCommand):
             dict giving transfer metadata: local, remote, host, and port
         """
         return unpack_transfer_result(
-            self.conn.get(source, target, *args, **kwargs)
+            self.conn.get(str(source), target, *args, **kwargs)
         )
 
     def read(
@@ -250,7 +250,7 @@ class SSH(RunCommand):
         return buffer.read()
 
     def read_csv(
-        self, source: str, encoding='utf-8', **csv_kwargs
+        self, source: Union[str, Path], encoding: str = 'utf-8', **csv_kwargs: Any
     ) -> pd.DataFrame:
         """
         read a CSV-like file from the remote host into a pandas DataFrame.
@@ -264,7 +264,7 @@ class SSH(RunCommand):
             DataFrame created from contents of remote CSV file
         """
         return pd.read_csv(
-            self.read(source, 'r', encoding, True), **csv_kwargs
+            self.read(str(source), 'r', encoding, True), **csv_kwargs
         )
 
     def tunnel(
