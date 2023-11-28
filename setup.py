@@ -7,6 +7,9 @@ setup(
     author="Million Concepts",
     author_email="mstclair@millionconcepts.com",
     packages=find_packages(),
+    package_data={
+        "": ["station/tests/test_data/*.*", "station/proto/*.*"]
+    },
     python_requires=">=3.9",
     classifiers=[
         "Development Status :: 4 - Beta",
