@@ -216,7 +216,7 @@ def _maybe_release_locals(localdict: MutableMapping, frame: FrameType) -> bool:
 
     the `locals` dict of the top-level module frame is the same as its
     `globals` dict. retrieving it from a frame gives us the _actual_ `globals`
-    `dict`, not a view into it. we do NOT want to casually delete all members
+    `dict`, not a copy of it. we do NOT want to casually delete all members
     of the top-level module while pretending to merely inspect it.
 
     conversely, `locals` `dicts` retrieved from lower frames are only copies.
