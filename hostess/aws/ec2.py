@@ -1235,7 +1235,12 @@ class Cluster:
     #     return commands
 
     @classmethod
-    def from_descriptions(cls, descriptions: Collection[InstanceDescription], *args, **kwargs):
+    def from_descriptions(
+        cls,
+        descriptions: Collection[InstanceDescription],
+        *args,
+        **kwargs
+    ) -> "Cluster":
         """
         Construct a Cluster from InstanceDescriptions, as produced by
         `ls_instances()`.
@@ -1245,6 +1250,9 @@ class Cluster:
                 and subsequently collect into a Cluster.
             *args: args to pass to the Instance constructor
             **kwargs: kwargs to pass to the Instance constructor
+
+        Returns:
+            a Cluster including an Instance for each description.
         """
         instances = [Instance(d, *args, **kwargs) for d in descriptions]
         return cls(instances)
@@ -1260,7 +1268,7 @@ class Cluster:
         session: Optional[boto3.session] = None,
         wait: bool = True,
         **instance_kwargs,
-    ):
+    ) -> "Cluster":
         """
         Launch a fleet of Instances and collect them into a Cluster. See
         hostess documentation Notebooks for examples of how to construct
