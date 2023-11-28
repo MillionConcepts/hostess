@@ -28,7 +28,7 @@ setup(
         "more-itertools",
         "pandas",
         "psutil",
-        "pyyaml"
+        "pyyaml",
         "requests",
         "rich",
     ],
