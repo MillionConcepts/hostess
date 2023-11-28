@@ -607,8 +607,8 @@ class Station(bases.Node):
             comm: decoded hostess comm as produced by `read_comm()`
 
         Returns:
-            * response to comm
-            * loggable description of response type / status
+            response: response to comm
+            description: loggable description of response type / status
         """
         # TODO: lockout might be too strict
         msg, self.locked = None, True
