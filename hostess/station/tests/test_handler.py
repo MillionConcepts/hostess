@@ -11,14 +11,11 @@ class FakeNode:
 
 def test_function_call():
     action = me.make_function_call_action(
-        func='array',
-        module='numpy',
-        kwargs={'object': 1},
-        name='makearray'
+        func="array", module="numpy", kwargs={"object": 1}, name="makearray"
     )
     instruction = me.make_instruction("do", action=action)
     node = FakeNode()
     FuncCaller().match(instruction)
     FuncCaller().execute(node, instruction, key=1)
-    result = node.actions[1]['result']
+    result = node.actions[1]["result"]
     assert result == np.array([1])

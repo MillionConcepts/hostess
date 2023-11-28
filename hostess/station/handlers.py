@@ -5,7 +5,13 @@ import datetime as dt
 import os
 from pathlib import Path
 from typing import (
-    Any, Callable, Collection, Mapping, Optional, Sequence, Union
+    Any,
+    Callable,
+    Collection,
+    Mapping,
+    Optional,
+    Sequence,
+    Union,
 )
 
 from google.protobuf.message import Message
@@ -160,14 +166,14 @@ def watch_dir(
 
 SKIPKEYS = frozenset(
     {
-        'delegateid',
-        'state',
-        'running',
-        'arguments',
-        'localcall',
-        'data',
-        'result',
-        'config'
+        "delegateid",
+        "state",
+        "running",
+        "arguments",
+        "localcall",
+        "data",
+        "result",
+        "config",
     }
 )
 """
@@ -183,7 +189,7 @@ def json_sanitize(
     maxdepth: int = 1,
     skipkeys: Collection[str] = SKIPKEYS,
     depth: int = 0,
-    skip: bool = False
+    skip: bool = False,
 ) -> Union[str, int, float, list[str], dict[str, Union[str, dict[str, str]]]]:
     """
     Attempt to make an object representable in JSON, with standardized
@@ -234,7 +240,7 @@ def flatten_for_json(
     event: Union[Message, dict],
     maxlen: int = 128,
     maxdepth: int = 3,
-    skipkeys: Collection[str] = SKIPKEYS
+    skipkeys: Collection[str] = SKIPKEYS,
 ) -> dict[str, str]:
     """
     simple log-formatting function.

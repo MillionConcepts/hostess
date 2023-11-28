@@ -5,8 +5,7 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.containers import HorizontalScroll, VerticalScroll, Container
 from textual.css.query import NoMatches
-from textual.widgets import Pretty, Collapsible, Label, \
-    TabbedContent, TabPane
+from textual.widgets import Pretty, Collapsible, Label, TabbedContent, TabPane
 
 from hostess.monitors import Stopwatch
 from hostess.profilers import Profiler
@@ -37,14 +36,13 @@ DELEGATE_PATTERNS = {
 
 
 class Logfiles:
-
     def __init__(self):
         self.logfiles = {}
 
     def update_from(self, situation):
-        self.logfiles['station'] = situation['logfile']
-        for d, v in situation['delegates'].items():
-            self.logfiles[d] = v['logfile']
+        self.logfiles["station"] = situation["logfile"]
+        for d, v in situation["delegates"].items():
+            self.logfiles[d] = v["logfile"]
 
 
 LOGFILES = Logfiles()
@@ -52,13 +50,10 @@ APP_PROFILER = Profiler({"time": Stopwatch()})
 
 
 def make_logline(k, v):
-    vert = VerticalScroll(Label("", id=f'log-tail-{k}'))
+    vert = VerticalScroll(Label("", id=f"log-tail-{k}"))
     vert.styles.max_height = "60vh"
     collapse = Collapsible(
-        vert,
-        title=f"{k}: {v}",
-        id=f'logfile-{k}',
-        collapsed=True
+        vert, title=f"{k}: {v}", id=f"logfile-{k}", collapsed=True
     )
     collapse.styles.max_height = "64vh"
     return collapse
@@ -85,23 +80,25 @@ class SituationApp(App):
         content = Container()
         with content:
             with TabbedContent(initial="situation"):
-                with TabPane(title="situation", id='situation'):
-                    container = HorizontalScroll(id='main-container')
+                with TabPane(title="situation", id="situation"):
+                    container = HorizontalScroll(id="main-container")
                     with container:
                         yield DictColumn(id="station-column", name="Station")
-                        yield DictColumn(id="delegate-column", name="Delegates")
+                        yield DictColumn(
+                            id="delegate-column", name="Delegates"
+                        )
                     with Collapsible(
-                        title='profiler',
-                            collapsed=True,
-                            id='profiler-collapse'
+                        title="profiler",
+                        collapsed=True,
+                        id="profiler-collapse",
                     ):
                         yield Pretty(APP_PROFILER, id="profiler")
-                with TabPane(title="logs", id='logs', classes='log-pane'):
+                with TabPane(title="logs", id="logs", classes="log-pane"):
                     yield VerticalScroll(id="logs-container")
 
     def _handle_error(self, err: Exception):
         if isinstance(err, TimeoutError):
-            self.query_one('#statusbar').update(
+            self.query_one("#statusbar").update(
                 Text(f"status -- delayed", style="light_salmon3")
             )
             return
@@ -111,7 +108,7 @@ class SituationApp(App):
             except (FileNotFoundError, TypeError, ValueError) as ftve:
                 err = ftve
 
-        self.query_one('#statusbar').update(
+        self.query_one("#statusbar").update(
             Text(f"status: error -- {err}", style="bold red")
         )
 
@@ -129,12 +126,10 @@ class SituationApp(App):
             try:
                 logline = self.query_one(f"#logfile-{k}")
             except NoMatches:
-                self.query_one('#logs-container').mount(
-                    make_logline(k, v)
-                )
+                self.query_one("#logs-container").mount(make_logline(k, v))
                 logline = self.query_one(f"#logfile-{k}")
             if not logline.collapsed:
-                tail = self.query_one(f'#log-tail-{k}')
+                tail = self.query_one(f"#log-tail-{k}")
                 with v.open() as stream:
                     if k in self.log_positions:
                         stream.seek(self.log_positions[k])
@@ -153,7 +148,7 @@ class SituationApp(App):
 
     def update_view(self):
         self.update_logs()
-        if self.query_one(".log-pane").styles.display != 'none':
+        if self.query_one(".log-pane").styles.display != "none":
             self.update_logs()
             if self.has_content is True:
                 self.deferred_situation_update = True
@@ -170,7 +165,7 @@ class SituationApp(App):
                 self.situation = get_situation(self.host, self.port)
             self.has_content = True
             self.update_from_situation()
-            self.query_one('#statusbar').update(
+            self.query_one("#statusbar").update(
                 Text("status -- ok", style="bold green")
             )
             self.query_one("#profiler").update(APP_PROFILER)
@@ -179,7 +174,7 @@ class SituationApp(App):
             AttributeError,
             TimeoutError,
             ConnectionError,
-            FileNotFoundError
+            FileNotFoundError,
         ) as err:  # TODO: concatenate / specify those exceptions
             return self._handle_error(err)
         finally:

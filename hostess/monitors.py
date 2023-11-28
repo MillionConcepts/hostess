@@ -465,7 +465,9 @@ class CPUTime(AbstractMonitor):
 class Usage(AbstractMonitor):
     """simple disk usage monitor"""
 
-    def __init__(self, *, digits: Optional[int] = 3, path: Union[str, Path] = "/"):
+    def __init__(
+        self, *, digits: Optional[int] = 3, path: Union[str, Path] = "/"
+    ):
         """
         Args:
             digits: number of digits (as in AbstractMonitor)
@@ -759,6 +761,7 @@ def ticked(func: Callable, label: str, ticker: Ticker) -> Callable:
     Returns:
         modified version of `func`
     """
+
     @wraps(func)
     def tickoff(*args, **kwargs):
         ticker.tick(label)

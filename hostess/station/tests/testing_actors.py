@@ -9,12 +9,11 @@ class NormalActor(Actor):
     def execute(self, _node, _event, **_):
         segfault()
 
-    name = 'normal_actor_that_does_useful_things'
-    actortype = 'action'
+    name = "normal_actor_that_does_useful_things"
+    actortype = "action"
 
 
 class TrivialActor(Actor):
-
     def match(self, event, **_):
         return False
 

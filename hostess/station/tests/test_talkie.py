@@ -79,13 +79,13 @@ def test_tcp_server():
 
 def _construct_basic_action():
     actiondict = {
-        'result': [0],
-        'name': 'imagestats',
-        'start': dt.datetime.now(dt.UTC),
-        'end': dt.datetime.now(dt.UTC),
-        'status': 'success',
-        'instruction_id': 3,
-        'id': 2
+        "result": [0],
+        "name": "imagestats",
+        "start": dt.datetime.now(dt.UTC),
+        "end": dt.datetime.now(dt.UTC),
+        "status": "success",
+        "instruction_id": 3,
+        "id": 2,
     }
     report = task_msg(actiondict)
     message = pro.Update(completed=report, instruction_id=3)
@@ -121,18 +121,20 @@ def test_comm_online():
             response, j = None, 0
             while response is None and j < 1000:
                 for v in reversed(server.events):
-                    if v['event'].startswith('decoded'):
+                    if v["event"].startswith("decoded"):
                         response = v
                         break
             if response is None:
                 raise TimeoutError
             # Timestamp is variable-length depending on nanoseconds
             assert response["event"] in (
-                "decoded 96", "decoded 97", "decoded 98"
+                "decoded 96",
+                "decoded 97",
+                "decoded 98",
             )
             comm = hostess.station.talkie.read_comm(server.data[i].comm)
             assert comm["err"] == ""
-            assert comm["header"]["length"] == int(response['event'][-2:])
+            assert comm["header"]["length"] == int(response["event"][-2:])
             message = comm["body"]
             assert message.completed.action.result.value[0] == 128
             assert message.instruction_id == 3

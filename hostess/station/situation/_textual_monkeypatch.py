@@ -8,7 +8,7 @@ def count_parameters(func: Callable) -> int:
     """Count the number of parameters in a callable"""
 
     # NOTE: PATCHED TO REMOVE POSSIBLE ISSUES WITH KWONLYARGS
-    if func.__class__.__name__ == 'method':
+    if func.__class__.__name__ == "method":
         return len(getfullargspec(func).args) - 1
     return len(getfullargspec(func).args)
 
@@ -37,4 +37,5 @@ async def _invoke(callback: Callable, *params: object) -> Any:
 
 def patch_textual_invoke():
     from textual import _callback
+
     _callback._invoke = _invoke

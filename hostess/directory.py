@@ -86,8 +86,9 @@ def lsdashl(
                 "size": mb(stat.st_size, 3),
                 "excluded": False,
                 "directory": path.is_dir(),
-                "suffix": path.suffix
-            } | mtimes(stat)
+                "suffix": path.suffix,
+            }
+            | mtimes(stat)
         )
     return listings
 
@@ -139,8 +140,8 @@ def index_breadth_first(root: Union[str, Path]) -> list[LSRecord]:
 def _parse_fileinfo(magic_viewer: Viewer) -> list[dict[str, str]]:
     """parses stdout from the POSIX `file` utility."""
     fileinfo = []
-    for line in ''.join(magic_viewer.out).split('\n'):
-        if line == '':
+    for line in "".join(magic_viewer.out).split("\n"):
+        if line == "":
             continue
         fn, result = re.split(":", line, maxsplit=1)
         fileinfo.append(
@@ -199,14 +200,14 @@ def _make_levelframe(group: pd.DataFrame, squish: bool) -> pd.DataFrame:
     if squish is True:
         levelframe = _squishlevels(join, levels)
     else:
-        levelframe = join.rename(columns={join.columns[-2]: 'filename'})
+        levelframe = join.rename(columns={join.columns[-2]: "filename"})
     try:
         # TODO: probably superfluous
-        levelframe["suffix"] = (
-            levelframe["filename"].str.split(".", expand=True, n=1)[1]
-        )
+        levelframe["suffix"] = levelframe["filename"].str.split(
+            ".", expand=True, n=1
+        )[1]
     except KeyError:
-        levelframe['suffix'] = ''
+        levelframe["suffix"] = ""
     levelframe["size"] = group["size"]
     return levelframe
 
@@ -221,7 +222,7 @@ def make_treeframe(manifest: LSFrame, squish: bool = False) -> TreeFrame:
         manifest: file/directory DataFrame
         squish: squish levels together in output?
     """
-    stripped = manifest.loc[~manifest['directory'], 'path'].copy()
+    stripped = manifest.loc[~manifest["directory"], "path"].copy()
     parts = stripped.str.split("/", expand=True)
     parts["size"] = manifest["size"]
     n_parts, levelframes = parts.isna().sum(axis=1), []
@@ -237,7 +238,8 @@ def make_level_table(treeframe: TreeFrame) -> pd.DataFrame:
     etc. from a TreeFrame.
 
     Args:
-        treeframe: dataframe containing path information created using `make_treeframe`
+        treeframe: dataframe containing path information created using
+            `make_treeframe`
     """
     level_tables = []
     levels = [

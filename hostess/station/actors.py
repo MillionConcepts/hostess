@@ -14,9 +14,7 @@ from typing import Any, Callable, Hashable, MutableMapping, Optional, Sequence
 from dustgoggles.structures import listify
 from google.protobuf.message import Message
 
-from hostess.station.bases import (
-    Actor, DispatchActor, Node, NoMatch, Sensor
-)
+from hostess.station.bases import Actor, DispatchActor, Node, NoMatch, Sensor
 import hostess.station.delegates as delegates
 from hostess.station.handlers import (
     make_actiondict,
@@ -37,10 +35,7 @@ keys a dict must have to count as a valid "actiondict" in a Node's actions list
 
 
 def init_execution(
-    node: Node,
-    instruction: Message,
-    key: Optional[Hashable],
-    noid: bool
+    node: Node, instruction: Message, key: Optional[Hashable], noid: bool
 ) -> tuple[pro.Action, dict, Hashable]:
     """
     perform setup for a "regular" 'do'-type Instruction. Intended primarily as
@@ -75,7 +70,7 @@ def init_execution(
 def conclude_execution(
     result: Any,
     status: Optional[str] = None,
-    actiondict: Optional[MutableMapping[str, Any]] = None
+    actiondict: Optional[MutableMapping[str, Any]] = None,
 ):
     """
     conclude a "regular" 'do'-type action, inserting relevant data into its
@@ -101,11 +96,11 @@ def conclude_execution(
         # 'streaming' results, which we do not want to overwrite with the
         # exception.
         actiondict["status"] = "crash"
-        actiondict['exception'] = result
+        actiondict["exception"] = result
     else:
         # individual actors may have unique failure criteria
         actiondict["status"] = "success" if status is None else status
-        actiondict['result'] = result
+        actiondict["result"] = result
     # in some cases could check stderr but would have to be careful
     # due to the many processes that communicate on stderr on purpose
     actiondict["end"] = dt.datetime.now(dt.UTC)
@@ -124,13 +119,9 @@ def reported(executor: Callable) -> Callable:
     Returns:
         version of execute() method with added setup and conclusion steps.
     """
+
     def with_reportage(
-        self,
-        node: Node,
-        instruction: Message,
-        key=None,
-        noid=False,
-        **kwargs
+        self, node: Node, instruction: Message, key=None, noid=False, **kwargs
     ):
         action, report, key = init_execution(node, instruction, key, noid)
         try:
@@ -159,6 +150,7 @@ class PipeActorPlaceholder(Actor):
 
 class FileWriter(Actor):
     """Simple Actor that writes to a file."""
+
     def match(self, instruction: Any, **_) -> bool:
         if instruction.action.name != "filewrite":
             raise NoMatch("not a file write instruction")
@@ -224,7 +216,7 @@ class FuncCaller(Actor):
         caches, call = make_function_call(action.functioncall)
         node.actions[key] |= caches
         call()
-        if len(node.actions[key]['result']) != 0:
+        if len(node.actions[key]["result"]) != 0:
             return node.actions[key]["result"]
         else:
             return None
@@ -261,20 +253,20 @@ class SysCaller(Actor):
         kwargs = {}
         # feed a binary blob to process stdin if present
         if action.systemcall.payload is not None:
-            kwargs['_in_stream'] = BytesIO(action.systemcall.payload)
+            kwargs["_in_stream"] = BytesIO(action.systemcall.payload)
         viewer = RunCommand(action.systemcall.command, _viewer=True)()
         # slightly different convention than FunctionCaller because all we have
         # is out and err
-        node.actions[key] |= {'result': {'out': viewer.out, 'err': viewer.err}}
+        node.actions[key] |= {"result": {"out": viewer.out, "err": viewer.err}}
         viewer.wait()
         # we don't want to report the action as failed for having stuff in
         # stderr because of how many applications randomly print to stderr.
         # the requesting object will have to handle that, or a subclass
         # could call this method from super and postfilter the results.
         # even raising the exception based on exit code is maybe questionable!
-        node.actions[key]['exit_code'] = viewer.returncode()
-        status = 'crash' if viewer.returncode() != 0 else 'success'
-        return {'out': viewer.out, 'err': viewer.err}, status
+        node.actions[key]["exit_code"] = viewer.returncode()
+        status = "crash" if viewer.returncode() != 0 else "success"
+        return {"out": viewer.out, "err": viewer.err}, status
 
     name = "syscaller"
     actortype = "action"
@@ -293,7 +285,9 @@ class LineLogger(Actor):
             return True
         raise NoMatch("not a string.")
 
-    def execute(self, node: "delegates.Delegate", line: str, *, path=None, **_):
+    def execute(
+        self, node: "delegates.Delegate", line: str, *, path=None, **_
+    ):
         if path is None:
             return
         with path.open("a") as stream:
@@ -331,16 +325,17 @@ class ReportStringMatch(Actor):
         patterns=(),
         *,
         path=None,
-        **_
+        **_,
     ):
         node.add_actionable_event(
             {
                 "path": str(path),
                 "content": line,
-                "match": [p for p in patterns if re.search(p, line)]
+                "match": [p for p in patterns if re.search(p, line)],
             },
-            self.owner
+            self.owner,
         )
+
     name = "grepreport"
     actortype = "action"
 
@@ -365,7 +360,12 @@ class InstructionFromInfo(DispatchActor):
                 return True
         raise NoMatch("note did not match criteria")
 
-    def execute(self, node: "Station", note, **_,):
+    def execute(
+        self,
+        node: "Station",
+        note,
+        **_,
+    ):
         if self.instruction_maker is None:
             raise TypeError("Must have an instruction maker.")
         delegatename = self.pick(node, note)
@@ -438,6 +438,7 @@ class DirWatch(FileSystemWatch):
     like FileSystemWatch, but its `target` property should be a folder, not a
     file, and its `patterns` property matches newly-appearing filenames.
     """
+
     def __init__(self):
         super().__init__(checker=watch_dir)
 

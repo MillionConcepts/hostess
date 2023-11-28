@@ -22,7 +22,7 @@ def get_parent_labels(node: TreeNode):
 
 def _is_dropnode(node):
     """is a node designed to hide stuff?"""
-    return isinstance(node.data, dict) and node.data['type'] == 'dropnode'
+    return isinstance(node.data, dict) and node.data["type"] == "dropnode"
 
 
 # noinspection PyPep8Naming,PyShadowingNames
@@ -30,10 +30,10 @@ def populate_dropnodes(node, items, max_items):
     dropnodes = {}
     for c in tuple(node.children):
         if _is_dropnode(c):
-            if c.data['start'] > len(items):
+            if c.data["start"] > len(items):
                 c.remove()
             else:
-                dropnodes[c.data['start']] = c
+                dropnodes[c.data["start"]] = c
         else:
             # note that we lose expanded status when we 'move' TreeNodes into
             # dropdowns this way
@@ -45,7 +45,7 @@ def populate_dropnodes(node, items, max_items):
         start, stop = i * max_items + 1, (i + 1) * max_items
         if start not in dropnodes.keys():
             drop = node.add(
-                f'{start}-{stop}', data={'type': 'dropnode', 'start': start}
+                f"{start}-{stop}", data={"type": "dropnode", "start": start}
             )
         else:
             drop = dropnodes[start]
@@ -70,13 +70,13 @@ def populate_children_from_dict(
     if (max_items is not None) and (len(items) > max_items):
         return populate_dropnodes(node, items, max_items)
     items, ok_children = tuple(enumerate(items)), []
-    prefix_map = {str(c.label).split(': ')[0]: c for c in node.children}
+    prefix_map = {str(c.label).split(": ")[0]: c for c in node.children}
     for i, kv in items:
         k, v = kv
         # TODO: is there a nicer way to do this? it's hard to really attach
         #  a fiducial at the station level. The colon-splitting thing is also
         #  a little hazardous.
-        before = str(k).split(': ')[0]
+        before = str(k).split(": ")[0]
         child = prefix_map.get(before)
         if child is not None:
             ok_children.append(child)
@@ -132,9 +132,9 @@ class DictColumn(VerticalScroll):
 
     def update(self) -> None:
         tkwargs = {
-            'dictionary': self.mapping,
-            'patterns': self.patterns,
-            'max_items': self.max_items
+            "dictionary": self.mapping,
+            "patterns": self.patterns,
+            "max_items": self.max_items,
         }
         if len(self.children) == 1:
             tree = dict_to_tree(id=f"{self.id}-tree", **tkwargs)
@@ -153,7 +153,7 @@ class SortingTree(Tree):
         self,
         *args,
         patterns: Mapping[str, Sequence[Callable[[tuple[str]], bool]]] = None,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(*args, **kwargs)
         self.patterns = patterns if patterns is not None else {}
@@ -179,20 +179,20 @@ class SortingTree(Tree):
         def add_node(
             path: list[TreeNode[TreeDataType]],
             node: TreeNode[TreeDataType],
-            last: bool
+            last: bool,
         ) -> None:
             child_path = [*path, node]
             node._line = len(lines)
             add_line(TreeLine(child_path, last))
             if node._expanded:
-                if self.match(node, 'sort'):
+                if self.match(node, "sort"):
                     drop = filter(lambda c: _is_dropnode(c), node._children)
                     reg = filter(lambda c: not _is_dropnode(c), node._children)
                     children = sorted(reg, key=lambda c: str(c.label))
                     # currently we don't actually have a case where we have
                     # dropdowns and not-dropdowns, but this is the correct
                     # behavior
-                    children += sorted(drop, key=lambda c: c.data['start'])
+                    children += sorted(drop, key=lambda c: c.data["start"])
                 else:
                     children = node._children
                 for last, child in loop_last(children):

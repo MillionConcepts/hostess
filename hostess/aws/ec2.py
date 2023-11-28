@@ -20,7 +20,7 @@ from typing import (
     Mapping,
     Optional,
     Sequence,
-    Union
+    Union,
 )
 
 import boto3.resources.base
@@ -52,12 +52,16 @@ from hostess.caller import (
     CallerCompressionType,
     CallerSerializationType,
     CallerUnpackingOperator,
-    generic_python_endpoint
+    generic_python_endpoint,
 )
 from hostess.config import EC2_DEFAULTS, GENERAL_DEFAULTS
 import hostess.shortcuts as hs
 from hostess.ssh import (
-    find_conda_env, find_ssh_key, jupyter_connect, NotebookConnection, SSH
+    find_conda_env,
+    find_ssh_key,
+    jupyter_connect,
+    NotebookConnection,
+    SSH,
 )
 from hostess.subutils import Processlike, Viewer
 from hostess.utilities import (
@@ -89,7 +93,9 @@ class NoKeyError(OSError):
     """we're trying to do things over SSH, but can't find a valid keyfile."""
 
 
-def connectwrap(func: Callable[["Instance", ...], Any]) -> Callable[["Instance", ...], Any]:
+def connectwrap(
+    func: Callable[["Instance", ...], Any]
+) -> Callable[["Instance", ...], Any]:
     @wraps(func)
     def tryconnect(instance, *args, **kwargs):
         # noinspection PyProtectedMember
@@ -104,11 +110,11 @@ def connectwrap(func: Callable[["Instance", ...], Any]) -> Callable[["Instance",
 
 
 def summarize_instance_description(
-    description: Mapping
+    description: Mapping,
 ) -> InstanceDescription:
     """
-    convert a dictionary produced from an EC2 API Instance object to a more 
-    concise format. Likely sources for this dictionary include `boto3` or 
+    convert a dictionary produced from an EC2 API Instance object to a more
+    concise format. Likely sources for this dictionary include `boto3` or
     parsing JSON responses from the AWS CLI or HTTP API.
     """
     return {
@@ -136,7 +142,7 @@ def ls_instances(
     `ls` for EC2 instances.
 
     Args:
-        identifier: string specifying a particular instance. may be a 
+        identifier: string specifying a particular instance. may be a
             stringified IP address or instance id.
         states: strings specifying legal states for listed instances.
         raw_filters: search filters to pass directly to the EC2 API.
@@ -147,11 +153,11 @@ def ls_instances(
             field names. Otherwise, return a flattened version of the full API
             response.
         tag_regex: regex patterns for tag matching.
-        tag_filters: filters to interpret as tag name / value pairs before 
+        tag_filters: filters to interpret as tag name / value pairs before
             passing to the EC2 API.
 
     Returns:
-        tuple of records describing all matching EC2 instances owned by 
+        tuple of records describing all matching EC2 instances owned by
             caller.
     """
     client = init_client("ec2", client, session)
@@ -167,9 +173,9 @@ def ls_instances(
     descriptions = chain.from_iterable(
         map(get("Instances"), response["Reservations"])
     )
-    # TODO: examine newer Filter API functionality (see 
+    # TODO: examine newer Filter API functionality (see
     # https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_Filter.html)
-    
+
     # the EC2 api does not support string inclusion or other fuzzy filters.
     # we would like to be able to fuzzy-filter, so we apply our tag filters to
     # the structure returned by boto3 from its DescribeInstances call.
@@ -181,11 +187,20 @@ def ls_instances(
     return tuple(descriptions)
 
 
-def instances_from_ids(
-    ids, resource=None, session=None,
-        **instance_kwargs: Union[str, botocore.client.BaseClient, boto3.resources.base.ServiceResource,
-                                 boto3.Session, Path, bool]
+def _instances_from_ids(
+    ids,
+    resource: Optional[boto3.resources.base.ServiceResource] = None,
+    session: Optional[boto3.Session] = None,
+    **instance_kwargs: Union[
+        str,
+        botocore.client.BaseClient,
+        boto3.resources.base.ServiceResource,
+        boto3.Session,
+        Path,
+        bool,
+    ],
 ):
+    """helper function for cluster launch."""
     resource = init_resource("ec2", resource, session)
     instances = []
     # TODO: make this asynchronous
@@ -235,7 +250,7 @@ class Instance:
             client: boto client. creates default client if not given.
             resource: boto resource. creates default resource if not given.
             session: boto session. creates default session if not given.
-            """
+        """
         resource = init_resource("ec2", resource, session)
         if isinstance(description, str):
             # if it's got periods in it, assume it's a public IPv4 address
@@ -282,8 +297,14 @@ class Instance:
         wait=True,
         connect: bool = False,
         maxtries: int = 40,
-        **instance_kwargs: Union[str, botocore.client.BaseClient, boto3.resources.base.ServiceResource,
-                                 boto3.Session, Path, bool]
+        **instance_kwargs: Union[
+            str,
+            botocore.client.BaseClient,
+            boto3.resources.base.ServiceResource,
+            boto3.Session,
+            Path,
+            bool,
+        ],
     ) -> "Instance":
         """
         launch a single instance. This is a thin wrapper for
@@ -308,7 +329,7 @@ class Instance:
             client,
             session,
             wait,
-            **instance_kwargs
+            **instance_kwargs,
         )[0]
         if connect is True:
             instance._wait_on_connection(maxtries)
@@ -322,7 +343,7 @@ class Instance:
                 break
             except ConnectionError:
                 continue
-        print('connection established')
+        print("connection established")
 
     # TODO: pull more of these command / connect behaviors up to SSH.
 
@@ -417,7 +438,9 @@ class Instance:
                 self._ssh.conn.open()
                 return
             except (
-                AttributeError, SSHException, NoValidConnectionsError
+                AttributeError,
+                SSHException,
+                NoValidConnectionsError,
             ) as ce:
                 connection_error = ce
                 time.sleep(delay)
@@ -491,7 +514,7 @@ class Instance:
         _viewer: bool = True,
         _wait: bool = False,
         _quiet: bool = True,
-        **kwargs: Union[int, str, float, bool]
+        **kwargs: Union[int, str, float, bool],
     ) -> Processlike:
         """
         run a command in the instance's default interpreter.
@@ -519,7 +542,7 @@ class Instance:
             _viewer=_viewer,
             _wait=_wait,
             _quiet=_quiet,
-            **kwargs
+            **kwargs,
         )
 
     @connectwrap
@@ -530,7 +553,7 @@ class Instance:
         _poll: float = 0.05,
         _timeout: Optional[float] = None,
         _return_viewer: bool = False,
-        **kwargs: Union[int, str, float, bool]
+        **kwargs: Union[int, str, float, bool],
     ) -> Optional[Viewer]:
         """
         pretend you are running a command on the instance while looking at a
@@ -560,7 +583,7 @@ class Instance:
             _poll=_poll,
             _timeout=_timeout,
             _return_viewer=_return_viewer,
-            **kwargs
+            **kwargs,
         )
 
     @connectwrap
@@ -590,7 +613,9 @@ class Instance:
             return self.con(hs.chain(commands, op), **kwargs)
         return self.command(hs.chain(commands, op), **kwargs)
 
-    def notebook(self, **connect_kwargs: Union[int, str, bool]) -> NotebookConnection:
+    def notebook(
+        self, **connect_kwargs: Union[int, str, bool]
+    ) -> NotebookConnection:
         """
         execute a Jupyter Notebook on the instance and establish a tunnel for
         local access.
@@ -603,14 +628,14 @@ class Instance:
             structure containing results of tunneled Notebook execution.
         """
         self._prep_connection()
-        return jupyter_connect(self._ssh,  **connect_kwargs)
+        return jupyter_connect(self._ssh, **connect_kwargs)
 
     def start(
         self,
         return_response: bool = False,
         wait: bool = True,
         connect: bool = False,
-        maxtries: int = 40
+        maxtries: int = 40,
     ) -> Optional[dict]:
         """
         Start the instance.
@@ -629,9 +654,9 @@ class Instance:
         response = self.instance_.start()
         self.update()
         if (wait is True) and (connect is False):
-            print('waiting until instance is running...', end='')
+            print("waiting until instance is running...", end="")
             self.wait_until_running()
-            print('running.')
+            print("running.")
         if connect is True:
             self.wait_until_running()
             self._wait_on_connection(maxtries)
@@ -677,7 +702,7 @@ class Instance:
         target: Union[str, Path],
         *args: Any,
         literal_str: bool = False,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> dict:
         """
         write local file or object to target file on instance.
@@ -704,7 +729,7 @@ class Instance:
         source: Union[str, Path],
         target: Union[str, Path, IO],
         *args: Any,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> dict:
         """
         copy file from instance to local.
@@ -725,9 +750,9 @@ class Instance:
     def read(
         self,
         source: Union[str, Path],
-        mode: Literal['r', 'rb'] = 'r',
-        encoding: str = 'utf-8',
-        as_buffer: bool = False
+        mode: Literal["r", "rb"] = "r",
+        encoding: str = "utf-8",
+        as_buffer: bool = False,
     ) -> Union[io.BytesIO, io.StringIO, bytes, str]:
         """
         read a file from the instance directly into memory.
@@ -745,8 +770,12 @@ class Instance:
         return self._ssh.read(source, mode, encoding, as_buffer)
 
     @connectwrap
-    def read_csv(self, source: Union[str, Path], encoding: str = 'utf-8', **csv_kwargs: Any)\
-            -> pd.DataFrame:
+    def read_csv(
+        self,
+        source: Union[str, Path],
+        encoding: str = "utf-8",
+        **csv_kwargs: Any,
+    ) -> pd.DataFrame:
         """
         read a CSV-like file from the instance into a pandas DataFrame.
 
@@ -802,15 +831,13 @@ class Instance:
         else:
             pip = f"{self.conda_env(env)}/bin/pip"
         try:
-            result = self.command(
-                f"{pip} show {package}", _wait=True
-            )
+            result = self.command(f"{pip} show {package}", _wait=True)
             if len(result.stderr) > 0:
                 raise OSError(
                     f"pip show did not run successfully: {result.stderr[0]}"
                 )
             return re.search(
-                r"Location:\s+(.*?)\n", ''.join(result.stdout)
+                r"Location:\s+(.*?)\n", "".join(result.stdout)
             ).group(1)
         except AttributeError:
             raise FileNotFoundError("package not found")
@@ -879,10 +906,7 @@ class Instance:
         self.wait_until("terminated", timeout)
 
     def reboot(
-        self,
-        wait: bool = True,
-        hard: bool = False,
-        timeout: float = 65
+        self, wait: bool = True, hard: bool = False, timeout: float = 65
     ):
         """
         Reboot or hard-restart the instance. Note that a hard
@@ -915,9 +939,7 @@ class Instance:
 
     @connectwrap
     def tunnel(
-        self,
-        local_port: int,
-        remote_port: int
+        self, local_port: int, remote_port: int
     ) -> tuple[Process, dict[str, Union[int, str, Path]]]:
         """
         create an SSH tunnel between a local port and a remote port.
@@ -1011,7 +1033,7 @@ class Instance:
             print_result=print_result,
             filter_kwargs=filter_kwargs,
             interpreter=interpreter,
-            for_bash=True
+            for_bash=True,
         )
         return self.command(
             python_command_string, _viewer=True, **command_kwargs
@@ -1026,7 +1048,7 @@ class Instance:
         self,
         ip: Optional[str] = None,
         force: bool = False,
-        revoke: bool = True
+        revoke: bool = True,
     ):
         """
         Modify this instance's security group(s) to permit SSH access from
@@ -1045,9 +1067,7 @@ class Instance:
         for sg_index in self.instance_.security_groups:
             sg = init_resource("ec2").SecurityGroup(sg_index["GroupId"])
             if revoke is True:
-                revoke_ingress(
-                    sg, force_modification_of_default_sg=force
-                )
+                revoke_ingress(sg, force_modification_of_default_sg=force)
             authorize_ssh_ingress_from_ip(
                 sg, ip=ip, force_modification_of_default_sg=force
             )
@@ -1076,6 +1096,7 @@ class Instance:
 
 class Cluster:
     """Class offering an interface to multiple EC2 instances at once."""
+
     def __init__(self, instances: Collection[Instance]):
         """
         Args:
@@ -1109,8 +1130,9 @@ class Cluster:
             time.sleep(0.01)
         return [f.result() for f in futures]
 
-    def command(self, command: str, *args: Union[str, int, float], **kwargs: bool
-                ) -> list[Processlike, ...]:
+    def command(
+        self, command: str, *args: Union[str, int, float], **kwargs: bool
+    ) -> list[Processlike, ...]:
         """
         Call a shell command on all this Cluster's Instances. See
         `Instance.command()` for further documentation.
@@ -1131,7 +1153,7 @@ class Cluster:
         commands: Sequence[str],
         op: Literal["and", "xor", "then"] = "then",
         _con: bool = False,
-        **kwargs: bool
+        **kwargs: bool,
     ) -> list[Processlike, ...]:
         """
         Call a sequence of shell commands on all this Cluster's Instances. See
@@ -1148,19 +1170,23 @@ class Cluster:
         Returns:
             list containing results of `commands()` from each Instance.
         """
-        return self._async_method_call("commands", commands, op, _con, **kwargs)
+        return self._async_method_call(
+            "commands", commands, op, _con, **kwargs
+        )
 
-    def call_python(self,
-                    module: str,
-                    func: Optional[str] = None,
-                    payload: Any = None,
-                    **kwargs: Union[
-                        bool,
-                        str,
-                        CallerCompressionType,
-                        CallerSerializationType,
-                        CallerUnpackingOperator]
-                    ) -> list[Processlike, ...]:
+    def call_python(
+        self,
+        module: str,
+        func: Optional[str] = None,
+        payload: Any = None,
+        **kwargs: Union[
+            bool,
+            str,
+            CallerCompressionType,
+            CallerSerializationType,
+            CallerUnpackingOperator,
+        ],
+    ) -> list[Processlike, ...]:
         """
         Call a Python function on all this Cluster's Instances. See
         `Instance.call_python()` for further documentation.
@@ -1174,11 +1200,14 @@ class Cluster:
         Returns:
             list containing results of `call_python()` from each Instance.
         """
-        return self._async_method_call("call_python", module, func, payload, **kwargs)
+        return self._async_method_call(
+            "call_python", module, func, payload, **kwargs
+        )
 
     def start(self, *args, **kwargs) -> list:
         """
-        Start all Instances. See `Instance.start()` for further documentation / valid args and kwargs.
+        Start all Instances. See `Instance.start()` for further documentation,
+        including valid arguments.
 
         Returns:
             list containing results of `start()` from each Instance.
@@ -1187,7 +1216,8 @@ class Cluster:
 
     def stop(self, *args, **kwargs) -> list:
         """
-        Stop all Instances. See `Instance.stop()` for further documentation / valid args and kwargs.
+        Stop all Instances. See `Instance.stop()` for further documentation,
+        including valid arguments.
 
         Returns:
             list containing results of `stop()` from each Instance.
@@ -1216,7 +1246,9 @@ class Cluster:
     #     callback: Callable = zero,
     #     delay=0.02,
     # ):
-    #     status = {instance.instance_id: "ready" for instance in self.instances}
+    #     status = {
+    #       instance.instance_id: "ready" for instance in self.instances
+    #     }
     #
     #     def finish_factory(instance_id):
     #         def finisher(*args, **kwargs):
@@ -1259,8 +1291,14 @@ class Cluster:
     def from_descriptions(
         cls,
         descriptions: Collection[InstanceDescription],
-        **kwargs: Union[str, Path, botocore.client.BaseClient,
-                        boto3.resources.base.ServiceResource, boto3.Session, bool]
+        **kwargs: Union[
+            str,
+            Path,
+            botocore.client.BaseClient,
+            boto3.resources.base.ServiceResource,
+            boto3.Session,
+            bool,
+        ],
     ) -> "Cluster":
         """
         Construct a Cluster from InstanceDescriptions, as produced by
@@ -1287,8 +1325,14 @@ class Cluster:
         client: Optional[botocore.client.BaseClient] = None,
         session: Optional[boto3.session] = None,
         wait: bool = True,
-        **instance_kwargs: Union[str, botocore.client.BaseClient, boto3.resources.base.ServiceResource,
-                                 boto3.Session, Path, bool],
+        **instance_kwargs: Union[
+            str,
+            botocore.client.BaseClient,
+            boto3.resources.base.ServiceResource,
+            boto3.Session,
+            Path,
+            bool,
+        ],
     ) -> "Cluster":
         """
         Launch a fleet of Instances and collect them into a Cluster. See
@@ -1317,27 +1361,27 @@ class Cluster:
         client = init_client("ec2", client, session)
         options = {} if options is None else options
         # TODO: add a few more conveniences, clean up
-        if instance_kwargs.get('type_') is not None:
-            options['instance_type'] = instance_kwargs.pop('type_')
-        if instance_kwargs.get('name') is not None:
-            options['instance_name'] = instance_kwargs.pop('name')
+        if instance_kwargs.get("type_") is not None:
+            options["instance_type"] = instance_kwargs.pop("type_")
+        if instance_kwargs.get("name") is not None:
+            options["instance_name"] = instance_kwargs.pop("name")
         if template is None:
             using_scratch_template = True
             template = create_launch_template(**options)["LaunchTemplateName"]
-            if options.get('image_id') is None:
+            if options.get("image_id") is None:
                 # we're always using a stock Canonical image in this case, so
                 # note that we're forcing uname to 'ubuntu':
                 print(
                     "Using stock Canonical image, so setting uname to "
                     "'ubuntu'."
                 )
-                instance_kwargs['uname'] = 'ubuntu'
+                instance_kwargs["uname"] = "ubuntu"
         else:
             using_scratch_template = False
         if tags is not None:
             tagrecs = [{"Key": k, "Value": v} for k, v in tags.items()]
             tag_kwarg = {
-                'TagSpecifications': [
+                "TagSpecifications": [
                     {"ResourceType": "instance", "Tags": tagrecs},
                     {"ResourceType": "volume", "Tags": tagrecs},
                 ]
@@ -1360,16 +1404,16 @@ class Cluster:
                     "DefaultTargetCapacityType": "on-demand",
                 },
                 Type="instant",
-                **tag_kwarg
+                **tag_kwarg,
             )
         finally:
             if using_scratch_template is True:
                 client.delete_launch_template(LaunchTemplateName=template)
         # note that we do not want to raise these all the time, because the
         # API frequently dumps a lot of harmless info in here.
-        launch_errors = len(fleet.get('Errors', []))
+        launch_errors = len(fleet.get("Errors", []))
         try:
-            n_instances = len(fleet['Instances'][0]['InstanceIds'])
+            n_instances = len(fleet["Instances"][0]["InstanceIds"])
             assert n_instances > 0
         except (KeyError, IndexError, AssertionError):
             raise ValueError(
@@ -1384,7 +1428,7 @@ class Cluster:
             )
 
         def instance_hook():
-            return instances_from_ids(
+            return _instances_from_ids(
                 fleet["Instances"][0]["InstanceIds"],
                 client=client,
                 **instance_kwargs,
@@ -1420,7 +1464,7 @@ class Cluster:
         self,
         ip: Optional[str] = None,
         force: bool = False,
-        revoke: bool = True
+        revoke: bool = True,
     ) -> list[None]:
         """
         Modify all security groups associated with all of this Cluster's
@@ -1634,7 +1678,7 @@ def describe_instance_type(
 def _retrieve_instance_type_info(
     client: Optional[botocore.client.BaseClient] = None,
     session: Optional[boto3.session.Session] = None,
-    reset_cache: bool = False
+    reset_cache: bool = False,
 ) -> tuple[dict]:
     """
     Retrieve full descriptions of all instance types available in the client's
@@ -1679,7 +1723,7 @@ def _retrieve_instance_type_info(
 def instance_catalog(
     family: Optional[str] = None,
     client: Optional[botocore.client.BaseClient] = None,
-    session: Optional[boto3.session.Session] = None
+    session: Optional[boto3.session.Session] = None,
 ) -> pd.DataFrame:
     """
     Construct a catalog of available instance types, including their
@@ -1711,7 +1755,7 @@ def _interpret_ebs_args(
     volume_size: Optional[int] = None,
     iops: Optional[int] = None,
     throughput: Optional[int] = None,
-    volume_list: Optional[Sequence[dict[str, Union[int, str]]]] = None
+    volume_list: Optional[Sequence[dict[str, Union[int, str]]]] = None,
 ) -> list[dict]:
     """
     helper function for `create_launch_template()`. Parse user-provided volume
@@ -1825,7 +1869,7 @@ def create_security_group(
     description: Optional[str] = None,
     client: Optional[botocore.client.BaseClient] = None,
     resource: Optional[boto3.resources.base.ServiceResource] = None,
-    session: Optional[boto3.session.Session] = None
+    session: Optional[boto3.session.Session] = None,
 ) -> "SecurityGroup":
     """
     Create a new EC2 security group in the caller's AWS account with default
@@ -1894,7 +1938,7 @@ def create_ec2_key(
     key_name: Optional[str] = None,
     save_key: bool = True,
     resource: Optional[boto3.resources.base.ServiceResource] = None,
-    session: Optional[boto3.session.Session] = None
+    session: Optional[boto3.session.Session] = None,
 ) -> "KeyPair":
     """
     Create a new EC2 SSH key pair in the caller's AWS account. Optionally also
@@ -1930,7 +1974,7 @@ def create_ec2_key(
 
 def create_launch_template(
     template_name: Optional[str] = None,
-    instance_type: str = EC2_DEFAULTS['instance_type'],
+    instance_type: str = EC2_DEFAULTS["instance_type"],
     volume_type: Optional[Literal["gp2", "gp3", "io1", "io2"]] = None,
     volume_size: Optional[int] = None,
     image_id: Optional[str] = None,
@@ -1942,7 +1986,7 @@ def create_launch_template(
     tags: Optional[dict] = None,
     key_name: Optional[str] = None,
     client: Optional[botocore.client.BaseClient] = None,
-    session: Optional[boto3.session.Session] = None
+    session: Optional[boto3.session.Session] = None,
 ) -> dict:
     """
     Create a new EC2 launch template in the caller's AWS account (see
@@ -2001,7 +2045,7 @@ def create_launch_template(
         try:
             image_id = client.describe_images(
                 Filters=[{"Name": "name", "Values": [image_id]}]
-            )['Images'][0]["ImageId"]
+            )["Images"][0]["ImageId"]
         except KeyError:
             raise ValueError(
                 f"Can't find an image corresponding to the name {image_id}."
@@ -2081,7 +2125,7 @@ def revoke_ingress(
     sg: "SecurityGroup",
     force_modification_of_default_sg: bool = False,
     ports: Collection[int] = (22,),
-    protocols: Collection[Literal["tcp", "udp", "icmp"]] = ('tcp',)
+    protocols: Collection[Literal["tcp", "udp", "icmp"]] = ("tcp",),
 ):
     """
     Remove inbound permission rules from a security group. The default
@@ -2095,27 +2139,31 @@ def revoke_ingress(
         protocols: revoke only those rules granting ingress via one of these
             protocols
     """
-    if 'default' in sg.id and not force_modification_of_default_sg:
+    if "default" in sg.id and not force_modification_of_default_sg:
         print(
-            '\tRefusing to modify permissions of a default security group. '
-            'Pass flag to override.'
+            "\tRefusing to modify permissions of a default security group. "
+            "Pass flag to override."
         )
         return
     print(
-        f'Revoking ingress from all IPs on port(s) {ports} to security group '
-        f'{sg.id}'
+        f"Revoking ingress from all IPs on port(s) {ports} to security group "
+        f"{sg.id}"
     )
     for rule in sg.ip_permissions:
         # do not modify ingress rules based on security group (and not just IP)
-        if not (rule['FromPort'] in ports and
-                rule['IpProtocol'] in protocols and
-                any(sg.ip_permissions[1]['UserIdGroupPairs'])):
+        if not (
+            rule["FromPort"] in ports
+            and rule["IpProtocol"] in protocols
+            and any(sg.ip_permissions[1]["UserIdGroupPairs"])
+        ):
             continue
         sg.revoke_ingress(IpPermissions=[rule])
 
 
 def authorize_ssh_ingress_from_ip(
-    sg: "SecurityGroup", ip: Optional[str] = None, force_modification_of_default_sg: bool = False,
+    sg: "SecurityGroup",
+    ip: Optional[str] = None,
+    force_modification_of_default_sg: bool = False,
 ):
     """
     Args:
@@ -2128,10 +2176,10 @@ def authorize_ssh_ingress_from_ip(
         # automatically select the user's ip
         ip = my_external_ip()
     print(f"Authorizing SSH ingress from {ip} for security group {sg.id}")
-    if 'default' in sg.id and not force_modification_of_default_sg:
+    if "default" in sg.id and not force_modification_of_default_sg:
         print(
-            '\tRefusing to modify permissions of a default security group. '
-            'Pass flag to override.'
+            "\tRefusing to modify permissions of a default security group. "
+            "Pass flag to override."
         )
         return
     try:
@@ -2151,7 +2199,7 @@ def authorize_ssh_ingress_from_ip(
             ],
         )
     except botocore.client.ClientError as ce:
-        if 'InvalidPermission.Duplicate' in str(ce):
+        if "InvalidPermission.Duplicate" in str(ce):
             print(f"** {ip} already authorized for SSH ingress for {sg.id} **")
         else:
             raise

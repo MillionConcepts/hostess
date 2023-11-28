@@ -4,11 +4,15 @@ from pathlib import Path
 
 from dustgoggles.structures import dig_for_value
 
-from hostess.aws.utilities import init_client, clarify_region, autopage, _check_cached_results, _clear_cached_results
-from hostess.config import GENERAL_DEFAULTS
-from hostess.utilities import (
-    filestamp
+from hostess.aws.utilities import (
+    init_client,
+    clarify_region,
+    autopage,
+    _check_cached_results,
+    _clear_cached_results,
 )
+from hostess.config import GENERAL_DEFAULTS
+from hostess.utilities import filestamp
 
 
 def get_on_demand_price(instance_type, region=None, client=None, session=None):
@@ -125,9 +129,7 @@ def unpack_on_demand_pricelist(pricelist):
     return {
         "instance_type": pricelist["product"]["attributes"]["instanceType"],
         "usd_per_hour": float(
-            dig_for_value(
-                pricelist["terms"]["OnDemand"], "USD"
-            )
+            dig_for_value(pricelist["terms"]["OnDemand"], "USD")
         ),
     }
 

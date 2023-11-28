@@ -7,8 +7,16 @@ import random
 import sys
 import time
 from types import MappingProxyType as MPt, ModuleType
-from typing import Union, Literal, Optional, Type, Any, Mapping, Hashable, \
-    Sequence
+from typing import (
+    Union,
+    Literal,
+    Optional,
+    Type,
+    Any,
+    Mapping,
+    Hashable,
+    Sequence,
+)
 
 from dustgoggles.dynamic import exc_report
 from dustgoggles.structures import rmerge
@@ -23,9 +31,7 @@ import hostess.station.proto.station_pb2 as pro
 from hostess.station.talkie import stsend, timeout_factory
 
 ConfigParamType = Literal["config_property", "config_dict"]
-GENERIC_LOGINFO = MPt(
-    {'logdir': Path(__file__).parent / ".nodelogs"}
-)
+GENERIC_LOGINFO = MPt({"logdir": Path(__file__).parent / ".nodelogs"})
 
 
 class Delegate(bases.Node):
@@ -40,7 +46,7 @@ class Delegate(bases.Node):
         update_interval: float = 10,
         start: bool = False,
         loginfo: Optional[Mapping[str]] = MPt({}),
-        _is_process_owner: bool = False
+        _is_process_owner: bool = False,
     ):
         """
         configurable remote processor for hostess network. can gather data
@@ -66,9 +72,9 @@ class Delegate(bases.Node):
             poll=poll,
             timeout=timeout,
             _is_process_owner=_is_process_owner,
-            logdir=loginfo.get('logdir', GENERIC_LOGINFO['logdir']),
+            logdir=loginfo.get("logdir", GENERIC_LOGINFO["logdir"]),
             loginfo=loginfo,
-            station=station_address
+            station=station_address,
         )
         self.update_interval = update_interval
         self.actionable_events, self.infocount = [], defaultdict(int)
@@ -83,7 +89,7 @@ class Delegate(bases.Node):
             "logdir": self.logdir,
             "logfile": self.logfile,
             "update_interval": update_interval,
-            "_is_process_owner": _is_process_owner
+            "_is_process_owner": _is_process_owner,
         }
 
     def _set_logfile(self):
@@ -91,7 +97,7 @@ class Delegate(bases.Node):
         self.logfile = Path(
             self.logdir,
             f"{self.loginfo.get('init_time', self.init_time)}_{self.name}_"
-            f"{self.station[0]}_{self.station[1]}.log"
+            f"{self.station[0]}_{self.station[1]}.log",
         )
 
     def _sensor_loop(
@@ -153,13 +159,13 @@ class Delegate(bases.Node):
         except Exception as ex:
             # action crashed without setting its status as such
             self.actions[instruction_id]["status"] = "crash"
-            self.actions[instruction_id]['exception'] = ex
+            self.actions[instruction_id]["exception"] = ex
             return ex, False
         # an action wrapped in @reported will catch exceptions and do this
         # politely instead of crashing as above
-        if self.actions[instruction_id].get('exception') is not None:
-            self.actions[instruction_id]['status'] = 'crash'
-            return self.actions[instruction_id]['exception'], False
+        if self.actions[instruction_id].get("exception") is not None:
+            self.actions[instruction_id]["status"] = "crash"
+            return self.actions[instruction_id]["exception"], False
         return None, False
 
     def _check_actions(self):
@@ -182,7 +188,7 @@ class Delegate(bases.Node):
                     action,
                     exception=exception,
                     status="failed",
-                    category="action"
+                    category="action",
                 )
             else:
                 self._log(action, status="completed", category="action")
@@ -265,14 +271,14 @@ class Delegate(bases.Node):
         # goodbye to all that
         self.instruction_queue, self.actors, self.sensors = [], {}, {}
         try:
-            self.threads['exit_report'] = self.exc.submit(
+            self.threads["exit_report"] = self.exc.submit(
                 self._send_exit_report, exception
             )
         except Exception as ex:
             self._log("exit report failed", exception=ex, category="system")
         # wait to send exit report
-        if 'exit_report' in self.threads:
-            while self.threads['exit_report'].running():
+        if "exit_report" in self.threads:
+            while self.threads["exit_report"].running():
                 time.sleep(0.1)
 
     def _send_exit_report(self, exception: Optional[Exception] = None):
@@ -284,16 +290,14 @@ class Delegate(bases.Node):
                 to exit. None on intentional shutdown.
         """
         self.state = "crashed" if exception is not None else "shutdown"
-        msg = self._base_message(reason='exiting')
+        msg = self._base_message(reason="exiting")
         if exception is not None:
             try:
                 info = pro.Update(
                     info=[pack_obj(exc_report(exception), "exception")]
                 )
             except Exception as ex:
-                info = pro.Update(
-                    info=[pack_obj(exc_report(ex), "exception")]
-                )
+                info = pro.Update(info=[pack_obj(exc_report(ex), "exception")])
             msg.MergeFrom(info)
         self.talk_to_station(msg)
 
@@ -352,7 +356,7 @@ class Delegate(bases.Node):
                         "error setting interface property",
                         name=param.value.name,
                         category="system",
-                        exception=cae
+                        exception=cae,
                     )
                     raise bases.DoNotUnderstand(
                         f"error setting property: {cae}"
@@ -375,7 +379,7 @@ class Delegate(bases.Node):
         self._log(
             "configured from instruction",
             category="system",
-            configuration=(cp_for_log | cd_for_log)
+            configuration=(cp_for_log | cd_for_log),
         )
 
     def _handle_instruction(self, instruction: pro.Instruction):
@@ -393,8 +397,8 @@ class Delegate(bases.Node):
             self._log(
                 "received instruction",
                 content=instruction,
-                category='comms',
-                direction='recv'
+                category="comms",
+                direction="recv",
             )
             if enum(instruction, "type") == "configure":
                 self._configure_from_instruction(instruction)
@@ -410,7 +414,7 @@ class Delegate(bases.Node):
                 )
         except bases.DoNotUnderstand as dne:
             status = "bad_request"
-            if enum(instruction, "type") == 'do':
+            if enum(instruction, "type") == "do":
                 err = self.explain_match(instruction, "action")
             else:
                 err = dne
@@ -427,7 +431,7 @@ class Delegate(bases.Node):
         actors: Sequence[bases.Actor],
         instruction: pro.Instruction,
         key: Optional[Hashable],
-        noid: bool
+        noid: bool,
     ):
         """
         helper function for execute_do_instruction(). run each matching Actor
@@ -488,10 +492,10 @@ class Delegate(bases.Node):
                     if self.state == "stopped":
                         self._log(
                             "no response from station, completing termination",
-                            category='comms'
+                            category="comms",
                         )
                         self.locked = False  # TODO: sure about this?
-                        return 'timeout'
+                        return "timeout"
                     self._log(response, category="comms", direction="recv")
                 # TODO, maybe: this could be a separate attribute
                 time.sleep(self.update_interval)
@@ -519,7 +523,7 @@ class Delegate(bases.Node):
         """
         decoded = read_comm(response)
         if isinstance(decoded, dict):
-            if decoded['err']:
+            if decoded["err"]:
                 # TODO: log
                 return "err"
             decoded = decoded["body"]
@@ -543,9 +547,9 @@ class Delegate(bases.Node):
                   "instruction" if successful and comm contained an Instruction
         """
         response = self._trysend(message)
-        if response not in ('timeout', 'connection refused'):
+        if response not in ("timeout", "connection refused"):
             response = self._interpret_response(response)
-        if response in ('err', 'timeout', 'connection_refused'):
+        if response in ("err", "timeout", "connection_refused"):
             self._log(
                 message, status=response, category="comms", direction="recv"
             )
@@ -559,11 +563,13 @@ class Delegate(bases.Node):
             list of TaskReport Messages, one for each currently-running action.
         """
         running = filter(
-            lambda a: a.get('status') == 'running', self.actions.values()
+            lambda a: a.get("status") == "running", self.actions.values()
         )
         return list(map(task_msg, running))
 
-    def _base_message(self, **fields: Union[Message, str, Sequence[Message], int]) -> pro.Update:
+    def _base_message(
+        self, **fields: Union[Message, str, Sequence[Message], int]
+    ) -> pro.Update:
         """
         construct a basic Update message.
 
@@ -586,10 +592,10 @@ class Delegate(bases.Node):
                 loc="primary",
                 can_receive=False,
                 busy=self.busy(),
-                threads={k: v._state for k, v in self.threads.items()}
+                threads={k: v._state for k, v in self.threads.items()},
             ),
             running=self._running_actions_message(),
-            **fields
+            **fields,
         )
 
     # TODO: untangle this + _base_message() workflow
@@ -607,12 +613,12 @@ class Delegate(bases.Node):
             the updated Update.
         """
         state = pro.DelegateState(
-            interface=pack_obj(self.config['interface']),
-            cdict=pack_obj(self.config['cdict']),
+            interface=pack_obj(self.config["interface"]),
+            cdict=pack_obj(self.config["cdict"]),
             actors=self.identify_elements("actors"),
             sensors=self.identify_elements("sensors"),
             infocount=dict(self.infocount),
-            init_params=pack_obj(self.init_params)
+            init_params=pack_obj(self.init_params),
         )
         message.state.MergeFrom(state)
         return message
@@ -621,7 +627,7 @@ class Delegate(bases.Node):
         self,
         instruction: pro.Instruction,
         status: Literal["bad_request", "wilco"],
-        err: Optional[Any] = None
+        err: Optional[Any] = None,
     ):
         """
         send a reply Update to an Instruction informing the Station that we
@@ -641,9 +647,7 @@ class Delegate(bases.Node):
         self.talk_to_station(msg)
 
     def add_actionable_event(
-        self,
-        event: Any,
-        category: Optional[Union[str, Sensor]] = None
+        self, event: Any, category: Optional[Union[str, Sensor]] = None
     ):
         """
         Queue an actionable event, usually received from a Sensor, for
@@ -688,7 +692,7 @@ def launch_delegate(
     delegate_class: str = "Delegate",
     elements: tuple[tuple[str, str]] = None,
     is_local: bool = False,
-    **init_kwargs
+    **init_kwargs,
 ) -> Optional[Delegate]:
     """
     hook for launching a delegate, designed to be easily called either locally
@@ -718,7 +722,7 @@ def launch_delegate(
     module: ModuleType = import_module(delegate_module)
     cls: Type[Delegate] = getattr(module, delegate_class)
     if is_local is False:
-        init_kwargs['_is_process_owner'] = True
+        init_kwargs["_is_process_owner"] = True
     delegate: Delegate = cls(station_address, name, **init_kwargs)
     for emod_name, ecls_name in elements:
         emodule: ModuleType = import_module(emod_name)

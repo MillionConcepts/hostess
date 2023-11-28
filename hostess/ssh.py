@@ -7,7 +7,15 @@ import os
 from pathlib import Path
 import time
 from typing import (
-    Any, Callable, Collection, Hashable, Mapping, Optional, Union, Literal, IO
+    Any,
+    Callable,
+    Collection,
+    Hashable,
+    Mapping,
+    Optional,
+    Union,
+    Literal,
+    IO,
 )
 
 import fabric.transfer
@@ -29,7 +37,7 @@ def open_tunnel(
     uname: str,
     keyfile: Union[str, Path],
     local_port: int,
-    remote_port: int
+    remote_port: int,
 ) -> tuple[Process, dict[str, Union[int, str, Path]]]:
     """
     create a child process that maintains an SSH tunnel. NOTE: supports only
@@ -71,6 +79,7 @@ def open_tunnel(
 
 def _move_print_heads(err_head, out_head, process):
     from rich import print as rp
+
     has_new_output = False
     if (outlen := len(process.out)) > out_head:
         has_new_output = True
@@ -115,7 +124,7 @@ class SSH(RunCommand):
         command: Optional[str] = None,
         conn: Optional[Connection] = None,
         key: Optional[str] = None,
-        **kwargs: Union[int, float, str, bool]
+        **kwargs: Union[int, float, str, bool],
     ):
         """
         Args:
@@ -136,10 +145,7 @@ class SSH(RunCommand):
 
     @classmethod
     def connect(
-        cls,
-        host: str,
-        uname: str = GENERAL_DEFAULTS["uname"],
-        key: str = None
+        cls, host: str, uname: str = GENERAL_DEFAULTS["uname"], key: str = None
     ) -> "SSH":
         """
         constructor that creates a connection to the remote host and uses it
@@ -166,7 +172,7 @@ class SSH(RunCommand):
         target: Union[str, Path],
         *args: Any,
         literal_str: bool = False,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> dict:
         """
         write local file or object to target file on remote host.
@@ -196,7 +202,7 @@ class SSH(RunCommand):
         source: Union[str, Path],
         target: Union[str, Path, IO],
         *args: Any,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> dict:
         """
         copy file from remote to local.
@@ -218,9 +224,9 @@ class SSH(RunCommand):
     def read(
         self,
         source: str,
-        mode: Literal['r', 'rb'] = 'r',
-        encoding: str = 'utf-8',
-        as_buffer: bool = False
+        mode: Literal["r", "rb"] = "r",
+        encoding: str = "utf-8",
+        as_buffer: bool = False,
     ) -> Union[io.BytesIO, io.StringIO, bytes, str]:
         """
         read a file from the remote host directly into memory.
@@ -235,12 +241,12 @@ class SSH(RunCommand):
         Returns:
             Buffer containing contents of remote file
         """
-        if mode not in ('r', 'rb'):
+        if mode not in ("r", "rb"):
             raise TypeError("mode must be 'r' or 'rb'")
         buffer = io.BytesIO()
         self.get(source, buffer)
         buffer.seek(0)
-        if mode == 'r':
+        if mode == "r":
             stringbuf = io.StringIO()
             stringbuf.write(buffer.read().decode(encoding))
             stringbuf.seek(0)
@@ -250,7 +256,10 @@ class SSH(RunCommand):
         return buffer.read()
 
     def read_csv(
-        self, source: Union[str, Path], encoding: str = 'utf-8', **csv_kwargs: Any
+        self,
+        source: Union[str, Path],
+        encoding: str = "utf-8",
+        **csv_kwargs: Any,
     ) -> pd.DataFrame:
         """
         read a CSV-like file from the remote host into a pandas DataFrame.
@@ -264,14 +273,10 @@ class SSH(RunCommand):
             DataFrame created from contents of remote CSV file
         """
         return pd.read_csv(
-            self.read(str(source), 'r', encoding, True), **csv_kwargs
+            self.read(str(source), "r", encoding, True), **csv_kwargs
         )
 
-    def tunnel(
-        self,
-        local_port: int,
-        remote_port: int
-    ):
+    def tunnel(self, local_port: int, remote_port: int):
         """
         create an SSH tunnel between a local port and a remote port; store an
         abstraction for the tunnel process, along with metadata about the
@@ -292,7 +297,7 @@ class SSH(RunCommand):
         _quiet: bool = True,
         _viewer: bool = True,
         _wait: bool = False,
-        **kwargs:  Union[int, float, str, bool]
+        **kwargs: Union[int, float, str, bool],
     ) -> Processlike:
         """
         run a shell command in the remote host's default interpreter.
@@ -315,13 +320,14 @@ class SSH(RunCommand):
         Returns:
             object representing executed process.
         """
-        if (_w := kwargs.pop('_w', None)) is not None:
+        if (_w := kwargs.pop("_w", None)) is not None:
             _wait = _w
         result = super().__call__(*args, _viewer=_viewer, **kwargs)
         if _wait is True:
             result.wait()
         if _quiet is False:
             from rich import print as rp
+
             if len(result.stdout) > 0:
                 rp(*result.stdout)
             if len(result.stderr) > 0:
@@ -334,7 +340,7 @@ class SSH(RunCommand):
         _poll: float = 0.05,
         _timeout: Optional[float] = None,
         _return_viewer: bool = False,
-        **kwargs: Union[int, float, str, bool]
+        **kwargs: Union[int, float, str, bool],
     ) -> Optional[Viewer]:
         """
         pretend you are running a command on the remote host while looking at a
@@ -359,7 +365,7 @@ class SSH(RunCommand):
         Returns:
             A Viewer if _return_viewer is True; otherwise None.
         """
-        if kwargs.get('_viewer') is False:
+        if kwargs.get("_viewer") is False:
             raise TypeError("Cannot call con() with _viewer=False")
         process = self(*args, _viewer=True, **kwargs)
         if _timeout is not None:
@@ -429,7 +435,11 @@ def merge_csv(
 # jupyter / conda utilities
 
 CONDA_NAMES = (
-    "miniforge3", "miniforge", "miniconda3", "anaconda3", "mambaforge"
+    "miniforge3",
+    "miniforge",
+    "miniconda3",
+    "anaconda3",
+    "mambaforge",
 )
 CONDA_PARENTS = ("~", "/opt")
 CONDA_SEARCH_PATHS = tuple(
@@ -457,9 +467,7 @@ def find_conda_env(cmd: RunCommand, env: str = None) -> str:
     env = "base" if env is None else env
     suffix = f"/envs/{env}" if env != "base" else ""
     try:
-        cat = cmd(
-            f"cat ~/.conda/environments.txt", _viewer=True
-        )
+        cat = cmd(f"cat ~/.conda/environments.txt", _viewer=True)
         cat.wait()
         envs = cat.out
         if env == "base":
@@ -472,7 +480,7 @@ def find_conda_env(cmd: RunCommand, env: str = None) -> str:
         short.chain(
             [short.truthy(f"-e {path}{suffix}") for path in CONDA_SEARCH_PATHS]
         ),
-        _viewer=True
+        _viewer=True,
     )
     getlines.wait()
     lines = getlines.out
@@ -483,9 +491,7 @@ def find_conda_env(cmd: RunCommand, env: str = None) -> str:
 
 
 def stop_jupyter_factory(
-    command: RunCommand,
-    jupyter: str,
-    port: int
+    command: RunCommand, jupyter: str, port: int
 ) -> Callable:
     """
     Create a function that shuts down a Jupyter server when some other task
@@ -504,6 +510,7 @@ def stop_jupyter_factory(
             an object with no `wait` method, attempts to stop the server
             immediately.
     """
+
     def stop_it(waitable: Any = None):
         if waitable is not None:
             waitable.wait()
@@ -513,9 +520,7 @@ def stop_jupyter_factory(
 
 
 def get_jupyter_token(
-    command: RunCommand,
-    jupyter_executable: str,
-    port: int
+    command: RunCommand, jupyter_executable: str, port: int
 ) -> str:
     """
     Get the access token of a Jupyter server running on the specified port.
@@ -543,9 +548,7 @@ def get_jupyter_token(
     )
 
 
-NotebookConnection = tuple[
-    str, Process, dict, Processlike, Callable[[], None]
-]
+NotebookConnection = tuple[str, Process, dict, Processlike, Callable[[], None]]
 """
 structure containing results of a tunneled Jupyter Notebook execution.
 
@@ -565,7 +568,7 @@ def jupyter_connect(
     get_token: bool = True,
     kill_on_exit: bool = False,
     working_directory: Optional[str] = None,
-    lab: bool=False,
+    lab: bool = False,
     **command_kwargs: Union[int, str, bool],
 ) -> NotebookConnection:
     """
@@ -589,7 +592,7 @@ def jupyter_connect(
         structure containing results of tunneled notebook execution,
             including a callable to terminate the Notebook
     """
-    booktype = 'notebook' if lab is False else 'lab'
+    booktype = "notebook" if lab is False else "lab"
     if env is not None:
         jupyter = f"{find_conda_env(ssh, env)}" f"/bin/jupyter {booktype}"
     else:
@@ -664,8 +667,8 @@ def unpack_transfer_result(result: fabric.transfer.Result) -> dict:
         dict giving local and remote transfer targets, hostname, and port.
     """
     return {
-        'local': result.local,
-        'remote': result.remote,
-        'host': result.connection.host,
-        'port': result.connection.port
+        "local": result.local,
+        "remote": result.remote,
+        "host": result.connection.host,
+        "port": result.connection.port,
     }

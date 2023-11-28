@@ -9,16 +9,19 @@ from typing import Optional, Union
 
 import google.protobuf.json_format
 from google.protobuf.descriptor import FieldDescriptor, Descriptor
+
 # noinspection PyUnresolvedReferences
 from google.protobuf.duration_pb2 import Duration
 from google.protobuf.message import Message
+
 # noinspection PyUnresolvedReferences
 from google.protobuf.timestamp_pb2 import Timestamp
 
 PROTO_TYPES = MPt(
     {
         getattr(FieldDescriptor, k): k.replace("TYPE_", "")
-        for k in dir(FieldDescriptor) if k.startswith("TYPE")
+        for k in dir(FieldDescriptor)
+        if k.startswith("TYPE")
     }
 )
 """mapping from protobuf type codes to types"""
@@ -42,13 +45,13 @@ def proto_formatdict(
             format.
     """
     # i.e., it's a descriptor
-    if hasattr(proto, 'fields_by_name'):
+    if hasattr(proto, "fields_by_name"):
         descriptor = proto
     else:
         descriptor = proto.DESCRIPTOR
     unpacked = {}
     for name, field in descriptor.fields_by_name.items():
-        if (ptype := PROTO_TYPES[field.type]) != 'MESSAGE':
+        if (ptype := PROTO_TYPES[field.type]) != "MESSAGE":
             unpacked[name] = ptype
         else:
             # TODO: get enumeration values
@@ -117,4 +120,3 @@ def enum(message: Message, field: str) -> Union[str, int]:
         except AttributeError:
             raise TypeError(f"{field} is not an enum")
     raise KeyError(f"{field} is not a field of message")
-

@@ -15,8 +15,16 @@ import sys
 import time
 from types import ModuleType
 from typing import (
-    Any, Callable, Hashable, Iterable, MutableMapping, Optional, Sequence,
-    Mapping, Collection, Union
+    Any,
+    Callable,
+    Hashable,
+    Iterable,
+    MutableMapping,
+    Optional,
+    Sequence,
+    Mapping,
+    Collection,
+    Union,
 )
 
 from dustgoggles.dynamic import exc_report
@@ -47,7 +55,7 @@ HOSTESS_CONSOLE = rich.console.Console()
 def console_and_log(
     message: Any,
     level: str = "info",
-    style: Optional[Union[str, Style]] = None
+    style: Optional[Union[str, Style]] = None,
 ):
     """
     print a message to console and log it with this module's default logger.
@@ -109,7 +117,7 @@ def infer_stream_length(
     Args:
         stream: may be a buffered reader (like the result of calling open()),
             a buffer like io.BytesIO, or a Path
-    
+
     Returns:
         an estimate of its size based on best available method, or None if
         impossible.
@@ -391,6 +399,7 @@ def configured(func: Callable, config: Mapping[str, Any]) -> Callable:
     Returns:
         version of `func` that splats `config` into every call.
     """
+
     @wraps(func)
     def with_configuration(*args, **kwargs):
         return func(*args, **kwargs, **config)
@@ -424,13 +433,10 @@ def get_module(module_name: str) -> ModuleType:
 
 
 def yprint(
-    obj: Any,
-    indent: int = 0,
-    replace_null: bool = True,
-    maxlen: int = 256
+    obj: Any, indent: int = 0, replace_null: bool = True, maxlen: int = 256
 ) -> str:
     """
-    lazy way to pretty-print many objects by using `pyyaml`'s excellent YAML 
+    lazy way to pretty-print many objects by using `pyyaml`'s excellent YAML
     formatter. Doesn't work well for everything.
 
     Args:
@@ -445,9 +451,9 @@ def yprint(
     try:
         text = yaml.dump(obj)
     except TypeError:
-        text = f'***pretty-print failed*** {obj}'
+        text = f"***pretty-print failed*** {obj}"
     if replace_null is True:
-        text = text.replace('null', 'None')
+        text = text.replace("null", "None")
     return "\n".join(
         " " * indent + line[:maxlen] for line in text.splitlines()
     )
@@ -455,7 +461,7 @@ def yprint(
 
 def is_any(obj: Any, coll: Iterable) -> bool:
     """
-    like `obj in coll`, for use in cases when `obj` and `coll` do not, or 
+    like `obj in coll`, for use in cases when `obj` and `coll` do not, or
     might not, support use of `in`.
 
     Args:

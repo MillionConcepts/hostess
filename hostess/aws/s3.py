@@ -66,6 +66,7 @@ class Bucket:
     * restore()
     * rm()
     """
+
     def __init__(
         self,
         bucket_name: str,
@@ -117,7 +118,7 @@ class Bucket:
     def update_contents(
         self,
         prefix: str = "",
-        cache: Optional[Union[str, Path, io.IOBase]] = None
+        cache: Optional[Union[str, Path, io.IOBase]] = None,
     ):
         """
         recursively scan the contents of the bucket and store the result in
@@ -228,7 +229,7 @@ def put(
         key: S3 key (fully-qualified 'path' from bucket root). If not
             specified then str(file_or_buffer) is used. This will most likely
             look very nasty if it's a buffer.
-        client: boto s3 client; makes a default client if None; used only if 
+        client: boto s3 client; makes a default client if None; used only if
             `bucket` is a bucket name as string and not an already-bound
             Bucket
         session: botocore.session.Session instance; used only if `resource`
@@ -236,7 +237,7 @@ def put(
         pass_string: if True, write passed string directly to file instead of
             interpreting as a path
         config: boto3.s3.transfer.TransferConfig; default if None
-    
+
     Returns:
         API response
     """
@@ -383,26 +384,26 @@ def head(
     """
     bucket = Bucket.bind(bucket, client, session)
     response = bucket.client.head_object(Bucket=bucket.name, Key=key)
-    headers = response['ResponseMetadata'].get('HTTPHeaders', {})
+    headers = response["ResponseMetadata"].get("HTTPHeaders", {})
     interesting_responses = (
-        'ContentLength',
-        'ContentType',
-        'ETag',
-        'LastModified',
-        'Metadata',
-        'Restore',
-        'StorageClass'
+        "ContentLength",
+        "ContentType",
+        "ETag",
+        "LastModified",
+        "Metadata",
+        "Restore",
+        "StorageClass",
     )
     interesting_headers = (
-        'x-amz-restore-request-date',
-        'x-amz-restore-expiry-days',
-        'x-amz-restore-tier'
+        "x-amz-restore-request-date",
+        "x-amz-restore-expiry-days",
+        "x-amz-restore-tier",
     )
     head_dict = {}
     head_dict |= keyfilter(lambda k: k in interesting_responses, response)
     head_dict |= keyfilter(lambda k: k in interesting_headers, headers)
-    if 'LastModified' in head_dict:
-        head_dict['LastModified'] = head_dict['LastModified'].isoformat()
+    if "LastModified" in head_dict:
+        head_dict["LastModified"] = head_dict["LastModified"].isoformat()
     return head_dict
 
 
@@ -556,7 +557,7 @@ def ls_multipart(
     bucket: Union[str, Bucket],
     client: Optional[botocore.client.BaseClient] = None,
     session: Optional[boto3.Session] = None,
-    config: Optional[boto3.s3.transfer.TransferConfig] = None
+    config: Optional[boto3.s3.transfer.TransferConfig] = None,
 ) -> dict:
     """
     List all multipart uploads associated with a bucket.
@@ -845,7 +846,7 @@ def freeze(
     storage_class: str = "DEEP_ARCHIVE",
     client: Optional[botocore.client.BaseClient] = None,
     session: Optional[boto3.Session] = None,
-    config: Optional[boto3.s3.transfer.TransferConfig] = None
+    config: Optional[boto3.s3.transfer.TransferConfig] = None,
 ) -> dict:
     """
     Modify the storage class of an object. Intended primarily for
@@ -873,7 +874,7 @@ def restore(
     days: int = 5,
     client: Optional[botocore.client.BaseClient] = None,
     session: Optional[boto3.Session] = None,
-    config: Optional[boto3.s3.transfer.TransferConfig] = None
+    config: Optional[boto3.s3.transfer.TransferConfig] = None,
 ) -> dict:
     """
     Issue a request to temporarily restore an object from S3 Glacier Flexible

@@ -68,13 +68,11 @@ def maybe_getdef(obj: Any, maxchar: int = 100) -> str:
 
 
 def sourcerec(obj: Any) -> dict[str, str]:
-    rec = {
-        "def": maybe_getdef(obj)
-    }
+    rec = {"def": maybe_getdef(obj)}
     if hasattr(obj, "__name__"):
-        rec['name'] = obj.__name__
+        rec["name"] = obj.__name__
     else:
-        rec['name'] = obj.__class__.__name__
+        rec["name"] = obj.__class__.__name__
     return rec
 
 
@@ -113,12 +111,12 @@ def pack_delegate(ddict: dict[str]) -> dict[str]:
         "host",
         "actors",
         "sensors",
-        "infocount"
+        "infocount",
     )
     packed = {k: ddict.get(k) for k in literals}
-    packed['logfile'] = ddict["init_params"]["logfile"]
+    packed["logfile"] = ddict["init_params"]["logfile"]
     packed["cdict"], packed["interface"] = pack_config(
-        ddict.get('cdict', {}), ddict.get('interface', {})
+        ddict.get("cdict", {}), ddict.get("interface", {})
     )
     packed["running"] = [
         {
@@ -163,12 +161,12 @@ def situation_of(station: Station) -> dict:
         "logfile": station.logfile,
         "actors": station.identify_elements("actors"),
         # TODO: make this more efficient
-        "delegates": {d['name']: pack_delegate(d) for d in station.delegates},
+        "delegates": {d["name"]: pack_delegate(d) for d in station.delegates},
         # weird dict constructions for protection against mutation
         "threads": {k: v._state for k, v in station.threads.items()},
         "tasks": pack_tasks(station.tasks),
     }
-    props['cdict'], props['interface'] = pack_config(
-        station.config['cdict'], station.config['interface']
+    props["cdict"], props["interface"] = pack_config(
+        station.config["cdict"], station.config["interface"]
     )
     return props

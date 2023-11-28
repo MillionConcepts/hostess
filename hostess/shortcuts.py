@@ -7,7 +7,8 @@ from typing import Literal, Sequence, Optional
 
 
 def chain(
-    cmds: Sequence[str], op: Literal["and", "xor", "then"] = "then",
+    cmds: Sequence[str],
+    op: Literal["and", "xor", "then"] = "then",
 ) -> str:
     """
     create a multi-part shell command.
@@ -36,11 +37,7 @@ def sub(cmd: str) -> str:
     return f"$({cmd})"
 
 
-def ternary(
-    if_: str,
-    then_: str,
-    else_: Optional[str] = None
-) -> str:
+def ternary(if_: str, then_: str, else_: Optional[str] = None) -> str:
     """
     construct a bash command that serves as a ternary operator.
 
@@ -71,7 +68,7 @@ def truthy(cmd: str) -> str:
     Returns:
         string form of truthiness-printing shell command
     """
-    return ternary(cmd, 'echo True', 'echo False')
+    return ternary(cmd, "echo True", "echo False")
 
 
 def ssh_agent(key: str) -> str:

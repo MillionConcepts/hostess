@@ -98,7 +98,7 @@ def read_comm(
         header = read_header(buffer[: HEADER_STRUCT.size])
     except IOError:
         return {"header": None, "body": buffer, "err": "header"}
-    err, body = [], buffer[HEADER_STRUCT.size :]
+    err, body = [], buffer[HEADER_STRUCT.size:]
     if body.endswith(HOSTESS_EOM):
         body = body[: -len(HOSTESS_EOM)]
     if len(buffer) != header["length"]:

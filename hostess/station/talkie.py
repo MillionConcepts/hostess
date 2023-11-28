@@ -164,7 +164,7 @@ class TCPTalk:
         self,
         callback: Callable,
         peername: Optional[str],
-        peersock: socket.socket
+        peersock: socket.socket,
     ) -> tuple[Any, str, Optional[tuple[str, int]], str]:
         """
         inner callback-handler tree for i/o threads. should only ever be
@@ -220,11 +220,7 @@ class TCPTalk:
         """launch the server's selector thread."""
         id_, cycler = 0, cycle(self.queues.keys())
         try:
-            self.sel.register(
-                self.sock,
-                selectors.EVENT_READ,
-                self._accept
-            )
+            self.sel.register(self.sock, selectors.EVENT_READ, self._accept)
         except KeyError:  # will occur on relaunch
             pass
         while self.signals.get("select") is None:
@@ -503,7 +499,7 @@ class TCPTalk:
 def read_from_socket(
     headerread: Optional[Callable[[bytes], dict]],
     sock: socket.socket,
-    timeout: float
+    timeout: float,
 ) -> bytes:
 
     """
@@ -556,7 +552,7 @@ def tcp_send(
     timeout: float = 10,
     delay: float = 0,
     chunksize: Optional[float] = None,
-    headerread: Optional[Callable[[bytes], dict]] = None
+    headerread: Optional[Callable[[bytes], dict]] = None,
 ) -> tuple[Union[str, bytes], Optional[int]]:
     """
     one-shot send-data-over-TCP-and-get-response utility.
@@ -612,7 +608,7 @@ def stsend(
     port: int,
     timeout: float = 10,
     delay: float = 0,
-    chunksize: Optional[int] = None
+    chunksize: Optional[int] = None,
 ):
     """
     wrapper for `tcp_send()` that autoencodes data as hostess comms. Used by

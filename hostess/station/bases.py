@@ -16,7 +16,16 @@ from itertools import chain
 from pathlib import Path
 from random import shuffle
 from types import MappingProxyType as MPt
-from typing import Any, Callable, Mapping, Union, Optional, Literal, Collection, Hashable
+from typing import (
+    Any,
+    Callable,
+    Mapping,
+    Union,
+    Optional,
+    Literal,
+    Collection,
+    Hashable,
+)
 
 from cytoolz import valmap
 from dustgoggles.dynamic import exc_report
@@ -34,6 +43,7 @@ from hostess.utilities import configured, logstamp, yprint, filestamp
 
 class ConsumedAttributeError(AttributeError):
     """An AttrConsumer's attempt to set a consumed attribute failed."""
+
     pass
 
 
@@ -110,7 +120,9 @@ class Matcher(AttrConsumer, ABC):
     matching objects against Actors.
     """
 
-    def match(self, event: Any, category: Optional[str] = None, **kwargs: Any) -> list[Actor]:
+    def match(
+        self, event: Any, category: Optional[str] = None, **kwargs: Any
+    ) -> list[Actor]:
         """
         Check the Matcher's Actors to see which, if any, can handle an event.
 
@@ -289,9 +301,7 @@ class Sensor(Matcher, ABC):
         call owning Node's log function. automatically include the fact that
         this Sensor generated the log entry.
         """
-        self.owner._log(
-            *args, category="sensor", sensor=self.name, **kwargs
-        )
+        self.owner._log(*args, category="sensor", sensor=self.name, **kwargs)
 
     def check(self, node: Node, **check_kwargs: Any):
         """
@@ -623,7 +633,7 @@ class Node(Matcher, ABC):
         poll: float = 0.08,
         timeout: int = 10,
         _is_process_owner=False,
-        **extra_attrs
+        **extra_attrs,
     ):
         super().__init__()
         # attributes unique to subclass but necessary for this step of
@@ -648,9 +658,7 @@ class Node(Matcher, ABC):
             self.__is_process_owner = _is_process_owner
             self.is_shut_down = False
             self.exception = None
-            atexit.register(
-                self.exc.shutdown, wait=False, cancel_futures=True
-            )
+            atexit.register(self.exc.shutdown, wait=False, cancel_futures=True)
             if self.__is_process_owner is True:
                 atexit.register(
                     partial(self._log, "shutdown complete", category="system")
@@ -658,9 +666,7 @@ class Node(Matcher, ABC):
             if start is True:
                 self.start()
         except Exception as ex:
-            self._log(
-                "initialization failed", exception=ex, category="system"
-            )
+            self._log("initialization failed", exception=ex, category="system")
 
     def restart_server(self):
         """
@@ -777,19 +783,17 @@ class Node(Matcher, ABC):
         self.locked = True
         self.state = "shutdown" if exception is None else "crashed"
         self._log(
-            'beginning shutdown',
-            category='system',
+            "beginning shutdown",
+            category="system",
             state=self.state,
-            exception=exception
+            exception=exception,
         )
         self.signals["main"] = 1
         try:
             self._shutdown(exception=exception)
             self._log("completed shutdown")
         except Exception as ex:
-            self._log(
-                "shutdown exception", exception=ex, category='system'
-            )
+            self._log("shutdown exception", exception=ex, category="system")
         self.is_shut_down = True
 
     def _start(self) -> Optional[Exception]:
@@ -859,11 +863,7 @@ class Node(Matcher, ABC):
     def __repr__(self):
         return self.__str__()
 
-    def _log(
-        self,
-        event: Any,
-        **extra_fields: Any
-    ):
+    def _log(self, event: Any, **extra_fields: Any):
         """
         construct a JSON object from an event and write it into this Node's
             log file.

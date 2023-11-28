@@ -3,9 +3,8 @@ from __future__ import annotations
 import csv
 import datetime as dt
 from operator import contains
-import os
-import re
 from pathlib import Path
+import re
 from typing import Optional, Union, Callable, Any
 
 import boto3
@@ -49,7 +48,8 @@ def parse_aws_identity_file(
     if profile is not None:
         try:
             lineno, _ = first(
-                i for i, l in enumerate(lines)
+                i
+                for i, l in enumerate(lines)
                 if l.strip().startswith(f"[{profile}")
             )
         except StopIteration:
@@ -61,7 +61,7 @@ def parse_aws_identity_file(
             )
         except StopIteration:
             raise OSError("Identity file empty or malformatted")
-    for line in lines[lineno + 1:]:
+    for line in lines[lineno + 1 :]:
         if line.strip().startswith("["):
             break
         try:
@@ -75,7 +75,7 @@ def parse_aws_identity_file(
 def make_boto_session(
     profile: Optional[str] = None,
     credential_file: Optional[Union[str, Path]] = None,
-    region: Optional[str] = None
+    region: Optional[str] = None,
 ) -> boto3.Session:
     """
     Create a new boto session.
@@ -103,7 +103,7 @@ def make_boto_client(
     service: str,
     profile: Optional[str] = None,
     credential_file: Optional[Union[str, Path]] = None,
-    region: Optional[str] = None
+    region: Optional[str] = None,
 ) -> botocore.client.BaseClient:
     """
     Create a new boto client.
@@ -128,7 +128,7 @@ def make_boto_resource(
     service: str,
     profile: Optional[str] = None,
     credential_file: Optional[Union[str, Path]] = None,
-    region: Optional[str] = None
+    region: Optional[str] = None,
 ) -> boto3.resources.base.ServiceResource:
     """
     Create a new boto resource.
@@ -202,9 +202,7 @@ def init_resource(
 
 
 def tagfilter(
-    description: dict[str, Any],
-    filters: dict[str, str],
-    regex: bool = True
+    description: dict[str, Any], filters: dict[str, str], regex: bool = True
 ) -> bool:
     """
     Simple predicate function that permits resource matching based on Arrays of
@@ -234,9 +232,7 @@ def tagfilter(
 
 
 # noinspection PyProtectedMember
-def clarify_region(
-    region: Optional[str] = None, boto_obj: Any = None
-) -> str:
+def clarify_region(region: Optional[str] = None, boto_obj: Any = None) -> str:
     """
     attempt to determine the AWS region associated with an object (presumably
     some kind of boto object).
@@ -266,7 +262,7 @@ def autopage(
     client: botocore.client.BaseClient,
     operation: str,
     agg: Optional[Union[str, Callable]] = None,
-    **api_kwargs: Any
+    **api_kwargs: Any,
 ) -> tuple:
     """
     Perform an AWS API call that returns paginated results, greedily page
@@ -301,7 +297,7 @@ def autopage(
 
 def whoami(
     client: Optional[botocore.client.BaseClient] = None,
-    session: Optional[boto3.Session] = None
+    session: Optional[boto3.Session] = None,
 ) -> dict[str, str]:
     """
     Make an STS GetCallerIdentity request and return just the essentials from
@@ -325,9 +321,9 @@ def whoami(
     sts = init_client("sts", client, session)
     response = sts.get_caller_identity()
     return {
-        'user_id': response['UserId'],
-        'account': response['Account'],
-        'arn': response['Arn']
+        "user_id": response["UserId"],
+        "account": response["Account"],
+        "arn": response["Arn"],
     }
 
 

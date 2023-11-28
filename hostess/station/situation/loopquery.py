@@ -17,29 +17,27 @@ def _view_loop(port: int, timeout: float, poll: float):
     i, v, sock = 0, None, None
     while True:
         start = time.time()
-        v, sock = stsend(
-            b'situation', 'localhost', port, timeout=timeout
-        )
-        if v == 'timeout':
-            print('timeout')
+        v, sock = stsend(b"situation", "localhost", port, timeout=timeout)
+        if v == "timeout":
+            print("timeout")
             continue
-        if v == 'connection refused':
+        if v == "connection refused":
             if i == 0:  # station not actually at saved port
-                print(f'station@{port} offline\n')
+                print(f"station@{port} offline\n")
                 return i, v, sock
-            print('\n******station disconnected******\n')
+            print("\n******station disconnected******\n")
             break
-        if v == b'shutting down':
+        if v == b"shutting down":
             if i != 0:
-                print(f'\n******station entering shutdown mode******\n')
+                print(f"\n******station entering shutdown mode******\n")
             else:
-                print(f'station@{port} in shutdown mode\n')
+                print(f"station@{port} in shutdown mode\n")
             break
         elif i == 0:
-            print(f'station@{port} connected\n')
+            print(f"station@{port} connected\n")
         i += 1
-        message = read_comm(v).get('body')
-        status =(
+        message = read_comm(v).get("body")
+        status = (
             f"{i}\n----\n"
             f"response ok: {isinstance(message, pro.PythonObject)}\n"
             f"roundtrip latency: {time.time() - start}\n"
@@ -52,20 +50,18 @@ def _view_loop(port: int, timeout: float, poll: float):
 
 
 def view_forever(
-    poll: float = 0.1,
-    timeout: float = 0.5,
-    station_name: str = 'station'
+    poll: float = 0.1, timeout: float = 0.5, station_name: str = "station"
 ):
     while True:
         try:
             print(
-                f'searching for port at fd {station_name}-port-report...',
-                end=''
+                f"searching for port at fd {station_name}-port-report...",
+                end="",
             )
             port = get_port_from_shared_memory(station_name)
-            print(f'found port {port}...', end='')
+            print(f"found port {port}...", end="")
         except (FileNotFoundError, TypeError, ValueError):
-            print('port not found')
+            print("port not found")
             time.sleep(3)
             continue
         try:
@@ -75,9 +71,7 @@ def view_forever(
             print("\nexiting on keyboard interrupt\n")
             return
         except Exception as ex:
-            print(
-                f'\n******encountered exception: {type(ex)}: {ex}******\n'
-            )
+            print(f"\n******encountered exception: {type(ex)}: {ex}******\n")
 
 
 if __name__ == "__main__":

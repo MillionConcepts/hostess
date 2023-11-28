@@ -32,7 +32,7 @@ def test_shutdown():
 
 def test_actions_1():
     host, port = "localhost", random.randint(10000, 20000)
-    station = Station(host, port, name='test_actions_1_station', poll=0.02)
+    station = Station(host, port, name="test_actions_1_station", poll=0.02)
     station.start()
     writer = station.launch_delegate(
         "test_actions_1_writer",
@@ -59,12 +59,12 @@ def test_actions_1():
         for report in station.inbox.completed:
             # do the instruction ids on the
             # station-tracked tasks and the node-sent task reports match?
-            status = station.tasks[
-                report['completed']['instruction_id']
-            ]['status']
+            status = station.tasks[report["completed"]["instruction_id"]][
+                "status"
+            ]
             # does everyone agree the tasks succeeded?
-            assert status == 'success'
-            assert report['action']['status'] == 'success'
+            assert status == "success"
+            assert report["action"]["status"] == "success"
             # do we have the expected content in the file?
             with open("test.txt") as stream:
                 assert stream.read() == "xyzzy" * 25
@@ -138,7 +138,9 @@ def test_application_1():
     station.start()
 
     # launch the nodes as daemonic processes
-    station.launch_delegate("watcher", **watcher_launch_spec, update_interval=0.1)
+    station.launch_delegate(
+        "watcher", **watcher_launch_spec, update_interval=0.1
+    )
     station.launch_delegate(
         "thumbnail",
         **thumbnail_launch_spec,
@@ -172,34 +174,35 @@ def test_missing():
 
     # create a normal and fine node
     station.launch_delegate(
-        'normal_node',
-        elements=[('hostess.station.tests.testing_actors', 'NormalActor')],
+        "normal_node",
+        elements=[("hostess.station.tests.testing_actors", "NormalActor")],
         update_interval=0.01,
-        context='subprocess'
+        context="subprocess",
     )
     time.sleep(0.5)
     try:
         # make sure it is normal and fine
-        assert station.delegates[0]['reported_status'] == 'nominal'
+        assert station.delegates[0]["reported_status"] == "nominal"
         # send it a normal and fine instruction
-        normal_action = make_action(description={'something': 'normal'})
-        normal_instruction = make_instruction('do', action=normal_action)
-        station.queue_task('normal_node', normal_instruction)
+        normal_action = make_action(description={"something": "normal"})
+        normal_instruction = make_instruction("do", action=normal_action)
+        station.queue_task("normal_node", normal_instruction)
         time.sleep(6)
         # make sure it has mysteriously vanished
-        assert station.delegates[0]['inferred_status'] == 'missing'
+        assert station.delegates[0]["inferred_status"] == "missing"
     finally:
         station.shutdown()
 
 
 def test_echo_numpy():
     """test a numpy array roundtrip."""
+
     def echo_numpy_instruction(array: np.ndarray):
         action = make_function_call_action(
             func="identity",
             module="cytoolz",
-            kwargs={'x': array},
-            context="thread"
+            kwargs={"x": array},
+            context="thread",
         )
         return make_instruction("do", action=action)
 
@@ -210,27 +213,27 @@ def test_echo_numpy():
         station.launch_delegate(
             "echo",
             elements=[("hostess.station.actors", "FuncCaller")],
-            context="local"
+            context="local",
         )
         randarray = np.frombuffer(
             random.randbytes(1024),
-            dtype=[("x", "u1", 4), ("y", "f4", 3), ("z", "U4")]
+            dtype=[("x", "u1", 4), ("y", "f4", 3), ("z", "U4")],
         )
-        while np.isnan(randarray['y']).any():
+        while np.isnan(randarray["y"]).any():
             randarray = np.frombuffer(
                 random.randbytes(1024),
-                dtype=[("x", "u1", 4), ("y", "f4", 3), ("z", "U4")]
+                dtype=[("x", "u1", 4), ("y", "f4", 3), ("z", "U4")],
             )
         instruction = echo_numpy_instruction(randarray)
         station.queue_task("echo", instruction)
         waiting, _ = timeout_factory(timeout=5)
         task = tuple(station.tasks.values())[0]
-        while task['status'] not in ('success', 'crash'):
+        while task["status"] not in ("success", "crash"):
             waiting()
             time.sleep(0.05)
-        if task['status'] != 'success':
+        if task["status"] != "success":
             raise ValueError(f"failed task: {task['exception']}")
-        echoed = station.inbox.completed[0].completed['action']['result']
+        echoed = station.inbox.completed[0].completed["action"]["result"]
         assert (echoed == randarray).all()
     finally:
         station.shutdown()

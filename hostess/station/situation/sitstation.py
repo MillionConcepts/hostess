@@ -28,7 +28,7 @@ def getsocks(station: Station):
         # with the short timeout duration, we will sometimes miss sockets,
         # but it's better than adding 0.5s per loop for a status display.
     ) + station.server.sel.select(0.05):
-        if hasattr(k[0], 'fd'):  # filter intentional bad values
+        if hasattr(k[0], "fd"):  # filter intentional bad values
             selkeys[k[0].fd] = k[0]
     sprint = []
     for s in selkeys.values():
@@ -65,32 +65,33 @@ def status_display(station, n, start, loop_pause):
 
 
 def sleep_trigger_instruction(note, *_, **__):
-    if 'succeed' in note['match']:
+    if "succeed" in note["match"]:
         description = {
-            'what_to_do': 'succeed',
-            'title': 'succeed_' + ''.join(random.choices(ascii_lowercase, k=15))
+            "what_to_do": "succeed",
+            "title": "succeed_"
+            + "".join(random.choices(ascii_lowercase, k=15)),
         }
     else:
         description = {
-            'what_to_do': 'fail',
-            'title': 'fail_' + ''.join(random.choices(ascii_lowercase, k=15))
+            "what_to_do": "fail",
+            "title": "fail_" + "".join(random.choices(ascii_lowercase, k=15)),
         }
     return make_instruction(
-        "do", action=make_action(description, name="sleep"),
+        "do",
+        action=make_action(description, name="sleep"),
     )
 
 
 class Sleeper(Actor):
-
     def match(self, instruction, *_, **__):
-        if instruction.action.name == 'sleep':
+        if instruction.action.name == "sleep":
             return True
         raise NoMatch
 
     @reported
     def execute(self, node, msg, *_, **__):
-        if msg.description['what_to_do'] == 'fail':
-            raise Exception('failed!')
+        if msg.description["what_to_do"] == "fail":
+            raise Exception("failed!")
         time.sleep(self.duration)
         return 1
 
@@ -100,11 +101,11 @@ class Sleeper(Actor):
     def _set_duration(self, duration):
         self._duration = duration
 
-    name = 'sleeper'
-    actortype = 'action'
+    name = "sleeper"
+    actortype = "action"
     _duration = 1
     duration = property(_get_duration, _set_duration)
-    interface = ('duration',)
+    interface = ("duration",)
 
 
 def make_sample_station():
@@ -112,16 +113,16 @@ def make_sample_station():
 
     station = Station(host, port)
     station.save_port_to_shared_memory()
-    delkwargs = {'update_interval': 0.5, 'context': 'local'}
+    delkwargs = {"update_interval": 0.5, "context": "local"}
     station.launch_delegate(
         "watch",
         elements=[("hostess.station.actors", "FileSystemWatch")],
-        **delkwargs
+        **delkwargs,
     )
     station.launch_delegate(
         "sleepy",
         elements=[("hostess.station.situation.sitstation", "Sleeper")],
-        **delkwargs
+        **delkwargs,
     )
     station.add_element(InstructionFromInfo, name="dosleep")
     station.dosleep_instruction_maker = sleep_trigger_instruction
@@ -132,15 +133,18 @@ def make_sample_station():
     station.set_delegate_properties(
         "watch",
         filewatch_target="dump.txt",
-        filewatch_patterns=("succeed", "fail",),
+        filewatch_patterns=(
+            "succeed",
+            "fail",
+        ),
     )
-    station.set_delegate_properties('sleepy', sleeper_duration=20)
+    station.set_delegate_properties("sleepy", sleeper_duration=20)
 
     station._situation_comm = ticked(
-        station._situation_comm, 'sent situation', SITSTATION_TICKER
+        station._situation_comm, "sent situation", SITSTATION_TICKER
     )
     station._handle_incoming_message = ticked(
-        station._handle_incoming_message, 'Updates received', SITSTATION_TICKER
+        station._handle_incoming_message, "Updates received", SITSTATION_TICKER
     )
     station.start()
     if (textfile := Path("dump.txt")).exists():
@@ -154,7 +158,7 @@ def _backend_loop(i, n, verbose, station):
         # indirectly trigger tasks by writing text to file the Sensor on
         # the 'watch' delegate will recognize. occasionally queue the Actor on
         # the 'sleeper' delegate to fail a task by randomly writing 'fail'.
-        text = 'succeed' if random.random() > 0.1 else 'fail'
+        text = "succeed" if random.random() > 0.1 else "fail"
         with open("dump.txt", "a") as f:
             f.write(f"{text}\n")
         loop_pause = 0.2
@@ -162,9 +166,9 @@ def _backend_loop(i, n, verbose, station):
         loop_pause = 0.5
     if random.random() < 0.08:
         # randomly crash server threads
-        random.choice(
-            tuple(station.server.queues.values())
-        ).append(bytearray(b"NO"))
+        random.choice(tuple(station.server.queues.values())).append(
+            bytearray(b"NO")
+        )
     time.sleep(loop_pause)
     if station.state == "crashed":
         raise station.exception
@@ -182,7 +186,7 @@ def run_sample_backend(n_writes: int = 1000, verbose: bool = True):
         while True:
             i = _backend_loop(i, n_writes, verbose, station)
     except KeyboardInterrupt:
-        print('\nstopping on keyboard interrupt\n')
+        print("\nstopping on keyboard interrupt\n")
     except Exception as ex:
         exception = ex
         print(exception)

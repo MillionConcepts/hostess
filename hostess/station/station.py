@@ -45,7 +45,12 @@ class Station(bases.Node):
         max_inbox_mb: float = 250,
         logdir: Path = Path(__file__).parent / ".nodelogs",
         _is_process_owner: bool = False,
-        **kwargs: Union[bool, tuple[Union[type[bases.Sensor], type[bases.Actor]]], float, int],
+        **kwargs: Union[
+            bool,
+            tuple[Union[type[bases.Sensor], type[bases.Actor]]],
+            float,
+            int,
+        ],
     ):
         """
         Args:
@@ -89,7 +94,7 @@ class Station(bases.Node):
         """create standardized log file name."""
         self.logfile = Path(
             self.logdir,
-            f"{self.init_time}_station_{self.host}_{self.port}.log"
+            f"{self.init_time}_station_{self.host}_{self.port}.log",
         )
 
     def set_delegate_properties(self, delegate: str, **propvals: Any):
@@ -100,9 +105,9 @@ class Station(bases.Node):
 
         Args:
             delegate: name of delegate to configure.
-            propvals: argument names correspond to property names of target Delegate;
-                argument values will be serialized as PythonObject Messages and then
-                bundled into ConfigParam Messages.
+            propvals: argument names correspond to property names of target
+                Delegate; argument values will be serialized as PythonObject
+                Messages and then bundled into ConfigParam Messages.
         """
         # TODO: update delegate info record if relevant
         if len(propvals) == 0:
@@ -218,7 +223,7 @@ class Station(bases.Node):
                     "execution failure",
                     actor=actor,
                     category=category,
-                    exception=ex
+                    exception=ex,
                 )
 
     def _handle_info(self, message: pro.Update):
@@ -234,12 +239,12 @@ class Station(bases.Node):
             message: Update Message from a Delegate.
         """
         notes = gmap(unpack_obj, message.info)
-        if enum(message, 'reason') == 'exiting':
+        if enum(message, "reason") == "exiting":
             self._log(
                 "received exit report",
                 delname=message.delegateid.name,
-                reason=enum(message.state, 'status'),
-                exception=notes
+                reason=enum(message.state, "status"),
+                exception=notes,
             )
             return
         for note in notes:
@@ -307,12 +312,12 @@ class Station(bases.Node):
             delegate = blank_delegateinfo()
             self.delegates.append(delegate)
         update = unpack_message(update)
-        if delegate['reported_status'] == 'no_report':
+        if delegate["reported_status"] == "no_report":
             self._log(
                 "first message from delegate",
-                delname=delegate['name'],
+                delname=delegate["name"],
                 category="comms",
-                direction="recv"
+                direction="recv",
             )
         delegate |= {
             "last_seen": dt.datetime.fromisoformat(update["time"]),
@@ -333,10 +338,10 @@ class Station(bases.Node):
             try:
                 instruction_id = int(name.replace("Instruction_", ""))
                 if self.tasks[instruction_id]["status"] not in (
-                        "success",
-                        "failure",
-                        "crash",
-                        "timeout",
+                    "success",
+                    "failure",
+                    "crash",
+                    "timeout",
                 ):
                     # don't override formally reported status
                     self.tasks[instruction_id]["status"] = state.lower()
@@ -382,15 +387,16 @@ class Station(bases.Node):
                     category="comms",
                     direction="recv",
                     exception=ex,
-                    op=op
+                    op=op,
                 )
 
     @property
     def running_delegates(self) -> list[dict[str, Any]]:
         """get metadata dicts for all still-running Delegates."""
         return [
-            n for n in self.delegates
-            if n['inferred_status'] not in ('missing', 'shutdown', 'crashed')
+            n
+            for n in self.delegates
+            if n["inferred_status"] not in ("missing", "shutdown", "crashed")
         ]
 
     @property
@@ -434,7 +440,7 @@ class Station(bases.Node):
                 self._log(
                     "delegate_shutdown_timeout",
                     category="system",
-                    running=[n['name'] for n in self.running_delegates]
+                    running=[n["name"] for n in self.running_delegates],
                 )
                 break
             time.sleep(0.1)
@@ -449,7 +455,7 @@ class Station(bases.Node):
                 self._log(
                     "local_delegate_thread_shutdown_timeout",
                     category="system",
-                    running=[n['name'] for n in self.unfinished_delegates]
+                    running=[n["name"] for n in self.unfinished_delegates],
                 )
                 break
         # shut down the server etc.
@@ -466,7 +472,7 @@ class Station(bases.Node):
                 break
             time.sleep(0.1)
         if self.__is_process_owner:
-            self._log("shutdown complete, exiting process", category='system')
+            self._log("shutdown complete, exiting process", category="system")
             sys.exit()
 
     def _check_delegates(self):
@@ -479,13 +485,13 @@ class Station(bases.Node):
         for n in self.delegates:
             # shared kwargs for those status changes we want to log
             lkwargs = {
-                'event': 'delegate_status',
-                'category': 'system',
-                'name': n['name']
+                "event": "delegate_status",
+                "category": "system",
+                "name": n["name"],
             }
             if n["reported_status"] in ("shutdown", "crashed"):
-                if n["reported_status"] != n['inferred_status']:
-                    self._log(status=n['reported_status'], **lkwargs)
+                if n["reported_status"] != n["inferred_status"]:
+                    self._log(status=n["reported_status"], **lkwargs)
                 n["inferred_status"] = n["reported_status"]
                 continue
             if n["reported_status"] == "no_report":
@@ -494,8 +500,8 @@ class Station(bases.Node):
                 n["wait_time"] = (now - n["last_seen"]).total_seconds()
             # adding 5 seconds here as grace for network lag spikes
             if n["wait_time"] > 10 * n["update_interval"] + 5:
-                if n['inferred_status'] != 'missing':
-                    self._log(status='missing', **lkwargs)
+                if n["inferred_status"] != "missing":
+                    self._log(status="missing", **lkwargs)
                 n["inferred_status"] = "missing"
             elif n["wait_time"] > 3 * n["update_interval"]:
                 # don't care about logging delays
@@ -622,7 +628,7 @@ class Station(bases.Node):
                     "failed to decode",
                     category="comms",
                     direction="recv",
-                    conn=_conn
+                    conn=_conn,
                 )
                 return make_comm(b"bad decode"), "notified sender bad decode"
             incoming = comm["body"]
@@ -736,30 +742,31 @@ class Station(bases.Node):
         if any(n["name"] == name for n in self.delegates):
             raise ValueError("can't launch a delegate with a duplicate name")
         kwargs = {
-                 "station_address": (self.host, self.port),
-                 "name": name,
-                 "elements": elements,
-                 "update_interval": update_interval,
-                 "loginfo": {
-                     # must pass logdir as a string -- delegate is not
-                     # initialized yet, so this is inserted directly into
-                     # generated source code
-                     'logdir': str(self.logdir),
-                     'init_time': self.init_time
-                 }
-             } | kwargs
+            "station_address": (self.host, self.port),
+            "name": name,
+            "elements": elements,
+            "update_interval": update_interval,
+            "loginfo": {
+                # must pass logdir as a string -- delegate is not
+                # initialized yet, so this is inserted directly into
+                # generated source code
+                "logdir": str(self.logdir),
+                "init_time": self.init_time,
+            },
+        } | kwargs
         delegateinfo = blank_delegateinfo() | {
             "name": name,
             "inferred_status": "initializing",
             "update_interval": update_interval,
         }
         # kwargs for logging launch
-        lkwargs = {'delname': name, 'elements': elements, 'category': 'system'}
+        lkwargs = {"delname": name, "elements": elements, "category": "system"}
         self._log("init delegate launch", **lkwargs)
         try:
             if context == "local":
                 # mostly for debugging / dev purposes
                 from hostess.station.delegates import launch_delegate
+
                 output = launch_delegate(is_local=True, **kwargs)
                 delegateinfo["obj"] = output
             else:
@@ -768,9 +775,7 @@ class Station(bases.Node):
             self._log("launched delegate", **lkwargs)
             return output
         except Exception as ex:
-            self._log(
-                'delegate launch fail', **lkwargs, **exc_report(ex)
-            )
+            self._log("delegate launch fail", **lkwargs, **exc_report(ex))
 
     def relaunch_delegate(self, name: str):
         """
@@ -803,7 +808,7 @@ class Station(bases.Node):
         elements_dict = dict(delegate["actors"]) | dict(delegate["sensors"])
         for k in elements_dict.keys():
             cls = elements_dict[k].split(".")[-1]
-            mod = elements_dict[k].removesuffix["." + cls]
+            mod = elements_dict[k].removesuffix("." + cls)
             elements = elements + [(mod, cls)]
         elements = tuple(elements)
         host = "localhost"
