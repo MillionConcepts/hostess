@@ -1,59 +1,62 @@
-from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
 import datetime as dt
-from functools import cache, partial, wraps
 import io
-from itertools import chain
 import os
+import pickle
+import re
+import time
+from concurrent.futures import ThreadPoolExecutor
+from functools import cache, partial, wraps
+from itertools import chain
 from multiprocessing import Process
 from pathlib import Path
-import pickle
 from random import choices
-import re
 from string import ascii_lowercase
-import time
 from typing import (
-    Callable,
+    Any,
     Collection,
+    IO,
     Literal,
     Mapping,
-    MutableMapping,
     Optional,
     Sequence,
-    Union, IO, Any
+    Union
 )
 
 import boto3.resources.base
 import botocore.client
-
 import botocore.exceptions
-import fabric.transfer
-from cytoolz.curried import get
 import dateutil.parser as dtp
-from dustgoggles.func import gmap, zero
+import pandas as pd
+from cytoolz.curried import get
+from dustgoggles.func import gmap
 from dustgoggles.structures import listify
-from invoke import UnexpectedExit
 from paramiko.ssh_exception import NoValidConnectionsError, SSHException
 
-import hostess.shortcuts as ks
 from hostess.aws.pricing import (
     get_cpu_credit_price,
     get_ec2_basic_price_list,
     get_on_demand_price,
 )
 from hostess.aws.utilities import (
+    _check_cached_results,
+    _clear_cached_results,
     autopage,
     clarify_region,
     init_client,
     init_resource,
     tag_dict,
-    tagfilter, _check_cached_results, _clear_cached_results,
+    tagfilter,
 )
-from hostess.caller import generic_python_endpoint, CallerCompressionType, \
-    CallerSerializationType, CallerUnpackingOperator
+from hostess.caller import (
+    CallerCompressionType,
+    CallerSerializationType,
+    CallerUnpackingOperator,
+    generic_python_endpoint
+)
 from hostess.config import EC2_DEFAULTS, GENERAL_DEFAULTS
+import hostess.shortcuts as hs
 from hostess.ssh import (
-    find_ssh_key, find_conda_env, jupyter_connect, NotebookConnection, SSH
+    find_conda_env, find_ssh_key, jupyter_connect, NotebookConnection, SSH
 )
 from hostess.subutils import Processlike, Viewer
 from hostess.utilities import (
@@ -579,8 +582,8 @@ class Instance:
                 _con is True.
         """
         if _con is True:
-            return self.con(ks.chain(commands, op), **kwargs)
-        return self.command(ks.chain(commands, op), **kwargs)
+            return self.con(hs.chain(commands, op), **kwargs)
+        return self.command(hs.chain(commands, op), **kwargs)
 
     def notebook(self, **connect_kwargs) -> NotebookConnection:
         """
@@ -1015,8 +1018,10 @@ class Instance:
     ):
         """
         Modify this instance's security group(s) to permit SSH access from
-        an IP (by default, the caller's external IP). By default, revoke all
-        other access rules.
+        an IP (by default, the caller's external IP). IMPORTANT: by default,
+        this method revokes all other inbound access permissions, because it
+        is good security practice to not slowly whitelist the entire world.
+        Pass `revoke=False `if there are permissions you need to retain.
 
         Args:
             ip: permit SSH access from this IP. if None, use the caller's
@@ -1025,11 +1030,10 @@ class Instance:
                 groups.
             revoke: if True, will revoke all other inbound permissions.
         """
-
         for sg_index in self.instance_.security_groups:
             sg = init_resource("ec2").SecurityGroup(sg_index["GroupId"])
             if revoke is True:
-                revoke_ssh_ingress_from_all_ips(
+                revoke_ingress(
                     sg, force_modification_of_default_sg=force
                 )
             authorize_ssh_ingress_from_ip(
@@ -1383,10 +1387,29 @@ class Cluster:
             print(f"{instance} is running")
         return cluster
 
-    def rebase_ssh_ingress_ip(self, ip=None, force=False, revoke=False):
-        """Revoke all SSH ingress rules and add one for the current IP.
-        To issue commands to instances, you must have SSH ingress access
-        and it is good security practice to not white list the entire world."""
+    def rebase_ssh_ingress_ip(
+        self,
+        ip: Optional[str] = None,
+        force: bool = False,
+        revoke: bool = True
+    ) -> list[None]:
+        """
+        Modify all security groups associated with all of this Cluster's
+        instances to permit SSH access from an IP IMPORTANT: by default,
+        this method revokes all other inbound access permissions, because it
+        is good security practice to not slowly whitelist the entire world.
+        Pass `revoke=False` if there are permissions you need to retain.
+
+        Args:
+            ip: permit SSH access from this IP. if None, use the caller's
+                external IP.
+            force: if True, will force modification even of default security
+                groups.
+            revoke: if True, will revoke all other inbound permissions.
+
+        Returns:
+            list of None (since the Instance method doesn't return anything)
+        """
         return self._async_method_call(
             "rebase_ssh_ingress_ip", ip=ip, force=force, revoke=revoke
         )
@@ -1478,43 +1501,56 @@ def get_stock_ubuntu_image(
 
 
 # noinspection PyTypedDict
-def summarize_instance_type_structure(structure: dict) -> dict:
+def summarize_instance_type_structure(itinfo: dict) -> dict:
     """
-    summarize an individual instance type description from a wrapped
-    description call
+    summarize an [EC2 InstanceTypeInfo](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_InstanceTypeInfo.html)
+    object.
+
+    Args:
+        itinfo: dict created from an InstanceTypeInfo structure, as returned
+            by boto3 functions like `describe_instance_types()`
+
+    Returns:
+        succinct version of InstanceTypeInfo structure
     """
-    proc = structure["ProcessorInfo"]
+    proc = itinfo["ProcessorInfo"]
     attributes = {
-        "instance_type": structure["InstanceType"],
+        "instance_type": itinfo["InstanceType"],
         "architecture": proc["SupportedArchitectures"][0],
-        "cpus": structure["VCpuInfo"]["DefaultVCpus"],
+        "cpus": itinfo["VCpuInfo"]["DefaultVCpus"],
         "cpu_speed": proc.get("SustainedClockSpeedInGhz"),
-        "ram": structure["MemoryInfo"]["SizeInMiB"] / 1024,\
-        "bw": structure["NetworkInfo"]["NetworkPerformance"],
+        "ram": itinfo["MemoryInfo"]["SizeInMiB"] / 1024,
+        "bw": itinfo["NetworkInfo"]["NetworkPerformance"],
     }
-    if "EbsOptimizedInfo" in structure["EbsInfo"].keys():
-        ebs = structure["EbsInfo"]["EbsOptimizedInfo"]
+    if "EbsOptimizedInfo" in itinfo["EbsInfo"].keys():
+        ebs = itinfo["EbsInfo"]["EbsOptimizedInfo"]
         attributes["ebs_bw_min"] = ebs["BaselineThroughputInMBps"]
         attributes["ebs_bw_max"] = ebs["MaximumThroughputInMBps"]
         attributes["ebs_iops_min"] = ebs["BaselineIops"]
         attributes["ebs_iops_max"] = ebs["MaximumIops"]
-    if structure["InstanceStorageSupported"] is True:
-        attributes["disks"] = structure["InstanceStorageInfo"]["Disks"]
-        attributes["local_storage"] = structure["InstanceStorageInfo"][
+    if itinfo["InstanceStorageSupported"] is True:
+        attributes["disks"] = itinfo["InstanceStorageInfo"]["Disks"]
+        attributes["local_storage"] = itinfo["InstanceStorageInfo"][
             "TotalSizeInGB"
         ]
     else:
         attributes["disks"] = []
         attributes["local_storage"] = 0
-    attributes["cpu_surcharge"] = structure["BurstablePerformanceSupported"]
+    attributes["cpu_surcharge"] = itinfo["BurstablePerformanceSupported"]
     return attributes
 
 
-def summarize_instance_type_response(response) -> tuple[dict]:
+def summarize_instance_type_response(response: dict) -> tuple[dict]:
     """
-    summarize a series of instance type descriptions as returned from a
-    boto3-wrapped
-    DescribeInstanceTypes or DescribeInstanceTypeOfferings call
+    extract a series of [EC2 InstanceTypeInfo](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_InstanceTypeInfo.html)
+    from a boto3-wrapped DescribeInstanceTypes or DescribeInstanceTypeOfferings
+    call and produce succinct summaries of them
+
+    Args:
+        response: boto3-wrapped DescribeInstanceType* API response
+
+    Returns:
+        summaries of each described instance type
     """
     types = response["InstanceTypes"]
     return gmap(summarize_instance_type_structure, types)
@@ -1527,14 +1563,26 @@ def summarize_instance_type_response(response) -> tuple[dict]:
 def describe_instance_type(
     instance_type: str,
     pricing: bool = True,
-    ec2_client=None,
-    pricing_client=None,
-    session=None,
+    ec2_client: Optional[botocore.client.BaseClient] = None,
+    pricing_client: Optional[botocore.client.BaseClient] = None,
+    session: Optional[boto3.session.Session] = None,
 ) -> dict:
     """
-    note that this function will report i386 architecture for the
+    Retrieve a succinct description of an EC2 instance type.
+
+    NOTE: this function will report i386 architecture for the
     very limited number of instance types that support both i386
     and x86_64.
+
+    Args:
+        instance_type: instance type name, e.g. 'm6i.large'
+        pricing: if True, also retrieve pricing information
+        ec2_client: optional preexisting boto ec2 client
+        pricing_client: optional preexisting boto pricing client
+        session: optional preexisting boto session
+
+    Returns:
+        dict containing summary information for this instance type
     """
     ec2_client = init_client("ec2", ec2_client, session)
     response = ec2_client.describe_instance_types(
@@ -1554,13 +1602,38 @@ def describe_instance_type(
     return summary
 
 
-def get_all_instance_types(client=None, session=None, reset_cache=False):
+def _retrieve_instance_type_info(
+    client: Optional[botocore.client.BaseClient] = None,
+    session: Optional[boto3.session.Session] = None,
+    reset_cache: bool = False
+) -> tuple[dict]:
+    """
+    Retrieve full descriptions of all instance types available in the client's
+    AWS Region, either from the API or from an on-disk cache, and cache them
+    to disk if retrieved from API.
+
+    This is primarily intended to be used as a helper function for higher-level
+    instance type summarization and tabulation functions.
+
+    Args:
+        client: optional preexisting boto ec2 client
+        session: optional preexisting boto session
+        reset_cache: if True, always retrieve all descriptions from the API,
+            even if 'fresh' cached descriptions are available on disk. If
+            False, do so only if there are no cached descriptions or they are
+            more than 5 days old.
+
+    Returns:
+        dicts produced from [EC2 InstanceTypeInfo](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_InstanceTypeInfo.html)
+            API objects, one for every instance type available in the AWS
+            Region.
+    """
     client = init_client("ec2", client, session)
     region = clarify_region(None, client)
     cache_path = Path(GENERAL_DEFAULTS["cache_path"])
     prefix = f"instance_types_{region}"
     if reset_cache is False:
-        cached_results = _check_cached_results(cache_path, prefix, max_age=7)
+        cached_results = _check_cached_results(cache_path, prefix, max_age=5)
         if cached_results is not None:
             return pickle.load(cached_results.open("rb"))
     results = autopage(client, "describe_instance_types")
@@ -1574,15 +1647,30 @@ def get_all_instance_types(client=None, session=None, reset_cache=False):
 # TODO: even with caching this still takes like 100ms, probably
 #  I'm assembling the df too much inside this function; probably this doesn't
 #  actually matter
-def instance_catalog(family=None, client=None, session=None):
-    types = get_all_instance_types(client, session)
+def instance_catalog(
+    family: Optional[str] = None,
+    client: Optional[botocore.client.BaseClient] = None,
+    session: Optional[boto3.session.Session] = None
+) -> pd.DataFrame:
+    """
+    Construct a catalog of available instance types, including their
+    technical specifications and on-demand pricing.
+
+    Args:
+        family: optional name of instance family, e.g. 'm6i'. If not specified,
+            catalog includes all available instance types.
+        client: optional preexisting boto ec2 client
+        session: optional preexisting boto session
+
+    Returns:
+        Instance catalog DataFrame.
+    """
+    types = _retrieve_instance_type_info(client, session)
     summaries = gmap(summarize_instance_type_structure, types)
     if family is not None:
         summaries = [
             s for s in summaries if s["instance_type"].split(".")[0] == family
         ]
-    import pandas as pd
-
     summary_df = pd.DataFrame(summaries)
     pricing = get_ec2_basic_price_list(session=session)["ondemand"]
     pricing_df = pd.DataFrame(pricing)
@@ -1590,18 +1678,44 @@ def instance_catalog(family=None, client=None, session=None):
 
 
 def _interpret_ebs_args(
-    volume_type, volume_size, iops, throughput, volume_list
-):
+    volume_type: Optional[Literal["gp2", "gp3", "io1", "io2"]] = None,
+    volume_size: Optional[int] = None,
+    iops: Optional[int] = None,
+    throughput: Optional[int] = None,
+    volume_list: Optional[Sequence[dict[str, Union[int, str]]]] = None
+) -> list[dict]:
+    """
+    helper function for `create_launch_template()`. Parse user-provided volume
+    specifications into a list of dicts formatted like EC2 API
+    [LaunchTemplateBlockDeviceMappingRequest objects](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_LaunchTemplateBlockDeviceMappingRequest.html).
+
+    This function permits specification of _either_ a volume_list or
+    volume_type + volume_size + (optional) iops + (optional) throughput, which
+    all implicitly refer to a single boot volume.
+
+    Args:
+        volume_type: EBS volume type for instance boot volum.
+        volume_size: Size in GB for instance boot volume.
+        iops: IOPS for instance boot volume, if other than default
+        throughput: throughput for instance boot volume, if other than default
+        volume_list: sequence of dicts that could be passed as kwargs to this
+            function, giving all volumes that will be attached to the instance
+            at creation. the first one is the boot volume. If specified,
+            volume_type and volume_size must be None.
+
+    Returns:
+        LaunchTemplateBlockDeviceMappingRequest objects from specs
+    """
     if ((volume_type is not None) or (volume_size is not None)) and (
         volume_list is not None
     ):
-        raise ValueError(
+        raise TypeError(
             "Please pass either a list of volumes (volume_list) or "
-            "volume_type and size, not both."
+            "volume_type and _size, not both."
         )
     if volume_list is None:
         if (volume_type is None) or (volume_size is None):
-            raise ValueError(
+            raise TypeError(
                 "If a list of volumes (volume_list) is not specified, "
                 "volume_type and volume_size cannot be None."
             )
@@ -1615,16 +1729,35 @@ def _interpret_ebs_args(
 
 
 EBS_VOLUME_TYPES = ("gp2", "gp3", "io1", "io2", "st1", "sc1")
+"""all current-generation EBS volume types"""
 
 
 def _ebs_device_mapping(
-    volume_type,
-    volume_size,
-    index=0,
-    iops=None,
-    throughput=None,
-    device_name=None,
-):
+    volume_type: str,
+    volume_size: int,
+    index: int = 0,
+    iops: Optional[int] = None,
+    throughput: Optional[int] = None,
+    device_name: Optional[str] = None,
+) -> dict:
+    """
+    reformat the passed specification as a legal EC2 API
+    [LaunchTemplateBlockDeviceMappingRequest object](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_LaunchTemplateBlockDeviceMappingRequest.html)
+
+    Args:
+        volume_type: EBS volume type, e.g. 'gp3'
+        volume_size: volume size in GB
+        index: index of volume among all specified volumes (0 means root)
+        iops: I/O operations per second, if other than default and volume type
+            supports IOPS specification
+        throughput: throughput in MiB/s, if other than default and volume type
+            supports throughput specification
+        device_name: optional block device name; if not specified, will
+            automatically assign one based on index
+
+    Returns:
+        LaunchTemplateBlockDeviceMappingRequest-formatted dict
+    """
     if volume_type not in EBS_VOLUME_TYPES:
         raise ValueError(f"{volume_type} is not a recognized EBS volume type.")
     if volume_type.startswith("io"):
@@ -1653,9 +1786,35 @@ def _ebs_device_mapping(
     return mapping
 
 
+def _hostess_placeholder() -> str:
+    """create a random hostess placeholder name"""
+    return f"hostess-{''.join(choices(ascii_lowercase, k=10))}"
+
+
 def create_security_group(
-    name=None, description=None, client=None, resource=None, session=None
-):
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    client: Optional[botocore.client.BaseClient] = None,
+    resource: Optional[boto3.resources.base.ServiceResource] = None,
+    session: Optional[boto3.session.Session] = None
+) -> "SecurityGroup":
+    """
+    Create a new EC2 security group in the caller's AWS account with default
+    hostess settings.
+
+    Args:
+        name: optional name for new security group. If not specified, will
+            randomly assign a name.
+        description: optional description for new security group. will give a
+            default description.
+        client: optional preexisting boto ec2 client
+        resource: optional preexisting boto ec2 resource
+        session: optional preexisting boto session
+
+    Returns:
+        A boto3 SecurityGroup resource providing an interface to the newly-
+        created security group.
+    """
     client = init_client("ec2", client, session)
     try:
         default_vpc_id = client.describe_vpcs(
@@ -1668,7 +1827,7 @@ def create_security_group(
         )
     resource = init_resource("ec2", resource, session)
     if name is None:
-        name = hostess_placeholder()
+        name = _hostess_placeholder()
     if description is None:
         description = "hostess-generated security group"
     sg = resource.create_security_group(
@@ -1702,13 +1861,30 @@ def create_security_group(
     return sg
 
 
-def hostess_placeholder():
-    return f"hostess-{''.join(choices(ascii_lowercase, k=10))}"
+def create_ec2_key(
+    key_name: Optional[str] = None,
+    save_key: bool = True,
+    resource: Optional[boto3.resources.base.ServiceResource] = None,
+    session: Optional[boto3.session.Session] = None
+) -> "KeyPair":
+    """
+    Create a new EC2 SSH key pair in the caller's AWS account. Optionally also
+    save the key material to disk.
 
+    Args:
+        key_name: optional name for key pair (if not specified, a name is
+            randomly assigned)
+        save_key: if True, save the key material to disk in ~/.ssh, in a .pem
+            file with the same filename stem as the key pair
+        resource: optional preexisting boto ec2 resource
+        session: optional preexisting boto session
 
-def create_ec2_key(key_name=None, save_key=True, resource=None, session=None):
+    Returns:
+        a boto3 KeyPair resource providing an interface to the newly-created
+            key pair.
+    """
     if key_name is None:
-        key_name = hostess_placeholder()
+        key_name = _hostess_placeholder()
     resource = init_resource("ec2", resource, session)
     key = resource.create_key_pair(KeyName=key_name)
     keydir = Path(os.path.expanduser("~/.ssh"))
@@ -1717,27 +1893,73 @@ def create_ec2_key(key_name=None, save_key=True, resource=None, session=None):
         keyfile = Path(keydir, f"{key_name}.pem")
         with keyfile.open("w") as stream:
             stream.write(key.key_material)
+        # many programs will not permit you to use a key file with read/write
+        # permissions for other users
         keyfile.chmod(0o700)
     return key
 
 
 def create_launch_template(
-    template_name=None,
-    instance_type=EC2_DEFAULTS['instance_type'],
-    volume_type=None,
-    volume_size=None,
-    image_id=None,
-    iops=None,
-    throughput=None,
-    volume_list=None,
-    instance_name=None,
-    security_group_name=None,
-    tags=None,
-    key_name=None,
-    client=None,
-    session=None,
+    template_name: Optional[str] = None,
+    instance_type: str = EC2_DEFAULTS['instance_type'],
+    volume_type: Optional[Literal["gp2", "gp3", "io1", "io2"]] = None,
+    volume_size: Optional[int] = None,
+    image_id: Optional[str] = None,
+    iops: Optional[int] = None,
+    throughput: Optional[int] = None,
+    volume_list: Optional[list[dict]] = None,
+    instance_name: Optional[str] = None,
+    security_group_name: Optional[str] = None,
+    tags: Optional[dict] = None,
+    key_name: Optional[str] = None,
+    client: Optional[botocore.client.BaseClient] = None,
+    session: Optional[boto3.session.Session] = None
 ):
-    default_name = hostess_placeholder()
+    """
+    Create a new EC2 launch template in the caller's AWS account (see
+    https://docs.aws.amazon.com/autoscaling/ec2/userguide/launch-templates.html).
+
+    Args:
+        template_name: optional name for template. if none is specified, a
+            random name is assigned.
+        instance_type: instance type name (e.g. 'm6i.large')
+        volume_type: EBS volume type for boot volume (e.g. 'gp3'). If not
+            specified and `volume_list` is not passed, defaults to
+            `EC2_DEFAULTS['volume_type']`
+        volume_size: volume size in GB for boot volume. If not specified and
+            `volume_list` is not passed, defaults to
+            `EC2_DEFAULTS['volume_size']`
+        image_id: ID for Amazon Machine Image (AMI) to create instance from.
+            if not specified, uses the most recently-released Ubuntu Server
+            LTS AMI.
+        iops: I/O operations per second for boot volume, if other than default
+            and volume type supports IOPS specification; ignored if volume_list
+            passed
+        throughput: throughput in MiB/s for boot volume, if other than default
+            and volume type supports throughput specification; ignored if
+            volume_list passed
+        volume_list: alternative to specifying volume_type/volume_size (and
+            optional iops/throughput). a list of dicts with 'volume_type',
+            'volume_size', and optionally 'iops' and 'throughput' keys. Each
+            of these dicts specifies a separate EBS volume for the instance;
+            the first will be the boot volume. It must not be passed along
+            with volume_size or volume_type.
+        instance_name: optional name for instances created from template
+        security_group_name: optional name of preexisting security group. if
+            not specified, a new security group will be created.
+        tags: optional dict like {tag name: tag value} specifying resource
+            tags for instances and volumes created from this template.
+        key_name: optional name of preexisting EC2 key pair object known to
+            AWS. if not specified, a new EC2 key pair will be created and a
+            corresponding key file will be saved to disk in ~/.ssh.
+        client: optional preexisting boto ec2 client
+        session: optional preexisting boto session
+
+    Returns:
+        dict created from an AWS
+            [LaunchTemplate API response](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_LaunchTemplate.html).
+    """
+    default_name = _hostess_placeholder()
     if volume_list is None:
         volume_type = (
             EC2_DEFAULTS["volume_type"] if volume_type is None else volume_type
@@ -1826,19 +2048,34 @@ def create_launch_template(
     )["LaunchTemplate"]
 
 
-def revoke_ssh_ingress_from_all_ips(
-    sg,
-    force_modification_of_default_sg=False,
-    ports=(22,),
-    protocols=('tcp',)
+def revoke_ingress(
+    sg: "SecurityGroup",
+    force_modification_of_default_sg: bool = False,
+    ports: Collection[int] = (22,),
+    protocols: Collection[Literal["tcp", "udp", "icmp"]] = ('tcp',)
 ):
-    print(f'Revoking SSH ingress from all IPs for security group {sg.id}')
+    """
+    Remove inbound permission rules from a security group. The default
+    settings revoke permissions on the default SSH port.
+
+    Args:
+        sg: boto3 SecurityGroup resource object
+        force_modification_of_default_sg: if True, modify rules even if
+            `sg` is a default security group
+        ports: revoke only those rules granting ingress on one of these ports
+        protocols: revoke only those rules granting ingress via one of these
+            protocols
+    """
     if 'default' in sg.id and not force_modification_of_default_sg:
         print(
             '\tRefusing to modify permissions of a default security group. '
             'Pass flag to override.'
         )
         return
+    print(
+        f'Revoking ingress from all IPs on port(s) {ports} to security group '
+        f'{sg.id}'
+    )
     for rule in sg.ip_permissions:
         # do not modify ingress rules based on security group (and not just IP)
         if not (rule['FromPort'] in ports and
