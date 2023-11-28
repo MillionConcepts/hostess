@@ -168,7 +168,7 @@ class Dispatcher(Composition):
     intended for applications like handling console streams.
     """
 
-    def __init__(self, *args, cached=True, **kwargs):
+    def __init__(self, *args, cached: bool = True, **kwargs):
         """
         See Composition's documentation for a full description of valid
         args and kwargs.
@@ -253,7 +253,7 @@ def _nonelist(obj):
     return [] if obj is None else obj
 
 
-def strip_newline(text: str):
+def strip_newline(text: str) -> str:
     """
     just strip newlines. helper function for console streams.
 
@@ -385,7 +385,7 @@ class CBuffer:
         self,
         signal_generator: Optional[Callable[[], Any]],
         step: Union[str, int]
-    ):
+    ) -> Callable:
         """
         create a callback for a named step of self.dispatcher.
 
@@ -471,7 +471,7 @@ class RunCommand:
     def bind(self, *args, **kwargs):
         self.args, self.kwargs = args, kwargs
 
-    def cstring(self, *args, args_at_end=True, **kwargs):
+    def cstring(self, *args, args_at_end: bool = True, **kwargs):
         """
         Create a shell command string from *args and **kwargs, including any
         command and kwargs curried into this object. Used as part of the

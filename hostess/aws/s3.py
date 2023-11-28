@@ -533,7 +533,7 @@ def rm(
     key: str,
     client: Optional[botocore.client.BaseClient] = None,
     session: Optional[boto3.Session] = None,
-    config=None,
+    config: Optional[boto3.s3.transfer.TransferConfig] = None,
 ) -> dict:
     """
     Delete an S3 object.
@@ -846,7 +846,7 @@ def freeze(
     client: Optional[botocore.client.BaseClient] = None,
     session: Optional[boto3.Session] = None,
     config: Optional[boto3.s3.transfer.TransferConfig] = None
-):
+) -> dict:
     """
     Modify the storage class of an object. Intended primarily for
     moving objects from S3 Standard to one of the Glacier classes.
@@ -874,7 +874,7 @@ def restore(
     client: Optional[botocore.client.BaseClient] = None,
     session: Optional[boto3.Session] = None,
     config: Optional[boto3.s3.transfer.TransferConfig] = None
-):
+) -> dict:
     """
     Issue a request to temporarily restore an object from S3 Glacier Flexible
     Retrival or Deep Archive to S3 Standard. Note that object restoration is

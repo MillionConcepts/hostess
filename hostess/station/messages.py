@@ -12,7 +12,7 @@ import random
 import struct
 import sys
 from types import MappingProxyType as MPt, NoneType
-from typing import Optional, Any, Literal, Mapping, MutableMapping, Union
+from typing import Optional, Any, Literal, Mapping, MutableMapping, Union, Sequence
 
 from cytoolz import groupby
 import dill
@@ -77,7 +77,8 @@ def scalarchar(
     return np.min_scalar_type(scalar).char, None
 
 
-def obj2scanf(obj) -> tuple[str, Optional[str]]:
+def obj2scanf(obj: Union[int, float, None, str, bytes, tuple[Union[int, float], tuple[None], tuple[str], tuple[bytes],
+                         list[Union[int, float]], list[None], list[str], list[bytes]]]) -> tuple[str, Optional[str]]:
     """
     construct a struct / scanf format string for `obj`, along with a code for
     the 'string' type if it is `str`, `bytes`, or `NoneType` (struct strings
@@ -191,7 +192,8 @@ def pack_obj(obj: Any, name: str = "") -> pro.PythonObject:
 
 
 # TODO: optional base64 encoding for some channels
-def make_action(description: Optional[dict[str, str]] = None, **fields):
+def make_action(description: Optional[dict[str, str]] = None,
+                **fields: Union[bool, Mapping[str, str], Message, int, str]) -> pro.Action:
     """
     construct a default pro.Action message.
 
@@ -244,7 +246,8 @@ def update_instruction_timestamp(instruction: pro.Instruction):
     instruction.MergeFrom(pro.Instruction(time=make_timestamp()))
 
 
-def make_instruction(instructiontype: str, **kwargs) -> pro.Instruction:
+def make_instruction(instructiontype: str, **kwargs: Union[int, Message, Mapping[str, str], Sequence[Message]])\
+        -> pro.Instruction:
     """
     Standardized factory function for Instruction Messages. This is generally
     the most convenient and reliable way to create an Instruction for a

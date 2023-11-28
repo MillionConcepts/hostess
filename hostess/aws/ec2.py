@@ -282,7 +282,7 @@ class Instance:
         maxtries: int = 40,
         **instance_kwargs: Union[str, botocore.client.baseClient, boto3.resources.base.ServiceResource,
                                  boto3.Session, Path, bool]
-    ):
+    ) -> "Instance":
         """
         launch a single instance. This is a thin wrapper for
         `Cluster.launch()` with `count=0` and an optional `connect`
@@ -743,7 +743,8 @@ class Instance:
         return self._ssh.read(source, mode, encoding, as_buffer)
 
     @connectwrap
-    def read_csv(self, source: Union[str, Path], encoding: str = 'utf-8', **csv_kwargs):
+    def read_csv(self, source: Union[str, Path], encoding: str = 'utf-8', **csv_kwargs: Any)\
+            -> pd.DataFrame:
         """
         read a CSV-like file from the instance into a pandas DataFrame.
 
@@ -945,7 +946,7 @@ class Instance:
         payload_encoded: bool = False,
         print_result: bool = True,
         filter_kwargs: bool = True,
-        **command_kwargs,
+        **command_kwargs: bool,
     ) -> Viewer:
         """
         call a Python function on the instance. See
@@ -981,7 +982,9 @@ class Instance:
                 `payload`? Does nothing if `splat != "**"`.
             **command_kwargs: additional kwargs to pass to `self.command()`.
                 Note that `_viewer=False` is invalid; this function always
-                returns a `Viewer`.
+                returns a `Viewer`. Only `RunCommand` meta-option are valid,
+                you can't pass extra command-line-type kwargs. If you try, it
+                will break the call.
 
         Returns:
             `Viewer` wrapping executed Python process.
@@ -1104,7 +1107,7 @@ class Cluster:
             time.sleep(0.01)
         return [f.result() for f in futures]
 
-    def command(self, command: str, *args, **kwargs) -> list[Processlike, ...]:
+    def command(self, command: str, *args, **kwargs: Union[bool, str, int, float]) -> list[Processlike, ...]:
         """
         Call a shell command on all this Cluster's Instances. See
         `Instance.command()` for further documentation.
@@ -1150,7 +1153,7 @@ class Cluster:
         """
         return self._async_method_call("call_python", *args, **kwargs)
 
-    def start(self, *args, **kwargs):
+    def start(self, *args, **kwargs) -> list:
         """
         Start all Instances. See `Instance.start()` for further documentation.
 
@@ -1163,7 +1166,7 @@ class Cluster:
         """
         return self._async_method_call("start", *args, **kwargs)
 
-    def stop(self, *args, **kwargs):
+    def stop(self, *args, **kwargs) -> list:
         """
         Stop all Instances. See `Instance.stop()` for further documentation.
 
@@ -1176,7 +1179,7 @@ class Cluster:
         """
         return self._async_method_call("stop", *args, **kwargs)
 
-    def terminate(self, *args, **kwargs):
+    def terminate(self, *args, **kwargs) -> list:
         """
         Terminate all Instances. See `Instance.terminate()` for further
         documentation.

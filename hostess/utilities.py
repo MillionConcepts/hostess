@@ -80,7 +80,7 @@ def mb(b: int, round_to: Optional[int] = 2) -> float:
     return value
 
 
-def gb(b, round_to=2):
+def gb(b: float, round_to: Optional[int] = 2) -> float:
     """
     utility function to convert B to GB.
 
