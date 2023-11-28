@@ -20,7 +20,8 @@ import pandas as pd
 
 from hostess.config import GENERAL_DEFAULTS
 import hostess.shortcuts as short
-from hostess.subutils import RunCommand, Processlike
+from hostess.subutils import RunCommand, Processlike, Viewer
+from hostess.utilities import timeout_factory
 
 
 def open_tunnel(
@@ -66,6 +67,22 @@ def open_tunnel(
     }
     # TODO: add a pipe or something
     return process, metadict
+
+
+def _move_print_heads(err_head, out_head, process):
+    from rich import print as rp
+    has_new_output = False
+    if (outlen := len(process.out)) > out_head:
+        has_new_output = True
+        for outline in process.out[out_head:]:
+            rp(outline)
+        out_head = outlen
+    if (errlen := len(process.err)) > err_head:
+        has_new_output = True
+        for errline in process.err[err_head:]:
+            rp(f"[red]{errline}[/red]")
+        err_head = errlen
+    return has_new_output, out_head, err_head
 
 
 class SSH(RunCommand):
@@ -310,15 +327,61 @@ class SSH(RunCommand):
                 rp(*map(lambda t: f"[red]{t}[/red]", result.stderr))
         return result
 
-    # def con(self, *args, **kwargs):
-    #     """
-    #     pretend you are running a command on the remote host while looking at a
-    #     terminal emulator, pausing for output and pretty-printing it to stdout.
-    #
-    #     like SSH.__call__() with _wait=True, _quiet=False, but does not return
-    #     a process abstraction. fun in interactive environments.
-    #     """
-    #     self(*args, _quiet=False, _wait=True, **kwargs)
+    def con(
+        self,
+        *args,
+        _poll: float = 0.05,
+        _timeout: Optional[float] = None,
+        _return_viewer: bool = False,
+        **kwargs
+    ) -> Optional[Viewer]:
+        """
+        pretend you are running a command on the remote host while looking at a
+        terminal emulator. pauses for output and pretty-prints it to stdout.
+
+        Does not return a process abstraction by default (pass
+        _return_viewer=True if you want one). Fun in interactive environments.
+
+        Only arguments unique to con() are described here; others are as
+        SSH.__call__().
+
+        Args:
+            *args: additional args to pass to self.__call__.
+            _poll: polling rate for process output, in seconds
+            _timeout: if not None, raise a TimeoutError if this many seconds
+                pass before receiving additional output from process (or
+                process exit).
+            _return_viewer: if True, return a Viewer for the process once it
+                exits. Otherwise, return None.
+            **kwargs: additional kwargs to pass to self.__call__.
+
+        Returns:
+            A Viewer if _return_viewer is True; otherwise None.
+        """
+        if kwargs.get('_viewer') is False:
+            raise TypeError("Cannot call con() with _viewer=False")
+        process = self(*args, _viewer=True, **kwargs)
+        if _timeout is not None:
+            waiting, unwait = timeout_factory(True, _timeout)
+        else:
+            waiting, unwait = zero, zero
+        out_head, err_head = 0, 0
+        try:
+            while process.running:
+                has_new_output, out_head, err_head = _move_print_heads(
+                    err_head, out_head, process
+                )
+                if has_new_output is True:
+                    unwait()
+                else:
+                    waiting()
+                time.sleep(_poll)
+            _move_print_heads(err_head, out_head, process)
+        except KeyboardInterrupt:
+            process.kill()
+            print("^C")
+        if _return_viewer is True:
+            return process
 
     def close(self):
         for process, _ in self.tunnels:

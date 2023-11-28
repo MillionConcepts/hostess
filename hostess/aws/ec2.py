@@ -189,22 +189,6 @@ def instances_from_ids(
     return instances
 
 
-def _move_print_heads(err_head, out_head, process):
-    from rich import print as rp
-    has_new_output = False
-    if (outlen := len(process.out)) > out_head:
-        has_new_output = True
-        for outline in process.out[out_head:]:
-            rp(outline)
-        out_head = outlen
-    if (errlen := len(process.err)) > err_head:
-        has_new_output = True
-        for errline in process.err[err_head:]:
-            rp(f"[red]{errline}[/red]")
-        err_head = errlen
-    return has_new_output, out_head, err_head
-
-
 class Instance:
     """
     Interface to an EC2 instance. Enables permitting state control,
@@ -289,10 +273,25 @@ class Instance:
         client=None,
         session=None,
         wait=True,
-        connect=False,
-        maxtries=40,
+        connect: bool = False,
+        maxtries: int = 40,
         **instance_kwargs
     ):
+        """
+        launch a single instance. This is a thin wrapper for
+        `Cluster.launch()` with `count=0` and an optional `connect`
+        argument. See that function's documentation for a description
+        of arguments other than `connect` and `maxtries`
+
+        Args:
+            connect: if True, block until establishing an SSH connection
+                with the instance.
+            maxtries: how many times to try to connect to the instance if
+                connect=True (waiting 1s between each attempt).
+
+        Returns:
+            an Instance associated with a newly-launched instance.
+        """
         instance = Cluster.launch(
             1,
             template,
@@ -479,6 +478,7 @@ class Instance:
     @connectwrap
     def command(
         self,
+        command: str,
         *args,
         _viewer: bool = True,
         _wait: bool = False,
@@ -489,26 +489,35 @@ class Instance:
         run a command in the instance's default interpreter.
 
         Args:
-            *args: args to pass to `self._ssh`.
+            command: command name or full text of command
+                (see hostess.subutils.RunCommand.__call__() for detailed
+                calling conventions).
+            *args: args to pass to `self._ssh.__call__()`.
             _viewer: if `True`, return a `Viewer` object. otherwise return
-                unwrapped result from `self._ssh`.
+                unwrapped result from `self._ssh.__call__()`.
             _wait: if `True`, block until command terminates (or connection
                 fails). _w is an alias.
             _quiet: if `False`, print stdout and stderr, should the process
                 return any before this function terminates. Generally best
                 used with _wait=True.
-            **kwargs: kwargs to pass to `self.ssh`.
+            **kwargs: kwargs to pass to `self._ssh.__call__()`.
 
         Returns:
             object representing executed process.
         """
         return self._ssh(
-            *args, _viewer=_viewer, _wait=_wait, _quiet=_quiet, **kwargs
+            command,
+            *args,
+            _viewer=_viewer,
+            _wait=_wait,
+            _quiet=_quiet,
+            **kwargs
         )
 
     @connectwrap
     def con(
         self,
+        command: str,
         *args,
         _poll: float = 0.05,
         _timeout: Optional[float] = None,
@@ -519,46 +528,32 @@ class Instance:
         pretend you are running a command on the instance while looking at a
         terminal emulator. pauses for output and pretty-prints it to stdout.
 
-        like Instance.command with _wait=True, _quiet=False. Does not return
-        a process abstraction by default (pass _return_viewer=True if you want
-        one). Fun in interactive environments.
-
-        Only arguments unique to con() are described here; others are as
-        Instance.command().
+        Does not return a process abstraction by default (pass
+        _return_viewer=True if you want one). Fun in interactive environments.
 
         Args:
+            command: command name or full text of command
+                (see hostess.subutils.RunCommand.__call__() for detailed
+                calling conventions).
             _poll: polling rate for process output, in seconds
             _timeout: if not None, raise a TimeoutError if this many seconds
                 pass before receiving additional output from process (or
                 process exit).
             _return_viewer: if True, return a Viewer for the process once it
                 exits. Otherwise, return None.
+            **kwargs: kwargs to pass to Instance.command().
 
         Returns:
             A Viewer if _return_viewer is True; otherwise None.
         """
-        process = self.command(*args, **kwargs)
-        if _timeout is not None:
-            waiting, unwait = timeout_factory(True, _timeout)
-        else:
-            waiting, unwait = zero, zero
-        out_head, err_head = 0, 0
-        try:
-            while process.running:
-                has_new_output, out_head, err_head = _move_print_heads(
-                    err_head, out_head, process
-                )
-                if has_new_output is True:
-                    unwait()
-                else:
-                    waiting()
-                time.sleep(_poll)
-            _move_print_heads(err_head, out_head, process)
-        except KeyboardInterrupt:
-            process.kill()
-            print("^C")
-        if _return_viewer is True:
-            return process
+        return self._ssh.con(
+            command,
+            *args,
+            _poll=_poll,
+            _timeout=_timeout,
+            _return_viewer=_return_viewer,
+            **kwargs
+        )
 
     @connectwrap
     def commands(
@@ -597,8 +592,7 @@ class Instance:
                 `ssh.jupyter_connect()` for complete signature.
 
         Returns:
-            structure containing results of the tunneled Jupyter Notebook
-                execution.
+            structure containing results of tunneled Notebook execution.
         """
         self._prep_connection()
         return jupyter_connect(self._ssh,  **connect_kwargs)
@@ -942,28 +936,48 @@ class Instance:
         print_result: bool = True,
         filter_kwargs: bool = True,
         **command_kwargs,
-    ):
+    ) -> Viewer:
         """
+        call a Python function on the instance. See
+        `hostess.caller.generic_python_endpoint()` for more verbose
+        documentation and technical discussion.
 
         Args:
-            module:
-            func:
-            payload:
-            interpreter:
-            env:
-            compression:
-            serialization:
-            splat:
-            payload_encoded:
-            print_result:
-            filter_kwargs:
-            **command_kwargs:
+            module: name of, or path to, the target module
+            func: name of the function to call. must be a member of the target
+                module (or explicitly imported by that module).
+            payload: object from which to construct func's call arguments.
+                must specify appropriate `serialization` if it cannot be
+                reconstructed from its string representation.
+            interpreter: path to Python interpreter that should be specified in
+                the shell command.
+            env: optional name of conda environment. both `interpreter` and
+                `env` cannot be specified. If neither are specified, simply
+                uses the first `python` binary on the remote user's $PATH,
+                if any.
+            compression: compression for payload. 'gzip' or None.
+            serialization: how to serialize `payload`. 'json' means serialize
+                to JSON; 'pickle' means serialize using pickle; None means just
+                use the string representation of `payload`.
+            splat: Operator for splatting the payload into the function call.
+                `"*"` means `func(*payload)`, `"**"` means `func(**payload)`;
+                None means `func(payload)`.
+            payload_encoded: set to True if you have already
+                compressed/serialized `payload` with the specified methods.
+            print_result: if True, the function call will print its result
+                to stdout, so it will be available in the `.out` attribute of
+                the returned Viewer.
+            filter_kwargs: Attempt to filter `func`-inappropriate kwargs from
+                `payload`? Does nothing if `splat != "**"`.
+            **command_kwargs: additional kwargs to pass to `self.command()`.
+                Note that `_viewer=False` is invalid; this function always
+                returns a `Viewer`.
 
         Returns:
-
+            `Viewer` wrapping executed Python process.
         """
         if (interpreter is not None) and (env is not None):
-            raise ValueError(
+            raise TypeError(
                 "Please pass either the name of a conda environment or the "
                 "path to a Python interpreter (one or the other, not both)."
             )
@@ -984,15 +998,33 @@ class Instance:
             interpreter=interpreter,
             for_bash=True
         )
-        return self._ssh(python_command_string, **command_kwargs)
+        return self.command(
+            python_command_string, _viewer=True, **command_kwargs
+        )
 
-    def rebase_ssh_ingress_ip(self, ip=None, force=False, revoke=False):
-        """Revoke all SSH ingress rules and add one for the current IP.
+    # TODO: It is permitted to have more than one security group apply to
+    #  an instance. This method will currently modify _all_ security
+    #  groups attached to a particular instance. We only really ever use
+    #  one security group per instance... but this should be fixed
+    #  somehow.
+    def rebase_ssh_ingress_ip(
+        self,
+        ip: Optional[str] = None,
+        force: bool = False,
+        revoke: bool = True
+    ):
+        """
+        Modify this instance's security group(s) to permit SSH access from
+        an IP (by default, the caller's external IP). By default, revoke all
+        other access rules.
 
-        TODO: It is permitted to have more than one security group apply to
-        an instance. This method will currently modify _all_ security groups
-        attached to a particular instance. We only really ever use one
-        security group per instance... but this should be fixed somehow."""
+        Args:
+            ip: permit SSH access from this IP. if None, use the caller's
+                external IP.
+            force: if True, will force modification even of default security
+                groups.
+            revoke: if True, will revoke all other inbound permissions.
+        """
 
         for sg_index in self.instance_.security_groups:
             sg = init_resource("ec2").SecurityGroup(sg_index["GroupId"])
@@ -1018,15 +1050,39 @@ class Instance:
         return self.__repr__()
 
     key = None
+    """path to SSH keyfile"""
     key_errstring = None
+    """
+    detailed description of what's wrong with our attempt to find an SSH 
+    keyfile, if anything
+    """
 
 
 class Cluster:
+    """Class offering an interface to multiple EC2 instances at once."""
     def __init__(self, instances: Collection[Instance]):
+        """
+        Args:
+            instances: Instance objects to incorporate into this Cluster.
+        """
         self.instances = tuple(instances)
         self.fleet_request = None
 
-    def _async_method_call(self, method_name: str, *args, **kwargs):
+    def _async_method_call(
+        self, method_name: str, *args, **kwargs
+    ) -> list[Any]:
+        """
+        Internal wrapper function: make multithreaded calls to a specified
+        method of all this Cluster's Isntances.
+
+        Args:
+             method_name: named method of Instance to call on all our Instances
+             *args: args to pass to these method calls
+             **kwargs: kwargs to pass to these method calls
+
+        Returns:
+            list containing result of method call from each Instance
+        """
         exc = ThreadPoolExecutor(len(self.instances))
         futures = []
         for instance in self.instances:
@@ -1037,105 +1093,194 @@ class Cluster:
             time.sleep(0.01)
         return [f.result() for f in futures]
 
-    def command(
-        self, command, *args, _viewer=True, **kwargs
-    ) -> list[Processlike, ...]:
-        return self._async_method_call(
-            "command", command, *args, _viewer=_viewer, **kwargs
-        )
+    def command(self, command: str, *args, **kwargs) -> list[Processlike, ...]:
+        """
+        Call a shell command on all this Cluster's Instances. See
+        `Instance.command()` for further documentation.
+
+        Args:
+            command: command name/string
+            *args: args to pass to `Instance.command()`
+            **kwargs: kwargs to pass to `Instance.command()`
+
+        Returns:
+            list containing results of `command()` from each Instance.
+        """
+        return self._async_method_call("command", command, *args, **kwargs)
 
     def commands(
-        self, commands: Sequence[str], *args, _viewer=True, **kwargs
+        self, commands: Sequence[str], *args, **kwargs
     ) -> list[Processlike, ...]:
-        return self._async_method_call(
-            "commands", commands, *args, _viewer=_viewer, **kwargs
-        )
+        """
+        Call a sequence of shell commands on all this Cluster's Instances. See
+        `Instance.commands()` for further documentation.
 
-    def call_python(
-        self, module, *args, _viewer=True, **kwargs
-    ) -> list[Processlike, ...]:
-        return self._async_method_call(
-            "call_python", module, *args, _viewer=_viewer, **kwargs
-        )
+        Args:
+            commands: command names/strings
+            *args: args to pass to `Instance.commands()`
+            **kwargs: kwargs to pass to `Instance.commands()`
 
-    def start(self, return_response=False):
-        """Start the instances."""
-        return self._async_method_call("start", return_response)
+        Returns:
+            list containing results of `commands()` from each Instance.
+        """
+        return self._async_method_call("commands", commands, *args, **kwargs)
 
-    def stop(self, return_response=False):
-        """Stop the instances."""
-        return self._async_method_call("stop", return_response)
+    def call_python(self, *args, **kwargs) -> list[Processlike, ...]:
+        """
+        Call a Python function on all this Cluster's Instances. See
+        `Instance.call_python()` for further documentation.
 
-    def terminate(self, return_response=False):
-        """Terminate (aka delete) the instances."""
-        return self._async_method_call("terminate", return_response)
+        Args:
+            *args: args to pass to `Instance.call_python()`
+            **kwargs: kwargs to pass to `Instance.call_python()`
 
-    def gather_files(
-        self,
-        source_path,
-        target_path: str = ".",
-        process_states: Optional[
-            MutableMapping[str, Literal["running", "done"]]
-        ] = None,
-        callback: Callable = zero,
-        delay=0.02,
-    ):
-        status = {instance.instance_id: "ready" for instance in self.instances}
+        Returns:
+            list containing results of `call_python()` from each Instance.
+        """
+        return self._async_method_call("call_python", *args, **kwargs)
 
-        def finish_factory(instance_id):
-            def finisher(*args, **kwargs):
-                status[instance_id] = transition_state
-                callback(*args, **kwargs)
+    def start(self, *args, **kwargs):
+        """
+        Start all Instances. See `Instance.start()` for further documentation.
 
-            return finisher
+        Args:
+            *args: args to pass to `Instance.start()`
+            **kwargs: kwargs to pass to `Instance.start()`
 
-        if process_states is None:
-            return {
-                instance.instance_id: instance.get(
-                    f"{source_path}/*", target_path, _bg=True, _viewer=True
-                )
-                for instance in self.instances
-            }
-        commands = defaultdict(list)
+        Returns:
+            list containing results of `start()` from each Instance.
+        """
+        return self._async_method_call("start", *args, **kwargs)
 
-        while any(s != "complete" for s in status.values()):
-            for instance in self.instances:
-                if status[instance.instance_id] in ("complete", "fetching"):
-                    continue
-                if process_states[instance.instance_id] == "done":
-                    transition_state = "complete"
-                else:
-                    transition_state = "ready"
-                status[instance.instance_id] = "fetching"
-                command = instance.get(
-                    f"{source_path}/*",
-                    target_path,
-                    _bg=True,
-                    _bg_exc=False,
-                    _viewer=True,
-                    _done=finish_factory(instance.instance_id),
-                )
-                commands[instance.instance_id].append(command)
-            time.sleep(delay)
-        return commands
+    def stop(self, *args, **kwargs):
+        """
+        Stop all Instances. See `Instance.stop()` for further documentation.
+
+        Args:
+            *args: args to pass to `Instance.stop()`
+            **kwargs: kwargs to pass to `Instance.stop()`
+
+        Returns:
+            list containing results of `stop()` from each Instance.
+        """
+        return self._async_method_call("stop", *args, **kwargs)
+
+    def terminate(self, *args, **kwargs):
+        """
+        Terminate all Instances. See `Instance.terminate()` for further
+        documentation.
+
+        Args:
+            *args: args to pass to `Instance.terminate()`
+            **kwargs: kwargs to pass to `Instance.terminate()`
+
+        Returns:
+            list containing results of `terminate()` from each Instance.
+        """
+        return self._async_method_call("terminate", *args, **kwargs)
+
+    # TODO: update this
+
+    # def gather_files(
+    #     self,
+    #     source_path,
+    #     target_path: str = ".",
+    #     process_states: Optional[
+    #         MutableMapping[str, Literal["running", "done"]]
+    #     ] = None,
+    #     callback: Callable = zero,
+    #     delay=0.02,
+    # ):
+    #     status = {instance.instance_id: "ready" for instance in self.instances}
+    #
+    #     def finish_factory(instance_id):
+    #         def finisher(*args, **kwargs):
+    #             status[instance_id] = transition_state
+    #             callback(*args, **kwargs)
+    #
+    #         return finisher
+    #
+    #     if process_states is None:
+    #         return {
+    #             instance.instance_id: instance.get(
+    #                 f"{source_path}/*", target_path, _bg=True, _viewer=True
+    #             )
+    #             for instance in self.instances
+    #         }
+    #     commands = defaultdict(list)
+    #
+    #     while any(s != "complete" for s in status.values()):
+    #         for instance in self.instances:
+    #             if status[instance.instance_id] in ("complete", "fetching"):
+    #                 continue
+    #             if process_states[instance.instance_id] == "done":
+    #                 transition_state = "complete"
+    #             else:
+    #                 transition_state = "ready"
+    #             status[instance.instance_id] = "fetching"
+    #             command = instance.get(
+    #                 f"{source_path}/*",
+    #                 target_path,
+    #                 _bg=True,
+    #                 _bg_exc=False,
+    #                 _viewer=True,
+    #                 _done=finish_factory(instance.instance_id),
+    #             )
+    #             commands[instance.instance_id].append(command)
+    #         time.sleep(delay)
+    #     return commands
 
     @classmethod
-    def from_descriptions(cls, descriptions, *args, **kwargs):
+    def from_descriptions(cls, descriptions: Collection[InstanceDescription], *args, **kwargs):
+        """
+        Construct a Cluster from InstanceDescriptions, as produced by
+        `ls_instances()`.
+
+        Args:
+            descriptions: InstanceDescriptions to initialize Instances from
+                and subsequently collect into a Cluster.
+            *args: args to pass to the Instance constructor
+            **kwargs: kwargs to pass to the Instance constructor
+        """
         instances = [Instance(d, *args, **kwargs) for d in descriptions]
         return cls(instances)
 
     @classmethod
     def launch(
         cls,
-        count,
-        template=None,
-        options=None,
-        tags=None,
-        client=None,
-        session=None,
-        wait=True,
+        count: int,
+        template: Optional[str] = None,
+        options: Optional[dict] = None,
+        tags: Optional[dict] = None,
+        client: Optional[botocore.client.BaseClient] = None,
+        session: Optional[boto3.session] = None,
+        wait: bool = True,
         **instance_kwargs,
     ):
+        """
+        Launch a fleet of Instances and collect them into a Cluster. See
+        hostess documentation Notebooks for examples of how to construct
+        options, tags, etc.
+
+        Args:
+            count: number of instances to launch
+            template: name of preexisting EC2 launch template to construct
+                instances from. if not specified, will use a 'scratch'
+                template.
+            options: optional dict of specifications for Instances. if not
+                specified, will use default values for everything. Currently,
+                if a template is specified, it will override all values in
+                options. This will change in the future.
+            tags: optional tags to apply to the launched instances and their
+                associated EBS volumes (if any).
+            client: optional preexisting EC2 client.
+            session: optional preexisting boto session.
+            wait: if True, block after launch until all instances are running.
+            **instance_kwargs: kwargs to pass to the Instance constructor.
+
+        Returns:
+            a Cluster created from the newly-launched fleet.
+        """
         client = init_client("ec2", client, session)
         options = {} if options is None else options
         # TODO: add a few more conveniences, clean up
@@ -1258,8 +1403,8 @@ class Cluster:
 
 def get_canonical_images(
     architecture: Literal["x86_64", "arm64", "i386"] = "x86_64",
-    client=None,
-    session=None,
+    client: Optional[botocore.client.BaseClient] = None,
+    session: Optional[boto3.session] = None,
 ) -> list[dict]:
     """
     fetch the subset of official (we refuse to make the obvious pun) Ubuntu
@@ -1267,6 +1412,14 @@ def get_canonical_images(
     as defaults to users. This will generally return hundreds of images and
     take > 1.5 seconds because of the number of unsupported daily builds
     available, so we cache the results with a one-week shelf life.
+
+    Args:
+        architecture: get images for this system architecture
+        client: optional preexisting boto client
+        session: optional preexisting boto session
+
+    Returns:
+        list of metadata dictionaries for all matching Canonical AMIs
     """
     client = init_client("ec2", client, session)
     # this perhaps excessive-looking optimization is intended to reduce not
@@ -1288,12 +1441,20 @@ def get_canonical_images(
 
 def get_stock_ubuntu_image(
     architecture: Literal["x86_64", "arm64", "i386"] = "x86_64",
-    client=None,
-    session=None,
+    client: Optional[botocore.client.BaseClient] = None,
+    session: Optional[boto3.session] = None,
 ) -> str:
     """
     retrieve image ID of the most recent officially-supported
     Canonical Ubuntu Server LTS AMI for the provided architecture.
+
+    Args:
+        architecture: get images for this system architecture
+        client: optional preexisting boto client
+        session: optional preexisting boto session
+
+    Returns:
+        AWS image ID for most recent matching Ubuntu Server LTS AMI.
     """
     available_images = get_canonical_images(architecture, client, session)
     supported_lts_images = [
@@ -1317,7 +1478,7 @@ def get_stock_ubuntu_image(
 
 
 # noinspection PyTypedDict
-def summarize_instance_type_structure(structure) -> dict:
+def summarize_instance_type_structure(structure: dict) -> dict:
     """
     summarize an individual instance type description from a wrapped
     description call
@@ -1328,7 +1489,7 @@ def summarize_instance_type_structure(structure) -> dict:
         "architecture": proc["SupportedArchitectures"][0],
         "cpus": structure["VCpuInfo"]["DefaultVCpus"],
         "cpu_speed": proc.get("SustainedClockSpeedInGhz"),
-        "ram": structure["MemoryInfo"]["SizeInMiB"] / 1024,
+        "ram": structure["MemoryInfo"]["SizeInMiB"] / 1024,\
         "bw": structure["NetworkInfo"]["NetworkPerformance"],
     }
     if "EbsOptimizedInfo" in structure["EbsInfo"].keys():
