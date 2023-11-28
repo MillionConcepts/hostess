@@ -330,7 +330,7 @@ class Delegate(bases.Node):
             list of this Delegate's Actors that match the Instruction.
 
         Raises:
-            NoActorForEvent if none of this Delegate's Actors match.
+            NoActorForEvent: if none of this Delegate's Actors match.
         """
         try:
             return self.match(instruction, "action")

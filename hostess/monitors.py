@@ -313,7 +313,7 @@ class AbstractMonitor(ABC):
 
         Args:
             which: name of register. self.default_display by default. "all"
-            for all.
+                for all.
         """
         which = self.default_display if which is None else which
         if which == "all":
@@ -369,7 +369,7 @@ class AbstractMonitor(ABC):
 
         Args:
             restart: if monitor is already started, restart it, clearing all
-            entries?
+                entries?
         """
         self.paused = False
         if (restart is False) and (self.started is True):
@@ -622,7 +622,7 @@ def make_stat_records(
     """
     Args:
         monitors: dictionary of AbstractMonitors and/or functions that return
-        floats.
+            floats.
 
     Returns:
         a stat-recording function that works much the function produced by

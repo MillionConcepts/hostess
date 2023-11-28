@@ -237,7 +237,7 @@ def make_level_table(treeframe: TreeFrame) -> pd.DataFrame:
     etc. from a TreeFrame.
 
     Args:
-        treeframe
+        treeframe: dataframe containing path information created using `make_treeframe`
     """
     level_tables = []
     levels = [

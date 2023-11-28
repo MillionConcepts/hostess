@@ -66,7 +66,7 @@ def scalarchar(
             `str`; "bytes" if scalar is a `bytes`; `None` otherwise.
 
     Raises:
-        TypeError if `scalar` is not actually a scalar (as defined here).
+        TypeError: if `scalar` is not actually a scalar (as defined here).
     """
     if not isinstance(scalar, (str, bytes, int, float, bool, NoneType)):
         raise TypeError(f"{type(scalar)} is not supported by scalarchar.")
@@ -105,7 +105,7 @@ def obj2scanf(obj) -> tuple[str, Optional[str]]:
             `None` otherwise.
 
     Raises:
-        TypeError if `obj2scanf()` does not know how to handle `obj`'s type.
+        TypeError: if `obj2scanf()` does not know how to handle `obj`'s type.
     """
     if not isinstance(
         obj, (str, bytes, int, float, list, tuple, bool, NoneType)
@@ -206,7 +206,7 @@ def make_action(description: Optional[dict[str, str]] = None, **fields):
         a pro.Action Message.
 
     Raises:
-        TypeError if you specified neither a description or a call.
+        TypeError: if you specified neither a description or a call.
     """
     if fields.get("id") is None:
         fields["id"] = random.randint(int(1e7), int(1e8))

@@ -125,7 +125,7 @@ class Matcher(AttrConsumer, ABC):
             list of all Actors that matched `event`.
 
         Raises:
-            NoActorForEvent if no Actors matched `event`.
+            NoActorForEvent: if no Actors matched `event`.
         """
         matching_actors = []
         actors = self.filter_actors_by_category(category)
@@ -407,7 +407,7 @@ class Actor(ABC):
             True if this Actor can handle `event`.
 
         Raises:
-            NoMatch if this Actor cannot handle `event`.
+            NoMatch: if this Actor cannot handle `event`.
         """
         raise NotImplementedError
 
@@ -461,10 +461,10 @@ class DispatchActor(Actor, ABC):
             Name of selected Delegate.
 
         Raises:
-            `NoMatchingDelegate` if no Delegate matches rules defined by this
+            NoMatchingDelegate: if no Delegate matches rules defined by this
                 Actor's target_name, target_picker, or target_actor
                 attributes, including if the Station has no Delegates.
-            `TypeError` if this Actor's target_name, target_picker, and
+            TypeError: if this Actor's target_name, target_picker, and
                 target_actor attributes are all None.
         """
         if all(
@@ -592,9 +592,9 @@ def validate_instruction(instruction: Message):
         instruction: Instruction to validate.
 
     Raises:
-        NoInstructionType if `instruction` does not have a defined type.
-        NoConfigError if a 'configure' Instruction does not specify a config.
-        NoTaskError if a 'do' instruction does not specify a task to perform.
+        NoInstructionType: if `instruction` does not have a defined type.
+        NoConfigError: if a 'configure' Instruction does not specify a config.
+        NoTaskError: if a 'do' instruction does not specify a task to perform.
     """
     if enum(instruction, "type") == "unknowninst":
         raise NoInstructionType

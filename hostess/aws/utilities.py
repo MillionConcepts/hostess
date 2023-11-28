@@ -36,7 +36,7 @@ def parse_aws_identity_file(
         `dict` of parsed key-value pairs from identity file.
 
     Raises:
-        OSError if `profile` is specified but not in identity file, or if
+        OSError: if `profile` is specified but not in identity file, or if
             identity file is obviously malformatted.
     """
     with open(path) as config_file:
@@ -250,7 +250,7 @@ def clarify_region(
         name of AWS region (e.g. 'us-east-2').
 
     Raises:
-        `AttributeError` if `region` is None and we can't figure out how to read
+        AttributeError: if `region` is None and we can't figure out how to read
             a region from `boto_obj`.
     """
     if region is not None:

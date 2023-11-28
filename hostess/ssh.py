@@ -451,7 +451,7 @@ def find_conda_env(cmd: RunCommand, env: str = None) -> str:
         absolute path to root directory of conda environment.
 
     Raises:
-        FileNotFoundError if environment cannot be found.
+        FileNotFoundError: if environment cannot be found.
     """
     env = "base" if env is None else env
     suffix = f"/envs/{env}" if env != "base" else ""
@@ -632,7 +632,7 @@ def find_ssh_key(
         path to keyfile
 
     Raises:
-        FileNotFoundError, if no key found
+        FileNotFoundError: if no key found
     """
     checked = []
     if paths is None:

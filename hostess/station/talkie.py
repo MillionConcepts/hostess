@@ -353,7 +353,7 @@ class TCPTalk:
                 "unavailable" if peer is temporarily unavailable
 
         Raises:
-            OSError, for any OSError other than temporary unavailability
+            OSError: for any OSError other than temporary unavailability
         """
         status = "streaming"
         try:
@@ -519,7 +519,7 @@ def read_from_socket(
         bytes received from peer
 
     Raises:
-        TimeoutError if any attempt to read a chunk of data takes more than
+        TimeoutError: if any attempt to read a chunk of data takes more than
             timeout seconds
     """
     # TODO: check that timeout is working

@@ -763,7 +763,7 @@ class Instance:
             absolute path to root directory of conda environment.
 
         Raises:
-            FileNotFoundError if environment cannot be found.
+            FileNotFoundError: if environment cannot be found.
         """
         return find_conda_env(self._ssh, env)
 
