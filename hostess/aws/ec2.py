@@ -1259,7 +1259,7 @@ class Cluster:
     def from_descriptions(
         cls,
         descriptions: Collection[InstanceDescription],
-        **kwargs: Union[str, Path, botocore.client.BaseClient.
+        **kwargs: Union[str, Path, botocore.client.BaseClient,
                         boto3.resources.base.ServiceResource, boto3.Session, bool]
     ) -> "Cluster":
         """

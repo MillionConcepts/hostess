@@ -110,7 +110,7 @@ class Matcher(AttrConsumer, ABC):
     matching objects against Actors.
     """
 
-    def match(self, event: Any, category=None, **kwargs) -> list[Actor]:
+    def match(self, event: Any, category: Optional[str] = None, **kwargs: Any) -> list[Actor]:
         """
         Check the Matcher's Actors to see which, if any, can handle an event.
 
@@ -140,7 +140,7 @@ class Matcher(AttrConsumer, ABC):
         return matching_actors
 
     def explain_match(
-        self, event: Any, category=None, **kwargs
+        self, event: Any, category: Optional[str] = None, **kwargs: Any
     ) -> dict[str, Union[str, bool]]:
         """
         Introspection function for matching process.
@@ -293,7 +293,7 @@ class Sensor(Matcher, ABC):
             *args, category="sensor", sensor=self.name, **kwargs
         )
 
-    def check(self, node: Node, **check_kwargs):
+    def check(self, node: Node, **check_kwargs: Any):
         """
         Main pointy-end function for Sensor.
 
@@ -394,7 +394,7 @@ class Actor(ABC):
         self.match = configured(self.match, self.config["match"])
         self.execute = configured(self.execute, self.config["exec"])
 
-    def match(self, event: Any, **_) -> bool:
+    def match(self, event: Any, **_: Any) -> bool:
         """
         Determine if this Actor can / should handle a given event.
         Must be implemented in concrete subclasses of Actor.
@@ -411,7 +411,7 @@ class Actor(ABC):
         """
         raise NotImplementedError
 
-    def execute(self, node: Node, event: Any, **kwargs) -> Any:
+    def execute(self, node: Node, event: Any, **kwargs: Any) -> Any:
         """
         This method defines what an Actor does with objects it matches. Must
         be implemented in concrete subclasses of Actor.
@@ -447,7 +447,7 @@ class DispatchActor(Actor, ABC):
             "target_picker",
         )
 
-    def pick(self, station: "Station", instruction: Message, **_):
+    def pick(self, station: "Station", instruction: Message, **_: Any) -> str:
         """
         Pick which of a Station's Delegates to send an Instruction to.
 
@@ -862,7 +862,7 @@ class Node(Matcher, ABC):
     def _log(
         self,
         event: Any,
-        **extra_fields
+        **extra_fields: Any
     ):
         """
         construct a JSON object from an event and write it into this Node's

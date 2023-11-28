@@ -465,7 +465,7 @@ class CPUTime(AbstractMonitor):
 class Usage(AbstractMonitor):
     """simple disk usage monitor"""
 
-    def __init__(self, *, digits: Optional[int] = 3, path="."):
+    def __init__(self, *, digits: Optional[int] = 3, path: Union[str, Path] = "/"):
         """
         Args:
             digits: number of digits (as in AbstractMonitor)

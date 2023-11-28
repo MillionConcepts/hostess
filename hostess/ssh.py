@@ -115,7 +115,7 @@ class SSH(RunCommand):
         command: Optional[str] = None,
         conn: Optional[Connection] = None,
         key: Optional[str] = None,
-        **kwargs
+        **kwargs: Union[int, float, str, bool]
     ):
         """
         Args:
@@ -140,7 +140,7 @@ class SSH(RunCommand):
         host: str,
         uname: str = GENERAL_DEFAULTS["uname"],
         key: str = None
-    ):
+    ) -> "SSH":
         """
         constructor that creates a connection to the remote host and uses it
         to instantiate the SSH object. convenient in cases when an appropriate
@@ -164,9 +164,9 @@ class SSH(RunCommand):
         self,
         source: Union[str, Path, IO],
         target: Union[str, Path],
-        *args,
+        *args: Any,
         literal_str: bool = False,
-        **kwargs
+        **kwargs: Any
     ) -> dict:
         """
         write local file or object to target file on remote host.
@@ -195,8 +195,8 @@ class SSH(RunCommand):
         self,
         source: Union[str, Path],
         target: Union[str, Path, IO],
-        *args,
-        **kwargs
+        *args: Any,
+        **kwargs: Any
     ) -> dict:
         """
         copy file from remote to local.
@@ -288,14 +288,15 @@ class SSH(RunCommand):
 
     def __call__(
         self,
-        *args,
+        *args: Union[int, float, str],
         _quiet: bool = True,
         _viewer: bool = True,
         _wait: bool = False,
-        **kwargs
+        **kwargs:  Union[int, float, str, bool]
     ) -> Processlike:
         """
         run a shell command in the remote host's default interpreter.
+        See RunCommand.__call__ for details on calling conventions and options.
 
         Args:
             *args: args to use to construct the command.
@@ -329,11 +330,11 @@ class SSH(RunCommand):
 
     def con(
         self,
-        *args,
+        *args: Union[int, float, str],
         _poll: float = 0.05,
         _timeout: Optional[float] = None,
         _return_viewer: bool = False,
-        **kwargs
+        **kwargs: Union[int, float, str, bool]
     ) -> Optional[Viewer]:
         """
         pretend you are running a command on the remote host while looking at a
@@ -400,7 +401,7 @@ class SSH(RunCommand):
 
 # TODO, maybe: try fabric's pooled commands
 def merge_csv(
-    ssh_dict: Mapping[Hashable, SSH], fn: str, **csv_kwargs
+    ssh_dict: Mapping[Hashable, SSH], fn: str, **csv_kwargs: Any
 ) -> pd.DataFrame:
     """
     merges data from CSV files on multiple remote hosts into a single pandas
@@ -564,8 +565,8 @@ def jupyter_connect(
     get_token: bool = True,
     kill_on_exit: bool = False,
     working_directory: Optional[str] = None,
-    lab=False,
-    **command_kwargs,
+    lab: bool=False,
+    **command_kwargs: Union[int, str, bool],
 ) -> NotebookConnection:
     """
     Launch a Jupyter server on a remote host over an SSH tunnel.
@@ -618,7 +619,7 @@ def jupyter_connect(
 
 
 def find_ssh_key(
-    keyname, paths: Optional[Collection[Union[str, Path]]] = None
+    keyname: str, paths: Optional[Collection[Union[str, Path]]] = None
 ) -> Union[Path, None]:
     """
     look for private SSH keyfile.

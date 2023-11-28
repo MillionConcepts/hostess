@@ -168,7 +168,7 @@ class Dispatcher(Composition):
     intended for applications like handling console streams.
     """
 
-    def __init__(self, *args, cached: bool = True, **kwargs):
+    def __init__(self, *args: Any, cached: bool = True, **kwargs: Any):
         """
         See Composition's documentation for a full description of valid
         args and kwargs.
@@ -337,9 +337,9 @@ class CBuffer:
 
     def execute(
         self,
-        *args,
+        *args: Any,
         stream: Sequence[Union[str, int]],
-        **kwargs
+        **kwargs: Any
     ) -> Any:
         """
         execute a specified step or steps of the underlying Dispatcher.
@@ -347,7 +347,7 @@ class CBuffer:
         Args:
             *args: args to pass to dispatcher.execute()
             stream: names of steps to execute
-            **kwargs: kwargs to pass to dispatcher.execute
+            **kwargs: kwargs to pass to dispatcher.execute()
 
         Returns:
             results of dispatcher.execute()
@@ -471,7 +471,7 @@ class RunCommand:
     def bind(self, *args, **kwargs):
         self.args, self.kwargs = args, kwargs
 
-    def cstring(self, *args, args_at_end: bool = True, **kwargs):
+    def cstring(self, *args: Union[int, float, str], args_at_end: bool = True, **kwargs: Union[int, float, str]):
         """
         Create a shell command string from *args and **kwargs, including any
         command and kwargs curried into this object. Used as part of the

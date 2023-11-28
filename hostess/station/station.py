@@ -45,7 +45,7 @@ class Station(bases.Node):
         max_inbox_mb: float = 250,
         logdir: Path = Path(__file__).parent / ".nodelogs",
         _is_process_owner: bool = False,
-        **kwargs,
+        **kwargs: Union[bool, tuple[Union[type[bases.Sensor], type[bases.Actor]]], float, int],
     ):
         """
         Args:
@@ -92,7 +92,7 @@ class Station(bases.Node):
             f"{self.init_time}_station_{self.host}_{self.port}.log"
         )
 
-    def set_delegate_properties(self, delegate: str, **propvals):
+    def set_delegate_properties(self, delegate: str, **propvals: Any):
         """
         Construct a 'configure' Instruction for a Delegate that instructs it
             to assign specific values to named properties of itself; put that
@@ -100,9 +100,9 @@ class Station(bases.Node):
 
         Args:
             delegate: name of delegate to configure.
-            propvals: dict of {property name: property value}. Values will
-                be serialized as PythonObject Messages and then bundled into
-                ConfigParam Messages.
+            propvals: argument names correspond to property names of target Delegate;
+                argument values will be serialized as PythonObject Messages and then
+                bundled into ConfigParam Messages.
         """
         # TODO: update delegate info record if relevant
         if len(propvals) == 0:
@@ -699,11 +699,11 @@ class Station(bases.Node):
         host: str = "localhost",
         update_interval: float = 0.25,
         context: DelegateContext = "daemon",
-        **kwargs,
+        **kwargs: Union[int, float],
     ) -> Optional[bases.Node]:
         """
         launch a Delegate, by default daemonized. prepare a metadata dict for
-        it, and prepare ourself to receive Messages from it.
+        it, and prepare ourselves to receive Messages from it.
 
         Args:
             name: name to assign to Delegate.
@@ -881,7 +881,7 @@ def blank_delegateinfo() -> dict[
     }
 
 
-def get_port_from_shared_memory(memory_address="station") -> int:
+def get_port_from_shared_memory(memory_address: str = "station") -> int:
     """
     fetch a named Station's port number from a shared memory address. Used
     by the hostess `situation` app; can also be used by other 'plugins' or

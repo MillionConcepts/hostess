@@ -314,7 +314,7 @@ def unpack_obj(obj: pro.PythonObject) -> Any:
     return value
 
 
-def task_msg(actiondict: dict, steps=None) -> pro.TaskReport:
+def task_msg(actiondict: dict, steps: Sequence[dict] = None) -> pro.TaskReport:
     """
     construct a hostess TaskReport Message from an actiondict (a `dict` of
     the format produced by `make_actiondict()` and expected by `Delegates` as

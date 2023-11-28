@@ -563,7 +563,7 @@ class Delegate(bases.Node):
         )
         return list(map(task_msg, running))
 
-    def _base_message(self, **fields) -> pro.Update:
+    def _base_message(self, **fields: Union[Message, str, Sequence[Message], int]) -> pro.Update:
         """
         construct a basic Update message.
 

@@ -57,7 +57,7 @@ def ternary(
     return f"if test {if_}  ; then {then_} ; else {else_} ; fi"
 
 
-def truthy(cmd) -> str:
+def truthy(cmd: str) -> str:
     """
     construct a shell command that tests a predicate and echoes "True" if it's
     truthy and "False" if it's falsy. This is intended as an easy way to
