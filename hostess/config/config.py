@@ -1,6 +1,5 @@
 """
 desired settings should be placed in hostess/user_config/user_config.py.
-this example_config module is never referenced by anything.
 """
 import os
 from pathlib import Path
