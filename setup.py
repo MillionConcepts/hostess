@@ -2,25 +2,23 @@ from setuptools import setup, find_packages
 
 setup(
     name="hostess",
-    version="0.7.0",
+    version="0.7.1",
     description="intuitive admin library",
     author="Million Concepts",
     author_email="mstclair@millionconcepts.com",
     packages=find_packages(),
-    python_requiers=">=3.9",
+    python_requires=">=3.9",
     classifiers=[
         "Development Status :: 4 - Beta",
         "Environment :: Console",
         "Intended Audience :: Developers",
-        "Intended Audience :: Science/Research" 
-        "Intended Audience :: System Administrators",
         "License :: OSI Approved :: BSD License",
         "Operating System :: MacOS :: MacOS X",
         "Operating System :: POSIX :: Linux",
         "Programming Language :: Python :: 3",
         "Programming Language :: Unix Shell"
     ],
-    install_rzquires=[
+    install_requires=[
         "cytoolz",
         "dustgoggles",
         "invoke",
