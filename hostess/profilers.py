@@ -334,7 +334,21 @@ record representing information about a Python object, as produced by
 def identify(
     obj: Any, maxlen: int = 25, getsize: bool = False
 ) -> IdentifyResult:
-    """identify an object"""
+    """
+    identify an object.
+
+    Args:
+        obj: object to identify
+        maxlen: maximum length of string representation of `obj` in return
+        getsize: if True, attempt to determine the size of `obj`. may be slow
+            or unreliable.
+
+    Returns:
+        dict giving id, type, string
+            representation (possibly truncated), size in MB (if requested),
+            and, if available, __name__, __qualname__, and __module__, and
+            line number.
+    """
     identifiers = {
         "id": id(obj),
         "type": type(obj),
@@ -455,6 +469,16 @@ def _filter_types(
     """
     helper function for analyze_references(). provides blocklist/allowlist
     behavior based on object types.
+
+    Args:
+        refs: list of referencing objects
+        permit: types to explicitly permit. if there is at least one type,
+            this functions as a strict allowlist.
+        exclude: types to explicitly exclude.
+        lids: ids of all known copies of other frames' `locals` dicts.
+
+    Returns:
+        filtered list of references.
     """
     outrefs = []
     for ref in refs:
@@ -473,6 +497,14 @@ def history_filter(glb: dict[str, Any]) -> Callable[[Any], bool]:
     """
     generate a predicate function that attempts to filter jupyter/ipython
     history-related objects in the context of a particular global namespace.
+
+    Args:
+        glb: relevant globals dict
+
+    Returns:
+        function that returns False if its single argument looks like it's an
+            ipython/jupyter history-related object or internal, and True if
+            not.
     """
 
     def filterref(item):
@@ -499,6 +531,15 @@ def _filter_history(
     """
     helper function for analyze_references(). attempts to remove references to
     ipython/jupyter history variables.
+
+    Args:
+        refs: list of reference objects
+        globals_: optional specified globals dictionary. if not given, uses
+            the globals of the parent frame of the caller.
+        lids: ids of all known copies of other frames' locals dicts.
+
+    Returns:
+        filtered list of references.
     """
     if globals_ is None:
         globals_ = currentframe().f_back.f_back.f_globals
@@ -520,6 +561,17 @@ def _filter_ids(
     """
     helper function for analyze_references(). provides blocklist/allowlist
     behavior based on object ids.
+
+    Args:
+        refs: list of reference objects
+        permit: list of allowed ids. if any are given, this functions as a
+            strict allowlist.
+        exclude: list of excluded ids
+        lids: ids of all known copies of other frames' locals dicts
+
+    Returns:
+        filtered_refs: filtered list of references
+        refnoms: Refnom dicts for each member of filtered_refs
     """
     outrefs, refnoms = [], []
     for ref in refs:
@@ -534,7 +586,20 @@ def _filter_ids(
     return refnoms, outrefs
 
 
-def _get_referencing_scopedicts(obj, existing_ids):
+def _get_referencing_scopedicts(
+    obj: Any, existing_ids: Collection[int]
+) -> list[dict]:
+    """
+    check for `obj` in the globals and locals dicts of all stack frames above
+    the caller's. return all dicts in which obj has a name or names.
+
+    Args:
+        obj: object to check for
+        existing_ids: ids of scopedicts that should be ignored
+
+    Returns:
+        list of locals and globals dicts that reference obj
+    """
     outscopes = []
     # if you do NOT slice the stack to -2, it will create a reference cycle
     # from the local namespace of the caller to itself, preventing it from ever
