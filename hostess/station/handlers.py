@@ -247,7 +247,7 @@ def flatten_for_json(
 
     Returns:
          flattened version of `event` w/stringified values, possibly truncated,
-            ready to be passed to `json.dump()`.
+              ready to be passed to `json.dump()`.
     """
     # TODO: if this ends up being unperformant with huge messages, do something
     if isinstance(event, Message):

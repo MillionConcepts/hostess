@@ -537,10 +537,10 @@ class Delegate(bases.Node):
 
         Returns:
              status code for exchange: "ok" if successful but no Instruction
-                received (simple acknowledgement comm received);
-                "timeout" or "connection refused" for failed connections;
-                "err" for receipt of bytes we could not decode as a comm;
-                "instruction" if successful and comm contained an Instruction
+                  received (simple acknowledgement comm received);
+                  "timeout" or "connection refused" for failed connections;
+                  "err" for receipt of bytes we could not decode as a comm;
+                  "instruction" if successful and comm contained an Instruction
         """
         response = self._trysend(message)
         if response not in ('timeout', 'connection refused'):

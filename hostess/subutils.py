@@ -144,7 +144,7 @@ def done_callback(
 
     Returns:
          result of dispatcher "done" step executed with return value of
-            locally-defined callback() function.
+              locally-defined callback() function.
     """
 
     def callback():
@@ -238,10 +238,10 @@ class Dispatcher(Composition):
 
         Returns:
               a function that takes one or no arguments. If it is called
-                  with no argument, it immediately fires the callback. If it
-                  is called with an object with a .wait method, it first calls
-                  its .wait method.
-                  This function returns whatever executing the step returns.
+                    with no argument, it immediately fires the callback. If it
+                    is called with an object with a .wait method, it first calls
+                    its .wait method.
+                    This function returns whatever executing the step returns.
         """
         return partial(dispatch_callback, self, signaler, step)
 

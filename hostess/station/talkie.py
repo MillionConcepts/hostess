@@ -210,8 +210,8 @@ class TCPTalk:
         """
         Returns:
              set of all file descriptors for currently-queued sockets.
-                Primarily for selector thread loop but can also be used
-                diagnostically.
+                  Primarily for selector thread loop but can also be used
+                  diagnostically.
         """
         return {s[0].fd for s in chain.from_iterable(self.queues.values())}
 

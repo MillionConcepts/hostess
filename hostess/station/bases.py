@@ -152,8 +152,8 @@ class Matcher(AttrConsumer, ABC):
 
         Returns:
               dict whose keys are the names of Actors and whose values are
-                the output of each actor's `match()` method, or a stringified
-                version of the Exception it raised.
+                    the output of each actor's `match()` method, or a stringified
+                    version of the Exception it raised.
 
         """
         reasons = {}
