@@ -208,7 +208,7 @@ def val_ids(mapping: Mapping[Hashable, Any]) -> set[int]:
     return set(map(id, mapping.values()))
 
 
-def _maybe_release_locals(localdict, frame):
+def _maybe_release_locals(localdict: MutableMapping, frame: FrameType) -> bool:
     """
     Possibly purge a dictionary, depending on the name of `frame`'s code.
 
@@ -225,6 +225,14 @@ def _maybe_release_locals(localdict, frame):
     until _that_ frame fully dies, which, in most programs, will badly confuse
     the Python garbage collector and cause horrible memory leaks. clearing the
     copies is the only reliable way to prevent that from happening.
+
+    Args:
+        localdict: a dict that might be a copy of `frame`'s locals, or might
+            be an actual view into its locals
+        frame: frame `localdict` came from
+
+    Returns:
+        True if we cleared `localdict`, False we didn't
     """
     if frame.f_code.co_name != "<module>":
         localdict.clear()
