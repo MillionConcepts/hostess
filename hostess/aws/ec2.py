@@ -1914,7 +1914,7 @@ def create_launch_template(
     key_name: Optional[str] = None,
     client: Optional[botocore.client.BaseClient] = None,
     session: Optional[boto3.session.Session] = None
-):
+) -> dict:
     """
     Create a new EC2 launch template in the caller's AWS account (see
     https://docs.aws.amazon.com/autoscaling/ec2/userguide/launch-templates.html).
