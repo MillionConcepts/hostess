@@ -784,7 +784,8 @@ class Instance:
                 "/home/ubuntu/miniforge3/lib/python3.12/site-packages")
 
         Raises:
-            OSError if unable to execute `pip show`; FileNotFoundError if
+            OSError: if unable to execute `pip show`
+            FileNotFoundError: if
                 package doesn't appear to be installed
         """
         if env is None:
