@@ -89,6 +89,20 @@ class NoKeyError(OSError):
     """we're trying to do things over SSH, but can't find a valid keyfile."""
 
 
+def connectwrap(func: Callable[["Instance", ...], Any]) -> Callable[["Instance", ...], Any]:
+    @wraps(func)
+    def tryconnect(instance, *args, **kwargs):
+        # noinspection PyProtectedMember
+        instance._prep_connection()
+        try:
+            return func(instance, *args, **kwargs)
+        except (SSHException, NoValidConnectionsError):
+            instance.connect()
+            return func(instance, *args, **kwargs)
+
+    return tryconnect
+
+
 def summarize_instance_description(
     description: Mapping
 ) -> InstanceDescription:
@@ -2141,17 +2155,3 @@ def authorize_ssh_ingress_from_ip(
             print(f"** {ip} already authorized for SSH ingress for {sg.id} **")
         else:
             raise
-
-
-def connectwrap(func: Callable[[Instance, ...], Any]) -> Callable[[Instance, ...], Any]:
-    @wraps(func)
-    def tryconnect(instance, *args, **kwargs):
-        # noinspection PyProtectedMember
-        instance._prep_connection()
-        try:
-            return func(instance, *args, **kwargs)
-        except (SSHException, NoValidConnectionsError):
-            instance.connect()
-            return func(instance, *args, **kwargs)
-
-    return tryconnect
