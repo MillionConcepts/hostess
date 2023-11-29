@@ -16,8 +16,8 @@ administration library.
 ## cautions
 `hostess` is a reliable and fairly feature-complete beta in active use on 
 multiple projects. However, we do not guarantee interface stability or 
-backwards compatibility, and it lacks comprehensive documentation. Also, as
-with any system administration software, we recommend using it very carefully.
+backwards compatibility. Also, as with any system administration software, 
+we recommend using it very carefully.
 
 ## installation
 `hostess` is not currently available via any package manager. 
