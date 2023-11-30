@@ -15,7 +15,7 @@ import inspect
 import time
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial, wraps
-import io
+from io import BytesIO, IOBase, StringIO
 from inspect import getmembers
 from itertools import chain, cycle
 from multiprocessing import Process
@@ -48,7 +48,7 @@ from hostess.utilities import (
     curry, console_and_log, infer_stream_length, stamp
 )
 
-Puttable = Union[str, Path, io.IOBase, bytes]
+Puttable = Union[str, Path, IOBase, bytes]
 """type alias for Python objects Bucket will write to S3 """
 
 
@@ -184,7 +184,7 @@ class Bucket:
     def update_contents(
         self,
         prefix: Optional[str] = None,
-        cache: Optional[Union[str, Path, io.IOBase]] = None,
+        cache: Optional[Union[str, Path, IOBase]] = None,
     ):
         """
         recursively scan the contents of the bucket and store the result in
@@ -475,7 +475,7 @@ class Bucket:
         key = str(obj)[:1024] if key is None else key
         # 'touch' - type behavior
         if obj is None:
-            obj = io.BytesIO()
+            obj = BytesIO()
         # directly upload file from local storage
         if (
             (isinstance(obj, str) and literal_str is False)
@@ -488,9 +488,9 @@ class Bucket:
         # encode string to bytes if we're writing it to S3 object instead
         # of interpreting it as a patha
         if isinstance(obj, str) and literal_str is True:
-            obj = io.BytesIO(obj.encode("utf-8"))
+            obj = BytesIO(obj.encode("utf-8"))
         elif isinstance(obj, bytes):
-            obj = io.BytesIO(obj)
+            obj = BytesIO(obj)
         return self.client.upload_fileobj(
             Bucket=self.name, Fileobj=obj, Key=key, Config=config
         )
@@ -500,13 +500,13 @@ class Bucket:
         self,
         key: Union[str, Sequence[str]],
         destination: Union[
-            Union[str, Path, io.IOBase, None],
-            Sequence[Union[str, Path, io.IOBase, None]]
+            Union[str, Path, IOBase, None],
+            Sequence[Union[str, Path, IOBase, None]]
         ] = None,
         config: Optional[boto3.s3.transfer.TransferConfig] = None,
     ) -> Union[
-            Union[Path, str, io.IOBase],
-            list[Union[Path, str, io.IOBase, Exception]]
+            Union[Path, str, IOBase],
+            list[Union[Path, str, IOBase, Exception]]
         ]:
         """
         write S3 object(s) into file(s) or filelike object(s).
@@ -527,8 +527,8 @@ class Bucket:
         if config is None:
             config = self.config
         if destination is None:
-            destination = io.BytesIO()
-        if isinstance(destination, io.IOBase):
+            destination = BytesIO()
+        if isinstance(destination, IOBase):
             self.client.download_fileobj(
                 self.name, key, destination, Config=config
             )
@@ -539,6 +539,37 @@ class Bucket:
         if "seek" in dir(destination):
             destination.seek(0)
         return destination
+
+    def read(
+        self,
+        key: str,
+        mode: Literal["r", "rb"] = "r",
+        return_buffer: bool = False,
+    ) -> Union[bytes, str, BytesIO, StringIO]:
+        """
+        Read an S3 object into memory.
+
+        Args:
+            key: fully-qualified 'path' to object
+            mode: 'r' to read as text, 'rb' as bytes
+            return_buffer: if True, return object as a StringIO/BytesIO; if
+                False, return it as str/bytes
+
+        Returns:
+            Contents of object, in format specified by `mode` and
+                `return_buffer`.
+        """
+        buf = self.get(key)
+        if return_buffer is True:
+            if mode == "rb":
+                return buf
+            strbuf = StringIO()
+            strbuf.write(buf.read().decode())
+            strbuf.seek(0)
+            return strbuf
+        if mode == "rb":
+            return buf.read()
+        return buf.read().decode()
 
     # TODO, maybe: rewrite this using lower-level methods. This may not be
     #  required, because flexibility with S3 -> S3 copies is less often useful
@@ -630,7 +661,7 @@ class Bucket:
         prefix: Optional[str] = None,
         recursive: bool = False,
         formatting: Literal["simple", "contents", "df", "raw"] = "simple",
-        cache: Union[str, Path, io.IOBase, None] = None,
+        cache: Union[str, Path, IOBase, None] = None,
         start_after: Optional[str] = None,
         cache_only: bool = False,
     ) -> Union[tuple, pd.DataFrame, None]:
