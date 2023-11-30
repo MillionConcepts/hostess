@@ -533,6 +533,7 @@ class Bucket:
                 self.name, key, destination, Config=config
             )
         else:
+            Path(destination).parent.mkdir(parents=True, exist_ok=True)
             self.client.download_file(
                 self.name, key, destination, Config=config
             )
