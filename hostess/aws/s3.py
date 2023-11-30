@@ -11,12 +11,13 @@ introspection, or more flexible I/O stream manipulation are required. We also
 like the syntax better.
 """
 import datetime as dt
+import inspect
 import time
 from concurrent.futures import ThreadPoolExecutor
-from functools import partial
+from functools import partial, wraps
 import io
 from inspect import getmembers
-from itertools import chain
+from itertools import chain, cycle
 from multiprocessing import Process
 from pathlib import Path
 import sys
@@ -28,7 +29,7 @@ from typing import (
     Mapping,
     MutableMapping,
     Optional,
-    Union,
+    Union, Sequence, Callable,
 )
 import warnings
 
@@ -43,7 +44,90 @@ import requests
 
 from hostess.aws.utilities import init_client, init_resource
 from hostess.subutils import piped
-from hostess.utilities import console_and_log, infer_stream_length, stamp
+from hostess.utilities import (
+    curry, console_and_log, infer_stream_length, stamp
+)
+
+Puttable = Union[str, Path, io.IOBase, bytes]
+"""type alias for Python objects Bucket will write to S3 """
+
+
+@curry
+def splitwrap(
+    method: Callable[
+    ["Bucket", ...], Any],
+    seq_arity: Literal[1, 2]
+) -> Callable[["Bucket", ...], Any]:
+    """
+    dispatch decorator for methods of Bucket that can accept either single
+    source and/or destination arguments or sequences of them. automatically
+    maps sequences into Bucket's thread pool, if it exists, and returns all
+    results in a list. also fails gracefully, returning Exceptions from any
+    call.
+    """
+    sig = inspect.signature(method)
+    params = list(sig.parameters)
+    defaults = {n: p.default for n, p in list(sig.parameters.items())}
+
+    @wraps(method)
+    def maybesplit(*args, **kwargs):
+        bound = sig.bind(*args, **kwargs).arguments
+        source = bound.get(params[1], defaults[params[1]])
+        sseq = (
+           hasattr(source, "index") and not isinstance(source, (str, bytes))
+        )
+        if seq_arity == 2:
+            target = bound.get(params[2], defaults[params[2]])
+            tseq = (
+                hasattr(target, "index")
+                and not isinstance(target, (str, bytes))
+            )
+            if sseq is False:
+                if tseq is True:
+                    raise TypeError("Mismatched sequence/nonsequence call")
+                return method(*args, **kwargs)
+            bound.pop(params[1])
+            bound.pop(params[2], None)
+            if (tseq is False) and (target is not None):
+                raise TypeError("Mismatched sequence/nonsequence call")
+            if target is None:
+                target = cycle((None,))
+            elif len(source) != len(target):
+                raise ValueError("Mismatched source/target sequence lengths")
+            seq_iter = zip(source, target)
+        elif sseq is False:
+            return method(*args, **kwargs)
+        else:
+            seq_iter = ((x,) for x in source)
+            bound.pop(params[1])
+        bucket = bound.pop(params[0])
+        if bucket.n_threads is None:
+            output = []
+            for pre in seq_iter:
+                try:
+                    output.append(method(bucket, *pre, **bound))
+                except KeyboardInterrupt:
+                    raise
+                except Exception as ex:
+                    output.append(ex)
+            return output
+        exc = ThreadPoolExecutor(bucket.n_threads)
+        futures = [
+            exc.submit(method, bucket, *pre, **bound) for pre in seq_iter
+        ]
+        while not all(f.done() for f in futures):
+            time.sleep(0.02)
+        output = []
+        for f in futures:
+            try:
+                output.append(f.result())
+            except KeyboardInterrupt:
+                raise
+            except Exception as ex:
+                output.append(ex)
+        return output
+
+    return maybesplit
 
 
 def _dtstr(thing: Any):
@@ -81,8 +165,7 @@ class Bucket:
                 default session.
             config: optional boto3 TransferConfig. if not specified, creates a
                 default config.
-            n_threads: if not None, automatically multithreads some operations.
-                cannot be modified after Bucket creation.
+            n_threads: if not None, automatically multithread some operations.
         """
         self.client = init_client("s3", client, session)
         self.resource = init_resource("s3", resource, session)
@@ -96,13 +179,11 @@ class Bucket:
             if name not in Bucket.__annotations__.keys():
                 continue
             setattr(self, name, partial(thing, self, config=self.config))
-        if n_threads is not None:
-            self._n_threads = n_threads
-            self.exc = ThreadPoolExecutor(n_threads)
+        self.n_threads = n_threads
 
     def update_contents(
         self,
-        prefix: str = "",
+        prefix: Optional[str] = None,
         cache: Optional[Union[str, Path, io.IOBase]] = None,
     ):
         """
@@ -173,7 +254,7 @@ class Bucket:
         # TODO: overrides chunksize in config -- maybe make an easier interface
         #  to this
         chunksize: Optional[int] = None,
-    ) -> dict:
+    ) -> Optional[dict]:
         """
         Create an S3 object from a byte stream via a managed multipart upload.
         Useful for uploading large files, but can also handle intermittent
@@ -198,8 +279,8 @@ class Bucket:
                 simple put operation.
 
         Returns:
-            API response to multipart upload completion, or API response from
-                simple upload if stream length < chunksize, if Any
+            API response to multipart upload completion, or None if stream
+                length < chunksize and we fell back to simple upload
         """
         if config is None:
             config = self.config
@@ -306,52 +387,53 @@ class Bucket:
         else:
             parts[number] = {"result": self.client.upload_part(**kwargs)}
 
+    @splitwrap(seq_arity=1)
     def freeze(
         self,
-        key: str,
+        key: Union[str, Sequence[str]],
         storage_class: str = "DEEP_ARCHIVE",
-    ) -> tuple[str, Optional[dict]]:
+    ) -> Union[str, list[Union[str, Exception]]]:
         """
-        Modify the storage class of an object. Intended primarily for
-        moving objects from S3 Standard to one of the Glacier classes.
+        Modify the storage class of an object or objects. Intended primarily
+        for moving objects from S3 Standard to one of the Glacier classes.
 
         Args:
-            self: Bucket or name of bucket
-            key: object key (fully-qualified 'path' relative to bucket root)
+            key: object key(s) (fully-qualified 'path' relative to bucket root)
             storage_class: target storage class
 
         Returns:
-            uri: URI of frozen object
-            response: API response, if any
+            uri: URI of frozen object, or list containing URI of each
+                frozen object if its freeze succeeded and an Exception if not
         """
         return self.cp(key, extra_args={"StorageClass": storage_class})
 
+    @splitwrap(seq_arity=1)
     def restore(
         self,
-        key: str,
+        key: Union[str, Sequence[str]],
         tier: Literal["Expedited", "Standard", "Bulk"] = "Bulk",
         days: int = 5,
-    ) -> dict:
+    ) -> Union[dict, list[Union[dict, Exception]]]:
         """
-        Issue a request to temporarily restore an object from S3 Glacier
-        Flexible Retrival or Deep Archive to S3 Standard. Note that object
-        restoration is not instantaneous. Depending on retrieval tier and
-        storage class, AWS guarantees retrieval times ranging from 5 minutes
-        to 48 hours. See https://docs.aws.amazon.com/AmazonS3/latest
+        Issue a request to temporarily restore one or more objects from S3
+        Glacier Flexible Retrival or Deep Archive to S3 Standard. Note that
+        object restoration is not instantaneous. Depending on retrieval tier
+        and storage class, AWS guarantees retrieval times ranging from 5
+        minutes to 48 hours. See https://docs.aws.amazon.com/AmazonS3/latest
         /userguide/restoring-objects-retrieval-options.html for details.
 
         You can check the progress of restore requests using Bucket.head().
 
         Args:
-            key: key of object to restore (fully-qualified path from root)
+            key: key(s) of object(s) to restore (fully-qualified 'paths')
             tier: retrieval tier. In order of speed and expense, high to low,
                 options are "Expedited", "Standard", and "Bulk". Only
                 "Standard" and "Bulk" are available for Deep Archive.
-            days: number of days object should remain restored before
-                reverting to its Glaciered state
+            days: number of days object(s) should remain restored before
+                reverting to Glaciered state
 
         Returns:
-            RestoreObject API response
+            RestoreObject API response, or list of responses and/or Exceptions
         """
         restore_request = {
             "Days": days, "GlacierJobParameters": {"Tier": tier}
@@ -360,67 +442,32 @@ class Bucket:
             Bucket=self.name, Key=key, RestoreRequest=restore_request
         )
 
-    @classmethod
-    def bind(
-        cls,
-        bucket: Union[str, "Bucket"],
-        client: Optional[botocore.client.BaseClient] = None,
-        session: Optional[boto3.Session] = None,
-        config: Optional[boto3.s3.transfer.TransferConfig] = None,
-    ) -> "Bucket":
-        """
-        Conservative constructor for Bucket. Does not construct a new
-        Bucket if passed a Bucket. Intended primarily as a convenience for
-        other functions in this module that might be either partially
-        evaluated with a Bucket or simply passed the name of a bucket.
-
-        Args:
-            bucket: Bucket or name of bucket
-            client: optional client
-            session: optional session
-            config: optional transferconfig
-
-        Returns:
-            newly-initialized Bucket if bucket is a string; just bucket if
-                bucket is a Bucket.
-
-        """
-        if isinstance(bucket, Bucket):
-            return bucket
-        return Bucket(bucket, client=client, session=session, config=config)
-
-    def _get_n_threads(self):
-        return self._n_threads
-
-    def _set_n_threads(self, _):
-        raise ValueError("n_threads cannot be modified after Bucket creation.")
-
-    _n_threads: Optional[int] = None
-    n_threads = property(_get_n_threads, _set_n_threads)
-    exc: Optional[ThreadPoolExecutor] = None
-
+    @splitwrap(seq_arity=2)
     def put(
         self,
-        obj: Union[str, Path, io.IOBase, bytes, None] = None,
-        key: Optional[str] = None,
+        obj: Union[Puttable, Sequence[Puttable]] = b"",
+        key: Optional[Union[str, Sequence[str]]] = None,
         literal_str: bool = False,
         config: Optional[boto3.s3.transfer.TransferConfig] = None,
-    ) -> Optional[dict]:
+    ) -> Union[None, list[Optional[Exception]]]:
         """
-        Upload a file or buffer to an S3 bucket
+        Upload files or buffers to an S3 bucket
 
         Args:
-            obj: str, Path, or filelike / buffer object to upload; None for
-                'touch' behavior
-            key: S3 key (fully-qualified 'path' from bucket root). If not
-                specified then str(file_or_buffer) is used. This will most
-                likely look very nasty if it's a buffer.
-            literal_str: if True, write passed string directly to object
-                instead of interpreting it as a path
+            obj: an individual str, Path, or filelike / buffer object to
+                upload, or a sequence of such objects
+            key: S3 key (fully-qualified 'path' from bucket root); or, if `obj`
+                is a sequences, a sequence keys of the same length of `obj`.
+                If `key` is not specified, key(s) are generated from the
+                string representation of the uploaded object(s), truncated to
+                1024 characters (maximum length of an S3 key).
+            literal_str: if True, write passed strings directly to objects;
+                otherwise, interpret them as paths to local files
             config: boto3.s3.transfer.TransferConfig; bucket's default if None
 
         Returns:
-            API response (if any)
+            None, or, for multi-upload, a list containing None for each
+                successful put and an Exception for each failed one
         """
         config = self.config if config is None else config
         # If S3 key was not specified, use string rep of
@@ -430,12 +477,11 @@ class Bucket:
         if obj is None:
             obj = io.BytesIO()
         # directly upload file from local storage
-
         if (
             (isinstance(obj, str) and literal_str is False)
             or (isinstance(obj, Path))
         ):
-            return self.client.upload_file(
+            self.client.upload_file(
                 Bucket=self.name, Filename=str(obj), Key=key, Config=config
             )
         # or: upload in-memory objects
@@ -449,25 +495,33 @@ class Bucket:
             Bucket=self.name, Fileobj=obj, Key=key, Config=config
         )
 
+    @splitwrap(seq_arity=2)
     def get(
         self,
-        key: str,
-        destination: Union[str, Path, io.IOBase, None] = None,
+        key: Union[str, Sequence[str]],
+        destination: Union[
+            Union[str, Path, io.IOBase, None],
+            Sequence[Union[str, Path, io.IOBase, None]]
+        ] = None,
         config: Optional[boto3.s3.transfer.TransferConfig] = None,
-    ) -> tuple[Union[Path, str, io.IOBase], Optional[dict]]:
+    ) -> Union[
+            Union[Path, str, io.IOBase],
+            list[Union[Path, str, io.IOBase, Exception]]
+        ]:
         """
-        fetch an S3 object and write it into a file or filelike object.
+        write S3 object(s) into file(s) or filelike object(s).
 
         Args:
-            key: object key (fully-qualified 'path' relative to bucket root)
-            destination: where to write the retrieved object. May be a path or a
-                filelike object. If not specified, constructs a new BytesIO
-                buffer.
+            key: object key(s) (fully-qualified 'path(s)' from root)
+            destination: where to write the retrieved object(s). May be path(s)
+                or filelike object(s). If not specified, constructs new BytesIO
+                buffer(s).
             config: optional transfer config
 
         Returns:
-            outpath: the path, string, or buffer we wrote the object to
-            response: the S3 API response, if Any
+            outpath: the path, string, or buffer we wrote the object to, or,
+                for multi-get, a list containing one such outpath for each
+                successful write and an Exception for each failed write
         """
         # TODO: add more useful error messages for streams opened in text mode
         if config is None:
@@ -475,35 +529,37 @@ class Bucket:
         if destination is None:
             destination = io.BytesIO()
         if isinstance(destination, io.IOBase):
-            response = self.client.download_fileobj(
+            self.client.download_fileobj(
                 self.name, key, destination, Config=config
             )
         else:
-            response = self.client.download_file(
+            self.client.download_file(
                 self.name, key, destination, Config=config
             )
         if "seek" in dir(destination):
             destination.seek(0)
-        return destination, response
+        return destination
 
     # TODO, maybe: rewrite this using lower-level methods. This may not be
     #  required, because flexibility with S3 -> S3 copies is less often useful
     #  than with uploads.
+    @splitwrap(seq_arity=2)
     def cp(
         self,
-        source: str,
-        destination: Optional[str] = None,
+        source: Union[str, Sequence[str]],
+        destination: Union[Optional[str], Sequence[Optional[str]]] = None,
         destination_bucket: Optional[str] = None,
         extra_args: Optional[Mapping[str, str]] = None,
         config: Optional[boto3.s3.transfer.TransferConfig] = None,
-    ) -> tuple[str, Optional[dict]]:
+    ) -> Union[str, list[Union[str, Exception]]]:
         """
-        Copy an S3 object to another location on S3.
+        Copy S3 object(s) to another location on S3.
 
         Args:
-            source: key of object to copy (fully-qualified 'path' from root)
-            destination: key to copy object to (by default, uses source key)
-            destination_bucket: bucket to copy object to. if not
+            source: key(s) of object(s) to copy (fully-qualified 'path(s)')
+            destination: key(s) to copy object(s) to (by default, uses
+                source key(s))
+            destination_bucket: bucket to copy object(s) to. if not
                 specified, uses source bucket. this means that if destination
                 and destination_bucket are both None, it overwrites the object
                 inplace. this is useful for things like storage class changes.
@@ -511,8 +567,9 @@ class Bucket:
             config: optional transfer config
 
         Returns:
-            uri: S3 URI of newly-created copy
-            response: API response, if any
+            uri: S3 URI of newly-created copy, or, for multi-copy, a list
+                containing an S3 URI for each successful copy and an Exception
+                for each failed
         """
         config = self.config if config is None else config
         if destination_bucket is None:
@@ -524,22 +581,26 @@ class Bucket:
         # (in order to easily support objects > 5 GB)
         destination_bucket_object = self.resource.Bucket(destination_bucket)
         copy_source = {"Bucket": self.name, "Key": source}
-        response = destination_bucket_object.copy(
+        destination_bucket_object.copy(
             copy_source, destination, ExtraArgs=extra_args, Config=config
         )
-        return f"s3://{destination_bucket}:{destination}", response
+        return f"s3://{destination_bucket}:{destination}"
 
     # TODO: verify types of returned dict values
-    def head(self, key: str) -> dict[str, str]:
+    @splitwrap(seq_arity=1)
+    def head(
+        self, key: Union[str, Sequence[str]]
+    ) -> Union[dict[str, str], list[Union[dict[str, str], Exception]]]:
         """
-        Get basic information about an S3 object in a nicely formatted dict.
+        Get basic information about S3 objects in a nicely formatted dict.
 
         Args:
-            self: Bucket or name of bucket
-            key: object key (fully-qualified 'path' relative to bucket root)
+            key: object key(s) (fully-qualified 'path(s)' from bucket root)
 
         Returns:
-            dict containing a curated selection of object headers.
+            dict containing a curated selection of object headers, or, for
+                a multi-object call, a list containing a dict for each
+                successful head and an Exception for each failed
         """
         response = self.client.head_object(Bucket=self.name, Key=key)
         headers = response["ResponseMetadata"].get("HTTPHeaders", {})
@@ -564,7 +625,6 @@ class Bucket:
             head_dict["LastModified"] = head_dict["LastModified"].isoformat()
         return head_dict
 
-    # TODO: scary, refactor
     def ls(
         self,
         prefix: Optional[str] = None,
@@ -668,7 +728,8 @@ class Bucket:
             if isinstance(cache, Path):
                 stream.close()
 
-    def rm(self, key: str) -> Optional[dict]:
+    @splitwrap(seq_arity=1)
+    def rm(self, key: str) -> Union[None, list[Optional[None]]]:
         """
         Delete an S3 object.
 
@@ -676,13 +737,14 @@ class Bucket:
             key: key of object to delete (fully-qualified 'path' from root)
 
         Returns:
-            API response, if any
+            None, or, for multi-delete, a list containing None for successful
+                deletes and an Exception for failed
         """
         return self.client.delete_object(Bucket=self.name, Key=key)
 
     def ls_multipart(self) -> dict:
         """
-        List all multipart uploads associated with thuis bucket.
+        List all multipart uploads associated with this bucket.
 
         Returns:
             API response
@@ -702,7 +764,7 @@ class Bucket:
         """
         return self.client.create_multipart_upload(Bucket=self.name, Key=key)
 
-    def abort_multipart_upload(self,multipart: Mapping) -> dict:
+    def abort_multipart_upload(self, multipart: Mapping) -> dict:
         """
         Abort a multipart upload operation.
 

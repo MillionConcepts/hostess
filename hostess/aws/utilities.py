@@ -5,7 +5,7 @@ import datetime as dt
 from operator import contains
 from pathlib import Path
 import re
-from typing import Optional, Union, Callable, Any
+from typing import Optional, Union, Callable, Any, Sequence
 
 import boto3
 import boto3.resources.base
@@ -261,7 +261,7 @@ def clarify_region(region: Optional[str] = None, boto_obj: Any = None) -> str:
 def autopage(
     client: botocore.client.BaseClient,
     operation: str,
-    agg: Optional[Union[str, Callable]] = None,
+    agg: Optional[Union[str, Sequence[str], Callable]] = None,
     **api_kwargs: Any,
 ) -> tuple:
     """
@@ -273,18 +273,21 @@ def autopage(
         operation: name of API call to perform
         agg: optional special aggregator. If `agg` is a `str`, it means:
             'concatenate the values of the key named `agg` from all pages of
-            the response'. if `agg` is callable, it means: 'just feed the
-            pager to `agg` and let it do its thing'. If not specified,
-            aggregate the values of the key whose value is longest in the
-            first response. (This is a heuristic for naively getting the actual
-            responses and ignoring pagination metadata.)
+            the response'. If `agg` is a sequence of `str`, it means:
+            'concatenate the values of each of the named keys in `agg` from
+            all pages of the response in separate lists'.  if `agg` is
+            callable, it means: 'just feed the pager to `agg` and let it do
+            its thing'. If not specified, aggregate the values of the key
+            whose value is longest in the first response. (This is a heuristic
+            for naively getting the actual responses and ignoring pagination
+            metadata.)
         **api_kwargs: kwargs to pass to the API call.
 
     Returns:
         Tuple of aggregated responses, format depending on `agg`.
     """
     assert client.can_paginate(operation)
-    if isinstance(agg, str):
+    if isinstance(agg, (str, Sequence)):
         agg = mapcat(get(agg))
     pager = iter(client.get_paginator(operation).paginate(**api_kwargs))
     if agg is not None:
