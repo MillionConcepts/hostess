@@ -481,7 +481,7 @@ class Bucket:
             (isinstance(obj, str) and literal_str is False)
             or (isinstance(obj, Path))
         ):
-            self.client.upload_file(
+            return self.client.upload_file(
                 Bucket=self.name, Filename=str(obj), Key=key, Config=config
             )
         # or: upload in-memory objects
