@@ -144,5 +144,9 @@ dmypy.json
 /hostess/logs
 /hostess/station/.nodelogs
 
+# dynamic example files
+/examples/DRAFT_README.md
+/examples/cat_s3_mirror/
+
 # configuration
 /hostess/user_config/user_config.py
