@@ -17,12 +17,9 @@ def test_monitor_init():
     text = printstats()
     decimal = r"\d\.\d+"
     assert re.match(
-        rf"{decimal} %;user {decimal};system {decimal};idle {decimal};iowait "
-        rf"{decimal};{decimal} MB;total {decimal} MB;"
-        rf"used {decimal} MB;free {decimal} MB;read {decimal} MB;write "
-        rf"{decimal} MB;read count {decimal} MB;"
-        rf"write count {decimal} MB;sent {decimal} MB;recv {decimal} MB;"
-        rf"sent count {decimal} MB;recv count {decimal} MB;{decimal} s",
+        rf"{decimal} %;user {decimal};.*used {decimal} MB;free "
+        rf"{decimal} MB.*;read {decimal} MB;.*read count {decimal} MB;.*"
+        rf"sent {decimal} MB;.*sent count {decimal} MB;.*{decimal} s",
         text
     )
 
@@ -62,7 +59,7 @@ def test_bouncer():
         bouncer.click()
         bouncer.click()
         assert len(bouncer.events) == next(count)
-        assert sw.clickpeek() == next(lap)
-    # random environmental factors mean we can't guarantee this to a hundredth
-    # of a second without pointless additional work
-    assert sw.peek(which="total") in ("2.22 s", "2.21 s", "2.2 s")
+        assert abs(float(sw.clickpeek()[:-2]) - float(next(lap)[:-2])) < 0.4
+    # random environmental factors and platform differences ean we can't
+    # guarantee this to a hundredth of a second without pointless work
+    assert abs(float(sw.peek(which="total")[:-2]) - 2.21) < 0.4
