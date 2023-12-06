@@ -949,7 +949,7 @@ class Instance:
     @connectwrap
     def tunnel(
         self, local_port: int, remote_port: int
-    ) -> tuple[Process, dict[str, Union[int, str, Path]]]:
+    ) -> tuple[Callable, dict[str, Union[int, str, Path]]]:
         """
         create an SSH tunnel between a local port and a remote port.
 
@@ -958,7 +958,7 @@ class Instance:
             remote_port: port number for remote end of tunnel.
 
         Returns:
-            tunnel_process: `Process` abstraction for the tunnel process
+            signaler: function to shut down tunnel
             tunnel_metadata: dict of metadata about the tunnel
         """
         self._ssh.tunnel(local_port, remote_port)

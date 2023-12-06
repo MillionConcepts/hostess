@@ -1,7 +1,7 @@
+from concurrent.futures import ThreadPoolExecutor
 import io
 import warnings
 from itertools import product
-from multiprocessing import Process
 import re
 import os
 from pathlib import Path
@@ -28,8 +28,47 @@ import pandas as pd
 
 from hostess.config import GENERAL_DEFAULTS
 import hostess.shortcuts as short
-from hostess.subutils import RunCommand, Processlike, Viewer
+from hostess.subutils import Processlike, RunCommand, Viewer
 from hostess.utilities import timeout_factory
+
+ 
+def launch_tunnel_thread(
+    host: str, 
+    uname: str, 
+    keyfile: str,
+    local_port: int,
+    remote_port: int,
+    signalbuf: Optional[list] = None
+) -> Union[tuple[Connection, Exception], Any]:
+    """
+    launch an SSH tunnel. primarily intended as a helper function 
+    for `open_tunnel()`, but can be used on its own. blocks until
+    it hits an exception or it receives a signal, so should generally
+    be run in a thread.
+
+    Args:
+        host: hostname of tunnel target
+        uname: username on remote host
+        keyfile: path to local SSH key file
+        local_port: port for proximal end of tunnel
+        remote_port: port for distal end of tunnel
+        signalbuf: list to receive close-tunnel signal
+
+    Returns:
+        signal received if closed gracefully; tuple of the Connection
+         object and the Exception if it hits an exception.
+    """
+    conn = SSH.connect(host, uname, keyfile).conn
+    try:
+        with conn.forward_local(local_port, remote_port):
+            while True:
+                if signalbuf is not None:
+                    if len(signalbuf) > 0:
+                        conn.close()
+                        return signalbuf[0]
+                time.sleep(1)
+    except Exception as ex:
+        return conn, ex
 
 
 def open_tunnel(
@@ -38,9 +77,9 @@ def open_tunnel(
     keyfile: Union[str, Path],
     local_port: int,
     remote_port: int,
-) -> tuple[Process, dict[str, Union[int, str, Path]]]:
+) -> tuple[Callable[[Any], None], dict[str, Union[int, str, Path]]]:
     """
-    create a child process that maintains an SSH tunnel. NOTE: supports only
+    launch a thread that maintains an SSH tunnel. NOTE: supports only
     keyfile authentication.
 
     Args:
@@ -51,21 +90,21 @@ def open_tunnel(
         remote_port: port on remote end of tunnel
 
     Returns:
-        tunnel_process: `Process` abstraction for the tunnel process
+        signaler: function that shuts down tunnel
         tunnel_metadata: dict of metadata about the tunnel
     """
 
-    def target():
-        conn = SSH.connect(host, uname, keyfile).conn
-        try:
-            with conn.forward_local(local_port, remote_port):
-                while True:
-                    time.sleep(1)
-        except Exception as ex:
-            return conn, ex
-
-    process = Process(target=target)
-    process.start()
+    exc = ThreadPoolExecutor(1)
+    signalbuf = []
+    exc.submit(
+        launch_tunnel_thread, 
+        host, 
+        uname, 
+        keyfile, 
+        local_port, 
+        remote_port, 
+        signalbuf
+    )
     metadict = {
         "host": host,
         "uname": uname,
@@ -73,8 +112,11 @@ def open_tunnel(
         "local_port": local_port,
         "remote_port": remote_port,
     }
-    # TODO: add a pipe or something
-    return process, metadict
+    
+    def signaler(sig=0):
+        signalbuf.append(sig)
+        
+    return signaler, metadict
 
 
 def _move_print_heads(err_head, out_head, process):
@@ -141,7 +183,7 @@ class SSH(RunCommand):
         super().__init__(command, conn, conn["runners"]["remote"], **kwargs)
         self.host, self.uname, self.key = conn.host, conn.user, key
         self.conn = conn  # effectively an alias for self.ctx
-        self.tunnels: list[tuple[Process, dict]] = []
+        self.tunnels: list[tuple[Callable, dict]] = []
 
     @classmethod
     def connect(
@@ -286,10 +328,10 @@ class SSH(RunCommand):
             local_port: port number for local end of tunnel.
             remote_port: port number for remote end of tunnel.
         """
-        process, meta = open_tunnel(
+        signaler, meta = open_tunnel(
             self.host, self.uname, self.key, local_port, remote_port
         )
-        self.tunnels.append((process, meta))
+        self.tunnels.append((signaler, meta))
 
     def __call__(
         self,
@@ -548,12 +590,12 @@ def get_jupyter_token(
     )
 
 
-NotebookConnection = tuple[str, Process, dict, Processlike, Callable[[], None]]
+NotebookConnection = tuple[str, Callable, dict, Processlike, Callable[[], None]]
 """
 structure containing results of a tunneled Jupyter Notebook execution.
 
 1. URL for Jupyter server
-2. SSH tunnel process
+2. function that shuts down tunnel
 3. SSH tunnel metadata
 3. Jupyter execution process
 4. Callable for gracefully shutting down Notebook
@@ -590,7 +632,8 @@ def jupyter_connect(
 
     Returns:
         structure containing results of tunneled notebook execution,
-            including a callable to terminate the Notebook
+            including a callable to terminate the Notebook and another
+            to close the tunnel
     """
     booktype = "notebook" if lab is False else "lab"
     if env is not None:
