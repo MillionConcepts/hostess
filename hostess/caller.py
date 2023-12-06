@@ -231,6 +231,31 @@ def format_kwarg_filter(
     """
 
 
+def format_returner(
+    return_result: bool,
+    return_compression: CallerCompressionType,
+    return_serialization: CallerSerializationType
+) -> str:
+    """format return section of RPC script."""
+    if return_result is False:
+        return ""
+    if return_serialization is None:
+        returnval = "returnval = result\n"
+    elif return_serialization == "json":
+        returnval = f"import json\nreturnval = json.dumps(result)\n"
+    elif return_serialization == "pickle":
+        returnval = f"import pickle\nreturnval = pickle.dumps(payload)\n"
+    else:
+        raise NotImplementedError("Unknown serializer. use 'json' or 'pickle'")
+    if return_compression == "gzip":
+        returnval += f"""import gzip
+    returnval = gzip.compress(result)
+    """
+    elif return_compression is not None:
+        raise NotImplementedError("Unsupported compression.")
+    return returnval + "print(returnval)"
+
+
 # TODO, maybe: validity check to make sure it compiles
 def generic_python_endpoint(
     module: str,
@@ -241,11 +266,13 @@ def generic_python_endpoint(
     serialization: CallerSerializationType = None,
     splat: CallerUnpackingOperator = "",
     payload_encoded: bool = False,
-    print_result: bool = False,
+    return_result: bool = True,
     filter_kwargs: bool = False,
     interpreter: Optional[str] = None,
     for_bash: bool = True,
     literal_none: bool = False,
+    return_serialization: CallerSerializationType = None,
+    return_compression: CallerCompressionType = None
 ) -> str:
     """
     dynamically construct a Python source code snippet that imports a module
@@ -286,8 +313,10 @@ def generic_python_endpoint(
             compressed the payload using the specified methods, so the
             generated script should decode it, but this function should not
             re-encode it.
-        print_result: if True, the generated script also prints the return
-            value of the called function to stdout.
+        return_result: if True, the generated script also prints the return
+            value of the called function to stdout, with encoding and
+            compression specified by `return_encoding` and
+            `return_compression`.
         filter_kwargs: if True, the generated script will attempt to filter
             func-inappropriate kwargs from the payload. Not guaranteed to work
             on functions with complex signatures. Does nothing if
@@ -305,6 +334,11 @@ def generic_python_endpoint(
         literal_none: if False (the default), interpret `payload=None` as
             meaning "run `module.func()`". otherwise, interpret it as meaning
             "run `module.func(None)`".
+        return_serialization: serialization for return value. does nothing if
+            `return_result` is False.
+        return_compression: compression for return value. does nothing if
+            `return_result` is False.
+
 
     Returns:
         Bash command that executes function call in specified interpreter,
@@ -326,10 +360,11 @@ def generic_python_endpoint(
     decompress = format_decompressor(encoded, serialization, compression)
     deserialize = format_deserializer(serialization)
     kwarg_filter = format_kwarg_filter(filter_kwargs, splat)
-    call = f"target({splat}payload)"
-    if print_result is True:
-        call = f"print({call})"
-    endpoint = import_ + decompress + deserialize + kwarg_filter + call
+    call = f"result = target({splat}payload)\n"
+    rval = format_returner(
+        return_result, return_compression, return_serialization
+    )
+    endpoint = import_ + decompress + deserialize + kwarg_filter + call + rval
     if for_bash is True:
         if interpreter is None:
             interpreter = sys.executable

@@ -686,7 +686,7 @@ class Station(bases.Node):
             "launch_delegate",
             payload=kwargs,
             splat="**",
-            print_result=True,
+            return_result=True,
         )
         if context == "daemon":
             RunCommand(endpoint, _disown=True)()

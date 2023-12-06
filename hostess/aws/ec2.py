@@ -6,11 +6,12 @@ import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from functools import cache, partial, wraps
-from itertools import chain
+from itertools import chain, cycle
 from multiprocessing import Process
 from pathlib import Path
 from random import choices
 from string import ascii_lowercase
+from types import NoneType
 from typing import (
     Any,
     Callable,
@@ -1038,7 +1039,7 @@ class Instance:
             serialization=serialization,
             splat=splat,
             payload_encoded=payload_encoded,
-            print_result=print_result,
+            return_result=print_result,
             filter_kwargs=filter_kwargs,
             interpreter=interpreter,
             for_bash=True,
@@ -1121,7 +1122,7 @@ class Cluster:
     ) -> list[Any]:
         """
         Internal wrapper function: make multithreaded calls to a specified
-        method of all this Cluster's Isntances.
+        method of all this Cluster's Instances with shared arguments.
 
         Args:
              method_name: named method of Instance to call on all our Instances
@@ -1131,7 +1132,7 @@ class Cluster:
         Returns:
             list containing result of method call from each Instance
         """
-        exc = ThreadPoolExecutor(len(self.instances))
+        exc = ThreadPoolExecutor(len(self))
         futures = []
         for instance in self.instances:
             futures.append(
@@ -1140,6 +1141,97 @@ class Cluster:
         while not all(f.done() for f in futures):
             time.sleep(0.01)
         return [f.result() for f in futures]
+
+    def _async_method_map(
+        self,
+        method_name: str,
+        argseq: Optional[Sequence[Sequence]] = None,
+        kwargseq: Optional[Sequence[Mapping[str, Any]]] = None
+    ) -> list[Any]:
+        """
+        Internal wrapper function: make multithreaded calls to a specified
+        method of all this Cluster's Instances with shared arguments.
+
+        Args:
+             method_name: named method of Instance to call on all our Instances
+             argseq: optional args to pass to these method calls -- one
+                sequence of args per Instance. either `args` or `kwargs` must
+                be defined.
+             kwargseq: optional kwargs to pass to these method calls -- one
+                `dict` or other `Mapping` of kwargs per Instance.
+
+        Returns:
+            list containing result of method call from each Instance
+        """
+        if (argseq is None) and (kwargseq is None):
+            raise TypeError("Must pass at least one of argseq or kwargseq.")
+        for seq in (argseq, kwargseq):
+            if (
+                (not isinstance(seq, (cycle, NoneType)))
+                and (len(seq) != len(self))
+            ):
+                raise ValueError("argument sequence has incorrect length.")
+        exc = ThreadPoolExecutor(len(self))
+        argseq = cycle([()]) if argseq is None else argseq
+        kwargseq = cycle([{}]) if kwargseq is None else kwargseq
+        futures = []
+        for instance, args, kwargs in zip(self.instances, argseq, kwargseq):
+            if isinstance(args, str):
+                args = (args,)
+            futures.append(
+                exc.submit(getattr(instance, method_name), *args, **kwargs)
+            )
+        while not all(f.done() for f in futures):
+            time.sleep(0.01)
+        results = [f.result() for f in futures]
+        done = False
+        while done is False:
+            for r in results:
+                if not hasattr(r, "running"):
+                    continue
+                if r.running is True:
+                    time.sleep(0.01)
+                    done = False
+                    break
+                done = True
+        return [f.result() for f in futures]
+
+    @staticmethod
+    def _dispatch_cycle_arguments(argseq, kwargseq):
+        if isinstance(argseq, str):
+            argseq = cycle([argseq])
+        elif (
+            (argseq is not None)
+            and (len(argseq) > 0)
+            and (
+                not isinstance(argseq[1], Sequence)
+                or isinstance(argseq[1], str)
+            )
+        ):
+            argseq = cycle([argseq])
+        if isinstance(kwargseq, Mapping):
+            kwargseq = cycle([kwargseq])
+        return argseq, kwargseq
+
+    def commandmap(
+        self,
+        argseq: Union[str, Sequence[Any]],
+        kwargseq: Optional[
+            Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]
+        ] = None
+    ) -> list[Processlike, ...]:
+        argseq, kwargseq = self._dispatch_cycle_arguments(argseq, kwargseq)
+        return self._async_method_map("command", argseq, kwargseq)
+
+    def pythonmap(
+        self,
+        argseq: Union[str, Sequence[Any]],
+        kwargseq: Optional[
+            Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]
+        ] = None
+    ) -> list[Processlike, ...]:
+        argseq, kwargseq = self._dispatch_cycle_arguments(argseq, kwargseq)
+        return self._async_method_map("call_python", argseq, kwargseq)
 
     def command(
         self, command: str, *args: Union[str, int, float], **kwargs: bool
@@ -1563,6 +1655,9 @@ class Cluster:
 
     def __str__(self):
         return "\n".join([inst.__str__() for inst in self.instances])
+
+    def __len__(self):
+        return len(self.instances)
 
 
 def get_canonical_images(
@@ -2281,9 +2376,7 @@ def instance_price_per_hour(instance: Instance):
             if r['instance_type'] == instance.instance_type
         ][0]
     except IndexError:
-        raise ValueError(
-            "cannot retrieve pricing information for this instance type."
-        )
+        raise ValueError("cannot retrieve pricing for this instance type.")
     stopped_price = 0
     volumes = list(instance.instance_.volumes.iterator())
     ebs_pricelist = ec2_pricelist['ebs']
