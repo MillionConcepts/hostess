@@ -15,6 +15,10 @@ from hostess.config import GENERAL_DEFAULTS
 from hostess.utilities import filestamp
 
 
+HOURS_PER_MONTH = 730
+"""canonical hours-to-month conversion used in AWS rate quotes"""
+
+
 def get_on_demand_price(instance_type, region=None, client=None, session=None):
     """
     fetch on-demand pricing information for a specific instance type.
@@ -112,7 +116,7 @@ def get_ebs_rates(region=None, client=None, session=None):
 
 
 def get_cpu_credit_rates(region=None, client=None, session=None):
-    return [
+    rates = [
         {
             "instance_family": pricelist["product"]["attributes"][
                 "instance"
@@ -120,8 +124,9 @@ def get_cpu_credit_rates(region=None, client=None, session=None):
             "usd_per_cpu_credit": float(dig_for_value(pricelist, "USD")),
         }
         for pricelist in get_ec2_product_family_pricelists(
-            "CpuCredits", region, client, session
+            "CPU Credits", region, client, session
         )
+        if pricelist['product']['attributes']['operatingSystem'] == "Linux"
     ]
 
 
@@ -213,7 +218,7 @@ def get_ec2_basic_price_list(
     prices = {
         "ondemand": get_on_demand_rates(region, client),
         "credits": get_cpu_credit_rates(region, client),
-        "ebs": get_ebs_storage_rates(region, client),
+        "ebs": get_ebs_rates(region, client),
     }
     _clear_cached_results(cache_path, prefix)
     with Path(cache_path, f"{prefix }_{filestamp()}.pkl").open("wb") as stream:
