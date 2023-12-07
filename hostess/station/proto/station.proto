@@ -20,7 +20,7 @@ message PythonObject {
   oneof format {
     string scanf = 3;
     Serialization serialization = 4;
-    string dtype = 5;
+    string arrspec = 5;
   }
   CharType chartype = 6;
   Compression compression = 7;

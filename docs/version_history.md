@@ -27,6 +27,7 @@
 - bug in `Bucket.put()`
 - bug with passing `int`/`float` positional arguments to `subutils.RunCommand` 
 and subclasses
+- bug with packing ndarrays of homogeneous dtype
 
 ## [0.7.3] - 2023-11-28
 

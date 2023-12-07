@@ -203,7 +203,11 @@ def pack_obj(obj: Any, name: str = "") -> pro.PythonObject:
             return pro.PythonObject(
                 name=name, serialization="dill", value=dill.dumps(obj)
             )
-        return pro.PythonObject(name=name, dtype=dtype, value=obj.tobytes())
+        return pro.PythonObject(
+            name=name,
+            arrspec=str({'dtype': dtype, 'shape': obj.shape}),
+            value=obj.tobytes()
+        )
     else:
         return pro.PythonObject(
             name=name, serialization="dill", value=dill.dumps(obj)
@@ -325,10 +329,13 @@ def unpack_obj(obj: pro.PythonObject) -> Any:
         value = json.loads(obj.value)
     elif enum(obj, "serialization") == "dill":
         value = dill.loads(obj.value)
-    elif obj.dtype:
+    elif obj.arrspec:
+        arrspec = literal_eval(obj.arrspec)
+        if arrspec['dtype'].startswith("["):
+            arrspec['dtype'] = literal_eval(arrspec['dtype'])
         value = np.frombuffer(
-            obj.value, dtype=np.dtype(literal_eval(obj.dtype))
-        )
+            obj.value, dtype=arrspec['dtype']
+        ).reshape(arrspec['shape'])
     elif obj.scanf:
         unpacked = struct.unpack(obj.scanf, obj.value)
         if any(isinstance(v, bytes) for v in unpacked):
