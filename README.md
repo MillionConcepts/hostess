@@ -41,8 +41,8 @@ example Notebooks for more details on this.
 3. `hostess` requires Python >= 3.9.
 4. `hostess` is very lightweight. If a machine has enough resources to run 
 a Python interpreter, it can probably run `hostess`.
-5. `hostess.station` is not fully compatible with MacOS. MacOS compatibility
-is planned. All other parts of `hostess` are compatible with MacOS.
+5. `hostess.station` is not fully compatible with MacOS or WSL. MacOS and WSL compatibility
+is planned. All other parts of `hostess` are compatible with MacOS and WSL.
 
 ## cautions
 
