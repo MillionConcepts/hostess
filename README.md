@@ -26,6 +26,10 @@ dependencies, please install from source.
 
 ## documentation
 
+Examples for working with EC2 instances can be found [in this jupyter notebook](https://github.com/MillionConcepts/hostess/blob/main/examples/ec2.ipynb).
+
+Examples for working with S3 buckets can be found [in this jupyter notebook](https://github.com/MillionConcepts/hostess/blob/main/examples/s3.ipynb).
+
 [You can find extended documentation and an API reference on readthedocs.](https://hostess.readthedocs.io)
 [![Documentation Status](https://readthedocs.org/projects/hostess/badge/?version=latest)](https://hostess.readthedocs.io/en/latest/?badge=latest)
 
