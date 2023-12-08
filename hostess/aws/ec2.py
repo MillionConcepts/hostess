@@ -6,11 +6,12 @@ import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from functools import cache, partial, wraps
-from itertools import chain
+from itertools import chain, cycle
 from multiprocessing import Process
 from pathlib import Path
 from random import choices
 from string import ascii_lowercase
+from types import NoneType
 from typing import (
     Any,
     Callable,
@@ -36,7 +37,7 @@ from paramiko.ssh_exception import NoValidConnectionsError, SSHException
 from hostess.aws.pricing import (
     get_cpu_credit_price,
     get_ec2_basic_price_list,
-    get_on_demand_price,
+    get_on_demand_price, HOURS_PER_MONTH,
 )
 from hostess.aws.utilities import (
     _check_cached_results,
@@ -46,7 +47,7 @@ from hostess.aws.utilities import (
     init_client,
     init_resource,
     tag_dict,
-    tagfilter,
+    tagfilter, make_boto_session,
 )
 from hostess.caller import (
     CallerCompressionType,
@@ -251,12 +252,16 @@ class Instance:
             resource: boto resource. creates default resource if not given.
             session: boto session. creates default session if not given.
         """
-        resource = init_resource("ec2", resource, session)
+        self.session = session if session is not None else make_boto_session()
+        self.resource = init_resource("ec2", resource, self.session)
+        self.client = init_client("ec2", client, self.session)
+
         if isinstance(description, str):
             # if it's got periods in it, assume it's a public IPv4 address
             if "." in description:
-                client = init_client("ec2", client, session)
-                instance_id = ls_instances(description, client=client)[0]["id"]
+                instance_id = ls_instances(
+                    description, client=self.client
+                )[0]["id"]
             # otherwise assume it's the instance id
             else:
                 instance_id = description
@@ -268,7 +273,7 @@ class Instance:
             instance_id = description["InstanceId"]
         else:
             raise ValueError("can't interpret this description.")
-        instance_ = resource.Instance(instance_id)
+        instance_ = self.resource.Instance(instance_id)
         self.instance_id = instance_id
         self.address_type = "private" if use_private_ip is True else "public"
         if f"{self.address_type}_ip_address" in dir(instance_):
@@ -278,13 +283,23 @@ class Instance:
         self.launch_time = instance_.launch_time
         self.state = instance_.state["Name"]
         self.request_cache = []
-        if "Name" in self.tags.keys():
-            self.name = self.tags["Name"]
-        else:
-            self.name = None
+        self.name = self.tags.get("Name")
         self.zone = instance_.placement["AvailabilityZone"]
         self.uname, self.passed_key, self._ssh = uname, key, None
         self.instance_ = instance_
+
+    def rename(self, name: str):
+        """
+        Rename the instance. Does not rename volumes or network interfaces.
+        Updates local instance state cache when called.
+
+        Args:
+            name: new name for instance.
+        """
+        self.client.create_tags(
+            Resources=[self.instance_id], Tags=[{'Key': 'Name', 'Value': name}]
+        )
+        self.update()
 
     @classmethod
     def launch(
@@ -295,7 +310,7 @@ class Instance:
         client=None,
         session=None,
         wait=True,
-        connect: bool = False,
+        connect=False,
         maxtries: int = 40,
         **instance_kwargs: Union[
             str,
@@ -308,20 +323,13 @@ class Instance:
     ) -> "Instance":
         """
         launch a single instance. This is a thin wrapper for
-        `Cluster.launch()` with `count=0` and an optional `connect`
-        argument. See that function's documentation for a description
-        of arguments other than `connect` and `maxtries`
-
-        Args:
-            connect: if True, block until establishing an SSH connection
-                with the instance.
-            maxtries: how many times to try to connect to the instance if
-                connect=True (waiting 1s between each attempt).
+        `Cluster.launch()` with `count=1`. See that function for full
+        documentation.
 
         Returns:
             an Instance associated with a newly-launched instance.
         """
-        instance = Cluster.launch(
+        return Cluster.launch(
             1,
             template,
             options,
@@ -329,14 +337,13 @@ class Instance:
             client,
             session,
             wait,
+            connect,
+            maxtries,
             **instance_kwargs,
         )[0]
-        if connect is True:
-            instance._wait_on_connection(maxtries)
-        return instance
 
-    def _wait_on_connection(self, maxtries):
-        print("waiting until instance is connectable...", end="")
+    def wait_on_connection(self, maxtries):
+
         while not self.is_connected:
             try:
                 self.connect(maxtries=maxtries)
@@ -659,7 +666,7 @@ class Instance:
             print("running.")
         if connect is True:
             self.wait_until_running()
-            self._wait_on_connection(maxtries)
+            self.wait_on_connection(maxtries)
         if return_response is True:
             return response
 
@@ -847,10 +854,12 @@ class Instance:
         pass
 
     def update(self):
-        """Refresh information about the instance's state and ip address."""
+        """Refresh basic state and identification information."""
         self.instance_.load()
         self.state = self.instance_.state["Name"]
         self.ip = getattr(self.instance_, f"{self.address_type}_ip_address")
+        self.tags = tag_dict(self.instance_.tags)
+        self.name = self.tags.get("Name")
 
     def wait_until(self, state: Literal[InstanceState], timeout: float = 65):
         """
@@ -940,7 +949,7 @@ class Instance:
     @connectwrap
     def tunnel(
         self, local_port: int, remote_port: int
-    ) -> tuple[Process, dict[str, Union[int, str, Path]]]:
+    ) -> tuple[Callable, dict[str, Union[int, str, Path]]]:
         """
         create an SSH tunnel between a local port and a remote port.
 
@@ -949,7 +958,7 @@ class Instance:
             remote_port: port number for remote end of tunnel.
 
         Returns:
-            tunnel_process: `Process` abstraction for the tunnel process
+            signaler: function to shut down tunnel
             tunnel_metadata: dict of metadata about the tunnel
         """
         self._ssh.tunnel(local_port, remote_port)
@@ -1030,7 +1039,7 @@ class Instance:
             serialization=serialization,
             splat=splat,
             payload_encoded=payload_encoded,
-            print_result=print_result,
+            return_result=print_result,
             filter_kwargs=filter_kwargs,
             interpreter=interpreter,
             for_bash=True,
@@ -1072,6 +1081,9 @@ class Instance:
                 sg, ip=ip, force_modification_of_default_sg=force
             )
 
+    def price_per_hour(self):
+        return instance_price_per_hour(self)
+
     def __repr__(self):
         string = f"{self.instance_type} in {self.zone} "
         if self.ip is None:
@@ -1110,7 +1122,7 @@ class Cluster:
     ) -> list[Any]:
         """
         Internal wrapper function: make multithreaded calls to a specified
-        method of all this Cluster's Isntances.
+        method of all this Cluster's Instances with shared arguments.
 
         Args:
              method_name: named method of Instance to call on all our Instances
@@ -1120,7 +1132,7 @@ class Cluster:
         Returns:
             list containing result of method call from each Instance
         """
-        exc = ThreadPoolExecutor(len(self.instances))
+        exc = ThreadPoolExecutor(len(self))
         futures = []
         for instance in self.instances:
             futures.append(
@@ -1129,6 +1141,97 @@ class Cluster:
         while not all(f.done() for f in futures):
             time.sleep(0.01)
         return [f.result() for f in futures]
+
+    def _async_method_map(
+        self,
+        method_name: str,
+        argseq: Optional[Sequence[Sequence]] = None,
+        kwargseq: Optional[Sequence[Mapping[str, Any]]] = None
+    ) -> list[Any]:
+        """
+        Internal wrapper function: make multithreaded calls to a specified
+        method of all this Cluster's Instances with shared arguments.
+
+        Args:
+             method_name: named method of Instance to call on all our Instances
+             argseq: optional args to pass to these method calls -- one
+                sequence of args per Instance. either `args` or `kwargs` must
+                be defined.
+             kwargseq: optional kwargs to pass to these method calls -- one
+                `dict` or other `Mapping` of kwargs per Instance.
+
+        Returns:
+            list containing result of method call from each Instance
+        """
+        if (argseq is None) and (kwargseq is None):
+            raise TypeError("Must pass at least one of argseq or kwargseq.")
+        for seq in (argseq, kwargseq):
+            if (
+                (not isinstance(seq, (cycle, NoneType)))
+                and (len(seq) != len(self))
+            ):
+                raise ValueError("argument sequence has incorrect length.")
+        exc = ThreadPoolExecutor(len(self))
+        argseq = cycle([()]) if argseq is None else argseq
+        kwargseq = cycle([{}]) if kwargseq is None else kwargseq
+        futures = []
+        for instance, args, kwargs in zip(self.instances, argseq, kwargseq):
+            if isinstance(args, str):
+                args = (args,)
+            futures.append(
+                exc.submit(getattr(instance, method_name), *args, **kwargs)
+            )
+        while not all(f.done() for f in futures):
+            time.sleep(0.01)
+        results = [f.result() for f in futures]
+        done = False
+        while done is False:
+            for r in results:
+                if not hasattr(r, "running"):
+                    continue
+                if r.running is True:
+                    time.sleep(0.01)
+                    done = False
+                    break
+                done = True
+        return [f.result() for f in futures]
+
+    @staticmethod
+    def _dispatch_cycle_arguments(argseq, kwargseq):
+        if isinstance(argseq, str):
+            argseq = cycle([argseq])
+        elif (
+            (argseq is not None)
+            and (len(argseq) > 0)
+            and (
+                not isinstance(argseq[1], Sequence)
+                or isinstance(argseq[1], str)
+            )
+        ):
+            argseq = cycle([argseq])
+        if isinstance(kwargseq, Mapping):
+            kwargseq = cycle([kwargseq])
+        return argseq, kwargseq
+
+    def commandmap(
+        self,
+        argseq: Union[str, Sequence[Any]],
+        kwargseq: Optional[
+            Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]
+        ] = None
+    ) -> list[Processlike, ...]:
+        argseq, kwargseq = self._dispatch_cycle_arguments(argseq, kwargseq)
+        return self._async_method_map("command", argseq, kwargseq)
+
+    def pythonmap(
+        self,
+        argseq: Union[str, Sequence[Any]],
+        kwargseq: Optional[
+            Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]
+        ] = None
+    ) -> list[Processlike, ...]:
+        argseq, kwargseq = self._dispatch_cycle_arguments(argseq, kwargseq)
+        return self._async_method_map("call_python", argseq, kwargseq)
 
     def command(
         self, command: str, *args: Union[str, int, float], **kwargs: bool
@@ -1141,12 +1244,31 @@ class Cluster:
             command: command name/string
             *args: args to pass to `Instance.command()`
             **kwargs: kwargs to pass to `Instance.command()`.
-                Only meta-options are recommended.
 
         Returns:
             list containing results of `command()` from each Instance.
         """
         return self._async_method_call("command", command, *args, **kwargs)
+
+    def con(
+        self, command: str, *args: Union[str, int, float], **kwargs: bool
+    ) -> list[Optional[Viewer], ...]:
+        """
+        Run a command 'console-style' on all this cluster's instances. See
+        `Instance.con()` for further documentation. Note that this doesn't
+        perform any kind of managed separation of outputs from different
+        instances, so it can get pretty visually messy for commands that write
+        to stdout/stderr multiple times.
+
+        Args:
+            command: command name/string
+            *args: args to pass to `Instance.con()`
+            **kwargs: kwargs to pass to `Instance.con()`.
+
+        Returns:
+            list containing results of `con()` from each Instance.
+        """
+        return self._async_method_call("con", command, *args, **kwargs)
 
     def commands(
         self,
@@ -1325,6 +1447,9 @@ class Cluster:
         client: Optional[botocore.client.BaseClient] = None,
         session: Optional[boto3.session] = None,
         wait: bool = True,
+        connect: bool = False,
+        maxtries: int = 40,
+        increment_names: bool = True,
         **instance_kwargs: Union[
             str,
             botocore.client.BaseClient,
@@ -1353,11 +1478,22 @@ class Cluster:
             client: optional preexisting EC2 client.
             session: optional preexisting boto session.
             wait: if True, block after launch until all instances are running.
+                overrides connect=True if False.
+            connect: if True, block after launch until all instances are
+                connectable.
+            maxtries: how many times to try to connect to the instances if
+                connect=True (waiting 1s between each attempt)
+            increment_names: if True and count > 1, suffix incrementing
+                integers to the names of each instance in the Cluster,
+                and, if they had Name tags already, add a "ClusterName" tag
+                indicating the base name
             **instance_kwargs: kwargs to pass to the Instance constructor.
 
         Returns:
             a Cluster created from the newly-launched fleet.
         """
+        if count < 1:
+            raise ValueError(f"count must be >= 1.")
         client = init_client("ec2", client, session)
         options = {} if options is None else options
         # TODO: add a few more conveniences, clean up
@@ -1451,14 +1587,38 @@ class Cluster:
         cluster = Cluster(instances)
         cluster.fleet_request = fleet
         noun = "fleet" if count > 1 else "instance"
+        # TODO: async?
+        if (increment_names is True) and (count > 1):
+            if (basename := instances[0].tags.get("Name")) is not None:
+                client.create_tags(
+                    Resources=[i.instance_id for i in instances],
+                    Tags=[{'Key': "ClusterName", "Value": basename}]
+                )
+            for i, instance in enumerate(instances):
+                instance.rename(instance.tags.get("Name", "") + str(i))
         if wait is False:
-            print(f"launched {noun}; _wait=False passed, not checking status")
+            print(f"launched {noun}; wait=False passed, not checking status")
             return cluster
-        print(f"launched {noun}; waiting until running")
+        if connect is True:
+            print(f"launched {noun}; waiting until connectable")
+        else:
+            print(f"launched {noun}; waiting until running")
+        # TODO: also async?
         for instance in cluster.instances:
-            instance.wait_until_running()
-            print(f"{instance} is running")
+            if connect is False:
+                instance.wait_until_running()
+                print(f"{instance} is running")
+            else:
+                instance.wait_on_connection(maxtries)
+                print(f"connected to {instance}")
         return cluster
+
+    def price_per_hour(self):
+        prices = [i.price_per_hour() for i in self.instances]
+        return {
+            'running': sum(p['running'] for p in prices),
+            'stopped': sum(p['stopped'] for p in prices)
+        }
 
     def rebase_ssh_ingress_ip(
         self,
@@ -1495,6 +1655,9 @@ class Cluster:
 
     def __str__(self):
         return "\n".join([inst.__str__() for inst in self.instances])
+
+    def __len__(self):
+        return len(self.instances)
 
 
 def get_canonical_images(
@@ -2203,3 +2366,48 @@ def authorize_ssh_ingress_from_ip(
             print(f"** {ip} already authorized for SSH ingress for {sg.id} **")
         else:
             raise
+
+
+def instance_price_per_hour(instance: Instance):
+    ec2_pricelist = get_ec2_basic_price_list()
+    try:
+        instance_rates = [
+            r for r in ec2_pricelist['ondemand']
+            if r['instance_type'] == instance.instance_type
+        ][0]
+    except IndexError:
+        raise ValueError("cannot retrieve pricing for this instance type.")
+    stopped_price = 0
+    volumes = list(instance.instance_.volumes.iterator())
+    ebs_pricelist = ec2_pricelist['ebs']
+    for volume in volumes:
+        match = [
+            r for r in ebs_pricelist if r['volume_type'] == volume.volume_type
+        ]
+        # instance storage case
+        if len(match) == 0:
+            continue
+        ebs_rates = match[0]
+        storage_cost = volume.size * ebs_rates['storage'] / HOURS_PER_MONTH
+        # currently, this is only for gp3
+        if ebs_rates['throughput'] is not None:
+            extra = volume.throughput - 125
+            throughput_cost = extra * ebs_rates['throughput'] / HOURS_PER_MONTH
+        else:
+            throughput_cost = 0
+        # gp3, io1, io2
+        if ebs_rates['iops'] is not None:
+            if volume.volume_type == 'gp3':
+                extra = volume.iops - 3000
+            else:
+                extra = volume.iops
+            # technically io2 iops are tiered, but the pricing
+            # API doesn't describe this well
+            iops_cost = extra * ebs_rates['iops'] / HOURS_PER_MONTH
+        else:
+            iops_cost = 0
+        stopped_price += iops_cost + throughput_cost + storage_cost
+    return {
+        'stopped': stopped_price,
+        'running': stopped_price + instance_rates['usd_per_hour']
+    }

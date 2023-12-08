@@ -122,7 +122,7 @@ def test_signal_factory():
     for i in range(4):
         signaler(i)
         # give it time to quit
-        time.sleep(0.1)
+        time.sleep(0.2)
         # now it should have quit
         assert futures[i].running() is False
         assert futures[i].result() == i

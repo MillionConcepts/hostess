@@ -1,4 +1,5 @@
 """tracking, logging, and synchronization objects"""
+import sys
 from abc import ABC
 from collections import defaultdict
 from functools import partial, wraps
@@ -458,8 +459,10 @@ class CPUTime(AbstractMonitor):
             "user": "user",
             "system": "system",
             "idle": "idle",
-            "iowait": "iowait",
         }
+        # cpu_times() doesn't report iowait on MacOS
+        if sys.platform == 'linux':
+            self.qualities['iowait'] = 'iowait'
 
 
 class Usage(AbstractMonitor):

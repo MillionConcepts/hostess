@@ -13,5 +13,6 @@ plugins:
 
 nav:
   - 'index.md'
+  - 'version_history.md'
   - License: 'LICENSE.md'
   - API Reference: 'hostess_api.md'

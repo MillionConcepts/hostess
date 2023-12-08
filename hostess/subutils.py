@@ -502,7 +502,7 @@ class RunCommand:
             lambda a: (not a.startswith("_")) or a.strip("_").isnumeric(),
             self.kwargs | kwargs,
         )
-        astring = "" if len(args) == 0 else f" {' '.join(args)}"
+        astring = "" if len(args) == 0 else f" {' '.join(map(str, args))}"
         kstring = ""
         for k, v in kwargs.items():
             k = k.strip("_").replace("_", "-")

@@ -60,6 +60,6 @@ def test_endpoint():
         module="hostess.tests.utilz",
         func="return_this",
         payload='hi',
-        print_result=True
+        return_result=True
     )
     assert run(script) == 'hi\n'
