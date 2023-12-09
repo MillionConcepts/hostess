@@ -1220,6 +1220,44 @@ class Cluster:
             Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]
         ] = None
     ) -> list[Processlike, ...]:
+        """
+        Map a shell command or commands across this `Cluster's` `Instances`,
+        asynchronously calling `Instance.command()` with optionally-variable
+        args and kwargs.
+
+        Args:
+            argseq: Positional argument(s) to map across the instances. This
+                may be either:
+
+                1. A sequence of sequences of args, one per instance, like:
+                    `[("ls", "/home"), ...]`; each element of this sequence
+                    will be `*`-splatted into the `command()` method of a
+                    single `Instance`.
+                2. A single sequence of args, like `("ls", "/home")`; this
+                    sequence will be `*`-splatted into the `command()` method
+                    of all `Instances`.
+                3. A sequence of strings, like `("ls -a", "cat f", "echo 1")`;
+                    each of these strings will be passed directly to the
+                    `command()` method of a single `Instance`.
+                3. A string, like `"ls"`; this string will be passed directly
+                    to the `command()` method of all `Instances`.
+            kwargseq: Optional keyword arguments to map across the instances.
+                This may be either:
+
+                1. A sequence of mappings of kwargs, one per instance, like:
+                   `[{'-a': True, '-l': False}, ...]`; each element of
+                   this sequence will be `**`-splatted into the `command()`
+                   method of a single `Instance`.
+                2. A single mapping of kwargs, like:
+                    `{'-a': True, '-l': False}`; these kwargs will be
+                    `**`-splatted into the `command()`  method of all
+                    `Instances`.
+                3. `None`: no kwargs for anyone.
+
+        Returns:
+            A `Processlike` object offering an interface to the results of
+                `Instance.command()` called on each `Instance`.
+        """
         argseq, kwargseq = self._dispatch_cycle_arguments(argseq, kwargseq)
         return self._async_method_map("command", argseq, kwargseq)
 
@@ -1230,6 +1268,22 @@ class Cluster:
             Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]
         ] = None
     ) -> list[Processlike, ...]:
+        """
+        Map Python calls across this `Cluster's` `Instances`, asynchronously
+        calling `Instance.call_python()` with optionally-variable args and
+        kwargs. This shares calling conventions with `Cluster.commandmap()`;
+        see that function's documentation for a detailed description.
+
+        Args:
+            argseq: Positional argument(s) for `Instance.call_python()`.
+            kwargseq: Optional keyword argument(s) for
+                `Instance.call_python()`.
+
+        Returns:
+            A `Processlike` object offering an interface to the results of
+                `Instance.call_python()` called on each `Instance`.
+
+        """
         argseq, kwargseq = self._dispatch_cycle_arguments(argseq, kwargseq)
         return self._async_method_map("call_python", argseq, kwargseq)
 
