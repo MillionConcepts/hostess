@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import _ctypes
+import sys
+import warnings
 from collections import defaultdict
+from functools import partial
 from inspect import currentframe, getsourcelines, stack
 from itertools import chain
 import re
@@ -725,6 +728,190 @@ def di(obj_id: int) -> Any:
         Object corresponding to `obj_id`.
     """
     return _ctypes.PyObj_FromPtr(obj_id)
+
+
+def val_refs(refmap: Mapping[str, Any]) -> dict[str, int]:
+    """
+    produce dict containing refcounts of all values in refmap.
+
+    Args:
+        refmap: dict to count.
+
+    Returns:
+        `dict` whose keys are the same as `refmap`'s and whose
+            values are (sys.refcount(v) - 1) for the associated
+            values of `refmap`.
+    """
+    return {k: sys.getrefcount(v) - 1 for k, v in refmap.items()}
+
+
+class RefAlarmWarning(UserWarning):
+    """warning issued by `RefAlarms` with "warn" `verbosity`"""
+
+
+# TODO: integrate reference filter workflow; possibly requires
+#  refactoring that workflow
+def refcounts(
+    getstack: bool = False, stepback: int = 1
+) -> list[dict[str, Union[str, dict[str, int]]]]:
+    """
+    get refcounts of named variables in one or all frames in the stack.
+
+    Args:
+        getstack: check all frames in the stack above the starting frame?
+        stepback: number of frames to step back from the frame of this
+            function before counting
+
+    Returns:
+        A list of dicts, one for each counted frame (always length 1 if
+            `getstack` is `False`). Keys are 'name' (co_name of frame code)
+            and 'refs' (dict whose keys are variable names and values are
+            refcounts of those variables).
+    """
+    if getstack is True:
+        # always ignore current frame
+        frames = [s.frame for s in stack()[stepback:]]
+    else:
+        frame = currentframe()
+        for i in range(stepback):
+            frame = frame.f_back
+        frames = [frame]
+    framerefs = []
+    from types import FrameType
+
+    frame: FrameType
+    for i, frame in enumerate(frames):
+        # TODO: optional globals; need to handle name collisions somehow
+        localdict, _, _ = scopedicts(frame)
+        counts = val_refs(localdict)
+        _maybe_release_locals(localdict, frame)
+        framerefs.append({"name": frame.f_code.co_name, "counts": counts})
+        del frame  # paranoia
+    del frames  # paranoia
+    return framerefs
+
+
+class RefAlarm:
+    """Simple reference / dereference alarm."""
+
+    def __init__(
+        self,
+        getstack: bool = False,
+        verbosity: Literal["warn", "print", "quiet"] = "print",
+        warn_new: bool = False,
+        ignore_dunder: bool = True,
+    ):
+        """
+        Args:
+            getstack: if True, check entire stack above frame that
+                initializes self.context(); if False, just that frame
+            verbosity: "warn" means issue RefAlarmWarnings; "print" means
+                call `print`; "quiet" means no output (user must check
+                `self.refcaches` to see results)
+            warn_new: warn / print newly-assigned variables? does nothing
+                if `verbosity == "quiet"`.
+            ignore_dunder: ignore variables with "dunder" names?
+        """
+        self.verbosity = verbosity
+        self.warn_new, self.getstack = warn_new, getstack
+        self.ignore_dunder = ignore_dunder
+        self.refcaches = defaultdict(list)
+
+    def context(self, name: str = "default"):
+        """
+        Produce a context manager related to this object.
+
+        Args:
+            name: name for this context, used for verbose reports and
+                `refcache` keys
+
+        Returns:
+            A `_RefAlarmContext` suitable for use in a `with` statement.
+        """
+        return _RefAlarmContext(self, name, self.getstack, self.ignore_dunder)
+
+    def receive_context_report(self, results: list[dict], name: str):
+        """
+        receive a context report. called by `_RefAlarmContexts` produced
+        by this object's `context()` method.
+
+        Args:
+            results: `results` object from `_RefAlarmContext.__exit__()`
+            name: name of context
+        """
+        self.refcaches[name].append(results)
+        if self.verbosity == "quiet":
+            return
+        if self.verbosity == "print":
+            printer = print
+        else:
+            printer = partial(warnings.warn, category=RefAlarmWarning)
+        pre = "" if name == "default" else f"{name}: "
+        for i, r in enumerate(results):
+            fname, mismatches = r["name"], r["mismatches"]
+            title = f"{i} ({fname})"
+            for k, v in mismatches.items():
+                if v == "new":
+                    if self.warn_new is False:
+                        continue
+                    printer(f"{pre}{title}: {k} is new")
+                elif v == "missing":
+                    printer(f"{pre}{title}: {k} is missing")
+                else:
+                    printer(f"{pre}{title}: {k} refcount changed by {v}")
+
+
+class _RefAlarmContext:
+    """
+    context manager for reference counting. should be initialized only by
+    RefAlarm.context().
+    """
+
+    def __init__(
+        self,
+        refalarm: RefAlarm,
+        name: str,
+        getstack: bool = False,
+        ignore_dunder: bool = True,
+    ):
+        self.refalarm, self.name = refalarm, name
+        self.getstack = getstack
+        self.refcache, self.ignore_dunder = None, ignore_dunder
+
+    def __enter__(self):
+        # drop refs from this frame
+        self.refcache = refcounts(self.getstack, 2)
+
+    def __exit__(self, *_):
+        results = []
+        # avoid, paranoiacally, calling this inside an expression,
+        # and also drop refs from this frame
+        counts = refcounts(self.getstack, 2)
+        # if the size of the stack changed, something weird happened and
+        # we cannot produce accurate results
+        if len(self.refcache) != len(counts):
+            warnings.warn("stack changed during counting, bailing out")
+            return
+        for old, new in zip(self.refcache, counts):
+            oldname, oldcounts = old["name"], old["counts"]
+            newname, newcounts = new["name"], new["counts"]
+            # if the code name of a frame changed, something weird happened
+            # and we cannot produce accurate results
+            if oldname != newname:
+                warnings.warn("stack changed during counting, bailing out")
+                return
+            mismatches = {}
+            for k in set(oldcounts.keys()).union(newcounts.keys()):
+                if self.ignore_dunder is True and k.startswith("__"):
+                    continue
+                if k not in oldcounts.keys():
+                    mismatches[k] = "new"
+                elif k not in newcounts.keys():
+                    mismatches[k] = "missing"
+                elif (refdiff := newcounts[k] - oldcounts[k]) != 0:
+                    mismatches[k] = refdiff
+            results.append({"name": newname, "mismatches": mismatches})
+        self.refalarm.receive_context_report(results, self.name)
 
 
 DEFAULT_PROFILER = Profiler({"time": Stopwatch()})

@@ -6,8 +6,15 @@ from itertools import chain
 import numpy as np
 
 from hostess.monitors import Stopwatch
-from hostess.profilers import Profiler, analyze_references, di, identify, \
-    Refnom, IdentifyResult
+from hostess.profilers import (
+    analyze_references,
+    di,
+    identify,
+    IdentifyResult,
+    Profiler,
+    RefAlarm,
+    Refnom
+)
 from hostess.tests.utilz import pointlessly_nest, Aint
 
 
@@ -112,3 +119,19 @@ def test_analyze_references_2():
     assert set(
         chain(map(lambda rec: rec['names'][0], ztup_referents[0][2][1]))
     ) == {'x1', 'y1', 'z1'}
+
+
+def test_refalarm():
+    """simple test of basic RefAlarm functionality"""
+    x, y, z = [0, 0, 0], [0, 0, 0], [0, 0, 0]
+    x[1] = z
+
+    def pointlessly_assign_to_index_1(seq, obj):
+        seq[1] = obj
+
+    alarm = RefAlarm(verbosity="quiet")
+    with alarm.context():
+        pointlessly_assign_to_index_1(y, z)
+    assert alarm.refcaches['default'] == [
+        [{'name': 'test_refalarm', 'mismatches': {'z': 1}}]
+    ]
