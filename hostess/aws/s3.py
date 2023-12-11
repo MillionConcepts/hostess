@@ -43,6 +43,7 @@ from dustgoggles.func import naturals
 import requests
 
 from hostess.aws.utilities import init_client, init_resource
+from hostess.config.config import S3_DEFAULTS
 from hostess.subutils import piped
 from hostess.utilities import (
     curry, console_and_log, infer_stream_length, stamp
@@ -161,18 +162,24 @@ class Bucket:
                 default client.
             resource: optional boto3 s3 Resource. if not specified, creates a
                 default resource.
-            session: optional boto3 s3 Session. if not specified, creates a
+            session: optional boto3 Session. if not specified, creates a
                 default session.
             config: optional boto3 TransferConfig. if not specified, creates a
                 default config.
             n_threads: if not None, automatically multithread some operations.
+                note that this is not a hard cap on the number of threads used
+                by a single bucket operation. it provides a cap on concurrency
+                across operations on multiple objects, not on concurrency on
+                operations per object. if you wish to cap concurrency within
+                operations on individual objects, modify the `max_concurrency`
+                attribute of `config`.
         """
         self.client = init_client("s3", client, session)
         self.resource = init_resource("s3", resource, session)
         self.name = bucket_name
         self.contents = []
         if config is None:
-            config = boto3.s3.transfer.TransferConfig()
+            config = boto3.s3.transfer.TransferConfig(**S3_DEFAULTS['config'])
         self.config = config
         # populate s3 operations
         for name, thing in getmembers(sys.modules[__name__]):
@@ -218,13 +225,17 @@ class Bucket:
             )
         parts = {}
         multipart = self.create_multipart_upload(key)
+        if upload_threads is None:
+            exc = None
+        else:
+            exc =ThreadPoolExecutor(upload_threads)
         kwargs = {
             "config": self.config,
             "download_cache": [b""],
             "multipart": multipart,
             "upload_numerator": naturals(),
             "parts": parts,
-            "upload_threads": upload_threads,
+            "exc": exc,
             "verbose": verbose,
         }
         return partial(self._put_stream_chunk, **kwargs), parts, multipart
@@ -336,10 +347,11 @@ class Bucket:
             raise
         del chunk
         put_chunk(b"", flush=True)
-        if upload_threads is not None:
-            _clean_putter_process_records(parts)
         del put_chunk
-        parts = {number: part["result"] for number, part in parts.items()}
+        if upload_threads is not None:
+            while not all(f.done() for f in parts.values()):
+                time.sleep(0.05)
+            parts = {number: f.result() for number, f in parts.items()}
         return self.complete_multipart_upload(
             multipart=multipart_upload, parts=parts
         )
@@ -352,7 +364,7 @@ class Bucket:
         multipart: Mapping,
         upload_numerator: Iterator[int],
         config: boto3.s3.transfer.TransferConfig,
-        upload_threads: Optional[int],
+        exc: Optional[ThreadPoolExecutor],
         verbose: bool = False,
         flush: bool = False,
     ):
@@ -378,14 +390,10 @@ class Bucket:
             "UploadId": multipart["UploadId"],
         }
         download_cache.append(b"")
-        if upload_threads is not None:
-            _clean_putter_process_records(parts, threshold=upload_threads)
-            pipe, remote = piped(self.client.upload_part)
-            process = Process(target=remote, kwargs=kwargs)
-            process.start()
-            parts[number] = {"process": process, "pipe": pipe}
+        if exc is not None:
+            parts[number] = exc.submit(self.client.upload_part, **kwargs)
         else:
-            parts[number] = {"result": self.client.upload_part(**kwargs)}
+            parts[number] = self.client.upload_part(**kwargs)
 
     @splitwrap(seq_arity=1)
     def freeze(

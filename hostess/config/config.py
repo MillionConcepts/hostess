@@ -17,6 +17,12 @@ GENERAL_DEFAULTS = {
     "log_path": f"{home}/.hostess/logs",
     "uname": "ubuntu",
 }
+S3_DEFAULTS = {
+    "config": {
+        "multipart_chunksize": 1024 * 1024 * 50,
+        "multipart_threshold": 1024 * 1024 * 250,
+    }
+}
 EC2_DEFAULTS = {
     "instance_type": "t3a.small",
     "volume_type": "gp3",
