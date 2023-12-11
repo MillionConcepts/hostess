@@ -705,7 +705,7 @@ class Instance:
     @connectwrap
     def put(
         self,
-        source: Union[str, Path, IO],
+        source: Union[str, Path, IO, bytes],
         target: Union[str, Path],
         *args: Any,
         literal_str: bool = False,
@@ -749,9 +749,13 @@ class Instance:
             **kwargs: kwargs to pass to underlying get method
 
         Returns:
-            dict giving transfer metadata: local, remote, host, and port
+            dict giving transfer metadata: local, remote, host, port, and this
+                instance's name, if any
         """
-        return self._ssh.get(source, target, *args, **kwargs)
+        result = self._ssh.get(source, target, *args, **kwargs)
+        if self.name is not None:
+            result['name'] = self.name
+        return result
 
     @connectwrap
     def read(
@@ -1145,8 +1149,8 @@ class Cluster:
     def _async_method_map(
         self,
         method_name: str,
-        argseq: Optional[Sequence[Sequence]] = None,
-        kwargseq: Optional[Sequence[Mapping[str, Any]]] = None
+        argseq: Optional[Union[Sequence[Sequence], cycle]] = None,
+        kwargseq: Optional[Union[Sequence[Mapping[str, Any]], cycle]] = None
     ) -> list[Any]:
         """
         Internal wrapper function: make multithreaded calls to a specified
@@ -1188,6 +1192,7 @@ class Cluster:
         while done is False:
             for r in results:
                 if not hasattr(r, "running"):
+                    done = True
                     continue
                 if r.running is True:
                     time.sleep(0.01)
@@ -1410,58 +1415,128 @@ class Cluster:
         """
         return self._async_method_call("terminate", *args, **kwargs)
 
-    # TODO: update this
+    def get(
+        self,
+        source: Union[Sequence[Union[str, Path]], str, Path],
+        target: Union[str, Path, IO, Sequence[Union[str, Path, IO]]],
+        **kwargs: Any
+    ) -> list[dict]:
+        """
+        copy files from instances to local.
 
-    # def gather_files(
-    #     self,
-    #     source_path,
-    #     target_path: str = ".",
-    #     process_states: Optional[
-    #         MutableMapping[str, Literal["running", "done"]]
-    #     ] = None,
-    #     callback: Callable = zero,
-    #     delay=0.02,
-    # ):
-    #     status = {
-    #       instance.instance_id: "ready" for instance in self.instances
-    #     }
-    #
-    #     def finish_factory(instance_id):
-    #         def finisher(*args, **kwargs):
-    #             status[instance_id] = transition_state
-    #             callback(*args, **kwargs)
-    #
-    #         return finisher
-    #
-    #     if process_states is None:
-    #         return {
-    #             instance.instance_id: instance.get(
-    #                 f"{source_path}/*", target_path, _bg=True, _viewer=True
-    #             )
-    #             for instance in self.instances
-    #         }
-    #     commands = defaultdict(list)
-    #
-    #     while any(s != "complete" for s in status.values()):
-    #         for instance in self.instances:
-    #             if status[instance.instance_id] in ("complete", "fetching"):
-    #                 continue
-    #             if process_states[instance.instance_id] == "done":
-    #                 transition_state = "complete"
-    #             else:
-    #                 transition_state = "ready"
-    #             status[instance.instance_id] = "fetching"
-    #             command = instance.get(
-    #                 f"{source_path}/*",
-    #                 target_path,
-    #                 _bg=True,
-    #                 _bg_exc=False,
-    #                 _viewer=True,
-    #                 _done=finish_factory(instance.instance_id),
-    #             )
-    #             commands[instance.instance_id].append(command)
-    #         time.sleep(delay)
-    #     return commands
+        Args:
+            source: path to file (shared between all instances), or a sequence
+                of paths to files on instances, one per instance
+            target: path to local file, or a filelike object (such as
+                io.BytesIO), or a sequence of such things, one per instance.
+                if `target` is a path to a local file, one separate file, with
+                incrementing suffixes, will be written per instance.
+            **kwargs: kwargs to pass to underlying get method
+
+        Returns:
+            list of dicts giving transfer metadata: local, remote, host, port
+        """
+        if isinstance(target, (str, Path)):
+            target = [
+                f"{Path(target).absolute()}_{i}"
+                for i in range(len(self.instances))
+            ]
+        elif len(target) != len(self.instances):
+            raise ValueError(
+                "a sequence of targets must have the same length as instances"
+            )
+        if isinstance(source, (str, Path)):
+            source = cycle((source,))
+        elif len(source) != len(self.instances):
+            raise ValueError(
+                "a sequence of sources must have the same length as instances"
+            )
+        return self._async_method_map(
+            "get", [(s, t) for s, t in zip(source, target)], cycle((kwargs,))
+        )
+
+    # TODO: a bit messy
+    def read(
+        self,
+        source: Union[Sequence[Union[str, Path]], str, Path],
+        mode: Union[Literal["r", "rb"], Sequence[Literal["r", "rb"]]] = "r",
+        encoding: str = "utf-8",
+        as_buffer: bool = False,
+        concatenate: bool = False,
+        separator: Optional[Union[str, bytes]] = None,
+        **kwargs: Any
+    ) -> Union[
+        io.BytesIO,
+        io.StringIO,
+        bytes,
+        str,
+        Sequence[Union[io.BytesIO, io.StringIO, bytes, str]]
+    ]:
+        """
+        read files from instances directly into memory.
+
+        Args:
+            source: path to file (shared between all instances), or a sequence
+                of paths to files on instances, one per instance
+            mode: "r" for text, "rb" for binary, or a sequence of those, one
+                per instance. must be a single value if `concatenate` is True.
+            encoding: encoding for text files. ignored when mode is "rb".
+            as_buffer: if True, return BytesIO/StringIO instead of bytes/str
+            concatenate: if True, concatenate contents of all files into a
+                single object (preserving order), rather than returning them
+                as a list
+            separator: if `concatenate` is True, separate results from
+                different files with this string/bytestring. ignored if
+                `concatenate` is False. if None, just stick them together.
+            **kwargs: kwargs to pass to underlying get method
+
+        Returns:
+            list of contents, one element per instance, or single object
+                containing concatenated contents if `concatenate` is True;
+                type depends on `mode` and `as_buffer`.
+        """
+        if concatenate is True and not isinstance(mode, str):
+            raise TypeError("specify a single mode if concatenate is True.")
+        if isinstance(source, (str, Path)):
+            source = cycle((source,))
+        elif len(source) != len(self.instances):
+            raise ValueError(
+                "a sequence of sources must have the same length as instances"
+            )
+        if isinstance(mode, str):
+            mode = cycle((mode,))
+        elif len(mode) != len(self.instances):
+            raise ValueError(
+                "a sequence of modes must have the same length of instances"
+            )
+        results = self._async_method_map(
+            "read",
+            [
+                (s, m, encoding, True)
+                for s, m, _ in zip(source, mode, self.instances)
+            ],
+            cycle((kwargs,))
+        )
+        if concatenate is False:
+            if as_buffer is True:
+                return results
+            return [r.read() for r in results]
+        output = [r.read() for r in results]
+        if separator is None:
+            if next(mode) == "rb":
+                separator = b""
+            else:
+                separator = ""
+        if next(mode) == "rb" and isinstance(separator, str):
+            separator = separator.encode(encoding)
+        if next(mode) == "r" and isinstance(separator, bytes):
+            separator = separator.decode(encoding)
+        output = separator.join(output)
+        if as_buffer is False:
+            return output
+        if mode == "rb":
+            return io.BytesIO(output)
+        return io.StringIO(output)
 
     @classmethod
     def from_descriptions(

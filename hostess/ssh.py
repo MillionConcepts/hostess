@@ -210,7 +210,7 @@ class SSH(RunCommand):
 
     def put(
         self,
-        source: Union[str, Path, IO],
+        source: Union[str, Path, IO, bytes],
         target: Union[str, Path],
         *args: Any,
         literal_str: bool = False,
@@ -233,6 +233,8 @@ class SSH(RunCommand):
         """
         if isinstance(source, str) and (literal_str is True):
             source = io.StringIO(source)
+        if isinstance(source, bytes):
+            source = io.BytesIO(source)
         elif not isinstance(source, (str, Path, io.StringIO, io.BytesIO)):
             raise TypeError("Source must be a string, Path, or IO.")
         return unpack_transfer_result(
@@ -281,7 +283,7 @@ class SSH(RunCommand):
                 bytes/str
 
         Returns:
-            Buffer containing contents of remote file
+            contents of remote file as str, bytes, or IO
         """
         if mode not in ("r", "rb"):
             raise TypeError("mode must be 'r' or 'rb'")
