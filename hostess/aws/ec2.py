@@ -1,16 +1,15 @@
 import datetime as dt
-import io
-import os
-import pickle
-import re
-import time
 from concurrent.futures import ThreadPoolExecutor
 from functools import cache, partial, wraps
+import io
 from itertools import chain, cycle
-from multiprocessing import Process
+import os
 from pathlib import Path
+import pickle
 from random import choices
+import re
 from string import ascii_lowercase
+import time
 from types import NoneType
 from typing import (
     Any,
@@ -23,21 +22,23 @@ from typing import (
     Sequence,
     Union,
 )
+import warnings
 
+from cytoolz.curried import get
 import boto3.resources.base
 import botocore.client
 import botocore.exceptions
 import dateutil.parser as dtp
-import pandas as pd
-from cytoolz.curried import get
 from dustgoggles.func import gmap
 from dustgoggles.structures import listify
+import pandas as pd
 from paramiko.ssh_exception import NoValidConnectionsError, SSHException
 
 from hostess.aws.pricing import (
     get_cpu_credit_price,
     get_ec2_basic_price_list,
-    get_on_demand_price, HOURS_PER_MONTH,
+    get_on_demand_price,
+    HOURS_PER_MONTH,
 )
 from hostess.aws.utilities import (
     _check_cached_results,
@@ -47,7 +48,8 @@ from hostess.aws.utilities import (
     init_client,
     init_resource,
     tag_dict,
-    tagfilter, make_boto_session,
+    tagfilter,
+    make_boto_session,
 )
 from hostess.caller import (
     CallerCompressionType,
@@ -55,7 +57,7 @@ from hostess.caller import (
     CallerUnpackingOperator,
     generic_python_endpoint,
 )
-from hostess.config import EC2_DEFAULTS, GENERAL_DEFAULTS
+from hostess.config import CONDA_DEFAULTS, EC2_DEFAULTS, GENERAL_DEFAULTS
 import hostess.shortcuts as hs
 from hostess.ssh import (
     find_conda_env,
@@ -259,9 +261,9 @@ class Instance:
         if isinstance(description, str):
             # if it's got periods in it, assume it's a public IPv4 address
             if "." in description:
-                instance_id = ls_instances(
-                    description, client=self.client
-                )[0]["id"]
+                instance_id = ls_instances(description, client=self.client)[0][
+                    "id"
+                ]
             # otherwise assume it's the instance id
             else:
                 instance_id = description
@@ -297,7 +299,7 @@ class Instance:
             name: new name for instance.
         """
         self.client.create_tags(
-            Resources=[self.instance_id], Tags=[{'Key': 'Name', 'Value': name}]
+            Resources=[self.instance_id], Tags=[{"Key": "Name", "Value": name}]
         )
         self.update()
 
@@ -620,6 +622,7 @@ class Instance:
             return self.con(hs.chain(commands, op), **kwargs)
         return self.command(hs.chain(commands, op), **kwargs)
 
+    @connectwrap
     def notebook(
         self, **connect_kwargs: Union[int, str, bool]
     ) -> NotebookConnection:
@@ -636,6 +639,37 @@ class Instance:
         """
         self._prep_connection()
         return jupyter_connect(self._ssh, **connect_kwargs)
+
+    @connectwrap
+    def install_conda(
+        self,
+        installer_url=CONDA_DEFAULTS['installer_url'],
+        prefix=CONDA_DEFAULTS['prefix'],
+        **kwargs: bool
+    ):
+        """
+        install a Conda Python distribution on the instance.
+
+        Args:
+            installer_url: url of install script; by default, the latest
+                miniforge3 Linux x86_64 installer.
+            prefix: path for Conda installation. If a Conda installation
+                already exists at this path, it will be updated. Defaults
+                to $HOME/miniconda3.
+            kwargs: kwargs to pass to `self.commands()`. Only meta-options are
+                recommended.
+
+        Returns:
+            Output of `self.commands()` for installer script fetch/execution.
+        """
+        return self.commands(
+            [
+                f"wget {installer_url}",
+                f"sh {Path(installer_url).name} -b -u -p {prefix}"
+            ],
+            "and",
+            **kwargs
+        )
 
     def start(
         self,
@@ -712,15 +746,16 @@ class Instance:
         **kwargs: Any,
     ) -> dict:
         """
-        write local file or object to target file on instance.
+        write local file or in-memory data to target file on instance.
 
         Args:
-            source: filelike object or path to local file
+            source: filelike object or path to local file. note that filelike
+                objects will be closed during put operation.
             target: write path on instance
             args: additional arguments to pass to underlying put method
             literal_str: if True and `source` is a `str`, write `source`
                 into `target` as text rather than interpreting `source` as a
-                path
+                path to a local file
             kwargs: additional kwargs to pass to underlying put command
 
         Returns:
@@ -754,7 +789,7 @@ class Instance:
         """
         result = self._ssh.get(source, target, *args, **kwargs)
         if self.name is not None:
-            result['name'] = self.name
+            result["name"] = self.name
         return result
 
     @connectwrap
@@ -1134,7 +1169,8 @@ class Cluster:
              **kwargs: kwargs to pass to these method calls
 
         Returns:
-            list containing result of method call from each Instance
+            list containing results of method call from each Instance, 
+                including raised Exceptions for failed calls
         """
         exc = ThreadPoolExecutor(len(self))
         futures = []
@@ -1144,13 +1180,16 @@ class Cluster:
             )
         while not all(f.done() for f in futures):
             time.sleep(0.01)
-        return [f.result() for f in futures]
-
+        return [
+            f.exception() if f.exception() is not None else f.result()
+            for f in futures
+        ]
+    
     def _async_method_map(
         self,
         method_name: str,
         argseq: Optional[Union[Sequence[Sequence], cycle]] = None,
-        kwargseq: Optional[Union[Sequence[Mapping[str, Any]], cycle]] = None
+        kwargseq: Optional[Union[Sequence[Mapping[str, Any]], cycle]] = None,
     ) -> list[Any]:
         """
         Internal wrapper function: make multithreaded calls to a specified
@@ -1165,14 +1204,14 @@ class Cluster:
                 `dict` or other `Mapping` of kwargs per Instance.
 
         Returns:
-            list containing result of method call from each Instance
+            list containing result of method call from each Instance,
+                including raised Exceptions for failed calls
         """
         if (argseq is None) and (kwargseq is None):
             raise TypeError("Must pass at least one of argseq or kwargseq.")
         for seq in (argseq, kwargseq):
-            if (
-                (not isinstance(seq, (cycle, NoneType)))
-                and (len(seq) != len(self))
+            if (not isinstance(seq, (cycle, NoneType))) and (
+                len(seq) != len(self)
             ):
                 raise ValueError("argument sequence has incorrect length.")
         exc = ThreadPoolExecutor(len(self))
@@ -1199,7 +1238,10 @@ class Cluster:
                     done = False
                     break
                 done = True
-        return [f.result() for f in futures]
+        return [
+            f.exception() if f.exception() is not None else f.result()
+            for f in futures
+        ]
 
     @staticmethod
     def _dispatch_cycle_arguments(argseq, kwargseq):
@@ -1218,12 +1260,25 @@ class Cluster:
             kwargseq = cycle([kwargseq])
         return argseq, kwargseq
 
+    @staticmethod
+    def _check_exceptions(results, _permissive, _warn):
+        """internal function for selective Exception-raising on async calls."""
+        if (_warn is False) and (_permissive is True):
+            return
+        for exception in filter(lambda x: isinstance(x, Exception), results):
+            if _permissive is False:
+                raise exception
+            if _warn is True:
+                warnings.warn(f"{type(exception)}: {exception}")
+
     def commandmap(
         self,
         argseq: Union[str, Sequence[Any]],
         kwargseq: Optional[
             Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]
-        ] = None
+        ] = None,
+        _permissive: bool = False,
+        _warn: bool = True
     ) -> list[Processlike, ...]:
         """
         Map a shell command or commands across this `Cluster's` `Instances`,
@@ -1258,20 +1313,28 @@ class Cluster:
                     `**`-splatted into the `command()`  method of all
                     `Instances`.
                 3. `None`: no kwargs for anyone.
+            _permissive: if False, raise first Exception encountered, if any.
+            _warn: if True and `permissive` is True, raise a UserWarning for
+                each encountered Exception.
 
         Returns:
             A `Processlike` object offering an interface to the results of
-                `Instance.command()` called on each `Instance`.
+                `Instance.command()` called on each `Instance`, including
+                raised Exceptions for failed calls if `permissive` is True
         """
         argseq, kwargseq = self._dispatch_cycle_arguments(argseq, kwargseq)
-        return self._async_method_map("command", argseq, kwargseq)
+        results = self._async_method_map("command", argseq, kwargseq)
+        self._check_exceptions(results, _permissive, _warn)
+        return results
 
     def pythonmap(
         self,
         argseq: Union[str, Sequence[Any]],
         kwargseq: Optional[
             Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]
-        ] = None
+        ] = None,
+        _permissive: bool = False,
+        _warn: bool = True
     ) -> list[Processlike, ...]:
         """
         Map Python calls across this `Cluster's` `Instances`, asynchronously
@@ -1283,34 +1346,56 @@ class Cluster:
             argseq: Positional argument(s) for `Instance.call_python()`.
             kwargseq: Optional keyword argument(s) for
                 `Instance.call_python()`.
+            _permissive: if False, raise first Exception encountered, if any.
+            _warn: if True and `permissive` is True, raise a UserWarning for
+                each encountered Exception.
 
         Returns:
-            A `Processlike` object offering an interface to the results of
-                `Instance.call_python()` called on each `Instance`.
-
+            list of `Processlike` objects offering interfaces to the results of
+                `Instance.call_python()` called on each `Instance`, including
+                raised Exceptions for failed calls if `permissive` is True
         """
         argseq, kwargseq = self._dispatch_cycle_arguments(argseq, kwargseq)
-        return self._async_method_map("call_python", argseq, kwargseq)
+        results = self._async_method_map("call_python", argseq, kwargseq)
+        self._check_exceptions(results, _permissive, _warn)
+        return results
 
     def command(
-        self, command: str, *args: Union[str, int, float], **kwargs: bool
-    ) -> list[Processlike, ...]:
+        self,
+        command: str,
+        *args: Union[str, int, float],
+        _permissive: bool = False,
+        _warn: bool = True,
+        **kwargs: bool
+    ) -> list[Union[Processlike, Exception], ...]:
         """
         Call a shell command on all this Cluster's Instances. See
         `Instance.command()` for further documentation.
 
         Args:
             command: command name/string
+            _permissive: if False, raise first Exception encountered, if any.
+            _warn: if True and `permissive` is True, raise a UserWarning for
+                each encountered Exception.
             *args: args to pass to `Instance.command()`
             **kwargs: kwargs to pass to `Instance.command()`.
 
         Returns:
-            list containing results of `command()` from each Instance.
+            list containing result of `command()` from each Instance, 
+                including raised Exceptions for failed calls if `permissive`
+                is True
         """
-        return self._async_method_call("command", command, *args, **kwargs)
+        results = self._async_method_call("command", command, *args, **kwargs)
+        self._check_exceptions(results, _permissive, _warn)
+        return results
 
     def con(
-        self, command: str, *args: Union[str, int, float], **kwargs: bool
+        self,
+        command: str,
+        *args: Union[str, int, float],
+        _permissive: bool = False,
+        _warn: bool = True,
+        **kwargs: bool
     ) -> list[Optional[Viewer], ...]:
         """
         Run a command 'console-style' on all this cluster's instances. See
@@ -1321,21 +1406,29 @@ class Cluster:
 
         Args:
             command: command name/string
+            _permissive: if False, raise first Exception encountered, if any.
+            _warn: if True and `permissive` is True, raise a UserWarning for
+                each encountered Exception.
             *args: args to pass to `Instance.con()`
             **kwargs: kwargs to pass to `Instance.con()`.
 
         Returns:
-            list containing results of `con()` from each Instance.
+            list containing results of `con()` from each Instance, including
+                raised Exceptions for failed calls if `permissive` is True
         """
-        return self._async_method_call("con", command, *args, **kwargs)
+        results = self._async_method_call("con", command, *args, **kwargs)
+        self._check_exceptions(results, _permissive, _warn)
+        return results
 
     def commands(
         self,
         commands: Sequence[str],
         op: Literal["and", "xor", "then"] = "then",
         _con: bool = False,
+        _permissive: bool = False,
+        _warn: bool = True,
         **kwargs: bool,
-    ) -> list[Processlike, ...]:
+    ) -> list[Union[Processlike, Exception], ...]:
         """
         Call a sequence of shell commands on all this Cluster's Instances. See
         `Instance.commands()` for further documentation.
@@ -1345,21 +1438,30 @@ class Cluster:
             op: logical operator to connect commands.
             _con: run 'console-style', pretty-printing rather than
                 returning output (will look message with lots of Instances)
+            _permissive: if False, raise first Exception encountered, if any.
+            _warn: if True and `permissive` is True, raise a UserWarning for
+                each encountered Exception.
             **kwargs: kwargs to pass to `Instance._ssh()`.
                 Only meta-options are recommended.
 
         Returns:
-            list containing results of `commands()` from each Instance.
+            list containing result of `commands()` from each Instance, 
+                including raised Exceptions for failed calls if `permissive`
+                is True
         """
-        return self._async_method_call(
+        results = self._async_method_call(
             "commands", commands, op, _con, **kwargs
         )
+        self._check_exceptions(results, _permissive, _warn)
+        return results
 
     def call_python(
         self,
         module: str,
         func: Optional[str] = None,
         payload: Any = None,
+        _permissive: bool = False,
+        _warn: bool = True,
         **kwargs: Union[
             bool,
             str,
@@ -1376,13 +1478,33 @@ class Cluster:
             module: name of, or path to, the target module
             func: name of the function to call.
             payload: object from which to constrct func's call arguments.
+            _permissive: if False, raise first Exception encountered, if any.
+            _warn: if True and `permissive` is True, raise a 
+                UserWarning for each encountered Exception.
             **kwargs: kwargs to pass to `Instance.call_python()`
 
         Returns:
-            list containing results of `call_python()` from each Instance.
+            list containing results of `call_python()` from each Instance,
+                including raised Exceptions for failed calls if `permissive`
+                is True
+        """
+        results = self._async_method_call(
+            "call_python", module, func, payload, **kwargs
+        )
+        self._check_exceptions(results, _permissive, _warn)
+        return results
+
+    def connect(self, maxtries: int = 10, delay: float = 1):
+        """
+        establish SSH connections to all instances, prepping new connections
+        when none currently exist, but not replacing existing ones.
+
+        Args:
+            maxtries: maximum times to re-attempt failed connections
+            delay: how many seconds to wait after failed attempts
         """
         return self._async_method_call(
-            "call_python", module, func, payload, **kwargs
+            "_prep_connection", lazy=False, maxtries=maxtries, delay=delay
         )
 
     def start(self, *args, **kwargs) -> list:
@@ -1415,12 +1537,75 @@ class Cluster:
         """
         return self._async_method_call("terminate", *args, **kwargs)
 
+    def put(
+        self,
+        source: Union[str, Path, IO, bytes],
+        target: Union[str, Path],
+        *args: Any,
+        literal_str: bool = False,
+        _permissive: bool = False,
+        _warn: bool = True,
+        **kwargs: Any,
+    ) -> list[Union[dict, Exception]]:
+        """
+        write local files or in-memory data to target files on instances.
+
+        Args:
+            source: filelike object, path to local file, string, or bytestring
+                (shared between all instances), or a sequence of such objects,
+                one per instance. note that if this is a single filelike
+                object, it will be read into memory and closed before sending
+                its contents to the instances.
+            target: write path (shared between all instances), or a sequence
+                of write paths, one per instance.
+            _permissive: if False, raise first Exception encountered, if any.
+            _warn: if True and `permissive` is True, raise a UserWarning for
+                each encountered Exception.
+            args: additional arguments to pass to underlying put method
+            literal_str: if True and `source` is a `str`, write `source`
+                into `target` as text rather than interpreting `source` as a
+                path to a local file.
+            **kwargs: kwargs to pass to underlying get method
+
+        Returns:
+            list of dicts giving transfer metadata: local, remote, host, port,
+                including Exceptions for falled puts if _permissive is True.
+        """
+        if isinstance(target, (str, Path)):
+            target = cycle((target,))
+        elif len(target) != len(self.instances):
+            raise ValueError(
+                "a sequence of targets must have the same length as instances"
+            )
+        # upstream implementation makes it impossible to reuse buffers
+        if isinstance(source, IO):
+            contents = cycle((source.read(),))
+            source.close()
+            source = contents
+        elif isinstance(source, (str, Path, bytes)):
+            source = cycle((source,))
+        elif len(source) != len(self.instances):
+            raise ValueError(
+                "a sequence of sources must have the same length as instances"
+            )
+        kwargs['literal_str'] = literal_str
+        results = self._async_method_map(
+            "put",
+            # we need self.instances to bound length; s & t can both be cycles.
+            [(s, t, *args) for s, t, _ in zip(source, target, self.instances)],
+            cycle((kwargs,))
+        )
+        self._check_exceptions(results, _permissive, _warn)
+        return results
+
     def get(
         self,
         source: Union[Sequence[Union[str, Path]], str, Path],
         target: Union[str, Path, IO, Sequence[Union[str, Path, IO]]],
-        **kwargs: Any
-    ) -> list[dict]:
+        _permissive: bool = False,
+        _warn: bool = True,
+        **kwargs: Any,
+    ) -> list[Union[dict, Exception]]:
         """
         copy files from instances to local.
 
@@ -1431,15 +1616,20 @@ class Cluster:
                 io.BytesIO), or a sequence of such things, one per instance.
                 if `target` is a path to a local file, one separate file, with
                 incrementing suffixes, will be written per instance.
+            _permissive: if False, raise first Exception encountered, if any.
+            _warn: if True and `permissive` is True, raise a UserWarning for
+                each encountered Exception.
             **kwargs: kwargs to pass to underlying get method
 
         Returns:
-            list of dicts giving transfer metadata: local, remote, host, port
+            list of dicts giving transfer metadata: local, remote, host, port,
+                including Exceptions for falled gets if _permissive is True.
         """
         if isinstance(target, (str, Path)):
+            t = Path(target)
             target = [
-                f"{Path(target).absolute()}_{i}"
-                for i in range(len(self.instances))
+                f"{t.absolute().parent}/{t.stem}_{i}{t.suffix}"
+                for i in range(len(self))
             ]
         elif len(target) != len(self.instances):
             raise ValueError(
@@ -1451,9 +1641,11 @@ class Cluster:
             raise ValueError(
                 "a sequence of sources must have the same length as instances"
             )
-        return self._async_method_map(
+        results = self._async_method_map(
             "get", [(s, t) for s, t in zip(source, target)], cycle((kwargs,))
         )
+        self._check_exceptions(results, _permissive, _warn)
+        return results
 
     # TODO: a bit messy
     def read(
@@ -1464,19 +1656,21 @@ class Cluster:
         as_buffer: bool = False,
         concatenate: bool = False,
         separator: Optional[Union[str, bytes]] = None,
-        **kwargs: Any
+        _permissive: bool = True,
+        _warn: bool = True,
+        **kwargs: Any,
     ) -> Union[
         io.BytesIO,
         io.StringIO,
         bytes,
         str,
-        Sequence[Union[io.BytesIO, io.StringIO, bytes, str]]
+        Sequence[Union[io.BytesIO, io.StringIO, bytes, str]],
     ]:
         """
         read files from instances directly into memory.
 
         Args:
-            source: path to file (shared between all instances), or a sequence
+            source: path to file (same path on all instances), or a sequence
                 of paths to files on instances, one per instance
             mode: "r" for text, "rb" for binary, or a sequence of those, one
                 per instance. must be a single value if `concatenate` is True.
@@ -1488,12 +1682,21 @@ class Cluster:
             separator: if `concatenate` is True, separate results from
                 different files with this string/bytestring. ignored if
                 `concatenate` is False. if None, just stick them together.
+            _permissive: if False, raise the first Exception encountered, if 
+                any. When True, and concatenating, simply concatenate only 
+                successful reads (meaning Exceptions will be discarded).
+            _warn: if True and `permissive` is True, raise a UserWarning for
+                each encountered Exception.
             **kwargs: kwargs to pass to underlying get method
 
         Returns:
-            list of contents, one element per instance, or single object
-                containing concatenated contents if `concatenate` is True;
-                type depends on `mode` and `as_buffer`.
+            if `concatenate` is False: a list of contents, one element per
+                instance, including raised Exceptions for failed calls if
+                `permissive` is True. if `concatenate` is True: a single object
+                containing concatenated contents, with failed reads omitted
+                if `permissive` is True. (This will be a 0-length
+                string/bytestring/buffer if all reads failed.)  type of
+                elements/concatenated object depends on `mode` and `as_buffer`.
         """
         if concatenate is True and not isinstance(mode, str):
             raise TypeError("specify a single mode if concatenate is True.")
@@ -1515,13 +1718,16 @@ class Cluster:
                 (s, m, encoding, True)
                 for s, m, _ in zip(source, mode, self.instances)
             ],
-            cycle((kwargs,))
+            cycle((kwargs,)),
         )
+        self._check_exceptions(results, _permissive, _warn)
         if concatenate is False:
             if as_buffer is True:
                 return results
-            return [r.read() for r in results]
-        output = [r.read() for r in results]
+            return [
+                r if isinstance(r, Exception) else r.read() for r in results
+            ]
+        output = [r.read() for r in results if not isinstance(r, Exception)]
         if separator is None:
             if next(mode) == "rb":
                 separator = b""
@@ -1535,8 +1741,102 @@ class Cluster:
         if as_buffer is False:
             return output
         if mode == "rb":
+            # noinspection PyTypeChecker
             return io.BytesIO(output)
         return io.StringIO(output)
+
+    def read_csv(
+        self,
+        source: Union[Sequence[Union[str, Path]], str, Path],
+        encoding: str = "utf-8",
+        add_identifiers: bool = True,
+        reset_index: bool = True,
+        _permissive: bool = False,
+        _warn: bool = False,
+        **csv_kwargs: Any,
+    ) -> pd.DataFrame:
+        """
+        read CSV-like files from all instances and concatenate them along the 
+            column axis into a pandas DataFrame, optionally adding identifier
+            columns.
+            
+        Args:
+            source: path to CSV-like file (same path on all instances), or
+                a sequence of such paths, one per instance
+            encoding: text encoding for CSV-like files
+            add_identifiers: if True, add "name" and "id" columns to the
+                returned DataFrame indicating which instances produced which
+                rows.
+            reset_index: if True, reset index and drop original indices.
+            _permissive: if False, raise first Exception encountered during
+                read, if any. When True, simply ignore read Exceptions,
+                meaning the `DataFrame` will contain no output from instances
+                on which calls failed and all Exceptions will be discarded.
+                (This will result in an empty `DataFrame` if all reads failed.)
+                This option does *not* suppress Exceptions encountered during
+                `DataFrame` construction or concatenation.
+            _warn: if True and `permissive` is True, raise a UserWarning for
+                each encountered read Exception.
+            **csv_kwargs: kwargs to pass to pd.read_csv
+
+        Returns:
+            A `DataFrame` containing concatenated contents of all files,
+                optionally including identifying information for source
+                instances.
+        """
+        buffers = self.read(
+            source,
+            encoding=encoding,
+            _permissive=_permissive,
+            _warn=_warn,
+            as_buffer=True
+        )
+        frames = []
+        for buffer, instance in zip(buffers, self.instances):
+            if isinstance(buffer, Exception):
+                continue
+            df = pd.read_csv(buffer, **csv_kwargs)
+            if add_identifiers is True:
+                df[['name', 'id']] = instance.name, instance.instance_id
+            frames.append(df)
+        concatenated = pd.concat(frames)
+        if reset_index is False:
+            return concatenated
+        return concatenated.reset_index(drop=True)
+
+    def install_conda(
+        self,
+        installer_url=CONDA_DEFAULTS['installer_url'],
+        prefix=CONDA_DEFAULTS['prefix'],
+        _permissive: bool = False,
+        _warn: bool = False,
+        **kwargs: bool
+    ) -> list[Union[Processlike, Exception]]:
+        """
+        install a Conda Python distribution on all instances.
+
+        Args:
+            installer_url: url of install script; by default, the latest
+                miniforge3 Linux x86_64 installer.
+            prefix: path for Conda installation. If a Conda installation
+                already exists at this path, it will be updated. Defaults
+                to $HOME/miniconda3.
+            _permissive: if False, raise first Exception encountered, if any.
+            _warn: if True and `permissive` is True, raise a UserWarning for
+                each encountered Exception.
+            kwargs: kwargs to pass to `Instance.commands()`. Only meta-options
+                are recommended.
+
+        Returns:
+            List containing outputs of `Instance.commands()` for installer
+                script fetch/execution, including Exceptions for failed
+                calls if `_permissive` is True.
+        """
+        results = self._async_method_call(
+            "install_conda", installer_url, prefix, **kwargs
+        )
+        self._check_exceptions(results, _permissive, _warn)
+        return results
 
     @classmethod
     def from_descriptions(
@@ -1721,7 +2021,7 @@ class Cluster:
             if (basename := instances[0].tags.get("Name")) is not None:
                 client.create_tags(
                     Resources=[i.instance_id for i in instances],
-                    Tags=[{'Key': "ClusterName", "Value": basename}]
+                    Tags=[{"Key": "ClusterName", "Value": basename}],
                 )
             for i, instance in enumerate(instances):
                 instance.rename(instance.tags.get("Name", "") + str(i))
@@ -1745,8 +2045,8 @@ class Cluster:
     def price_per_hour(self):
         prices = [i.price_per_hour() for i in self.instances]
         return {
-            'running': sum(p['running'] for p in prices),
-            'stopped': sum(p['stopped'] for p in prices)
+            "running": sum(p["running"] for p in prices),
+            "stopped": sum(p["stopped"] for p in prices),
         }
 
     def rebase_ssh_ingress_ip(
@@ -2501,42 +2801,43 @@ def instance_price_per_hour(instance: Instance):
     ec2_pricelist = get_ec2_basic_price_list()
     try:
         instance_rates = [
-            r for r in ec2_pricelist['ondemand']
-            if r['instance_type'] == instance.instance_type
+            r
+            for r in ec2_pricelist["ondemand"]
+            if r["instance_type"] == instance.instance_type
         ][0]
     except IndexError:
         raise ValueError("cannot retrieve pricing for this instance type.")
     stopped_price = 0
     volumes = list(instance.instance_.volumes.iterator())
-    ebs_pricelist = ec2_pricelist['ebs']
+    ebs_pricelist = ec2_pricelist["ebs"]
     for volume in volumes:
         match = [
-            r for r in ebs_pricelist if r['volume_type'] == volume.volume_type
+            r for r in ebs_pricelist if r["volume_type"] == volume.volume_type
         ]
         # instance storage case
         if len(match) == 0:
             continue
         ebs_rates = match[0]
-        storage_cost = volume.size * ebs_rates['storage'] / HOURS_PER_MONTH
+        storage_cost = volume.size * ebs_rates["storage"] / HOURS_PER_MONTH
         # currently, this is only for gp3
-        if ebs_rates['throughput'] is not None:
+        if ebs_rates["throughput"] is not None:
             extra = volume.throughput - 125
-            throughput_cost = extra * ebs_rates['throughput'] / HOURS_PER_MONTH
+            throughput_cost = extra * ebs_rates["throughput"] / HOURS_PER_MONTH
         else:
             throughput_cost = 0
         # gp3, io1, io2
-        if ebs_rates['iops'] is not None:
-            if volume.volume_type == 'gp3':
+        if ebs_rates["iops"] is not None:
+            if volume.volume_type == "gp3":
                 extra = volume.iops - 3000
             else:
                 extra = volume.iops
             # technically io2 iops are tiered, but the pricing
             # API doesn't describe this well
-            iops_cost = extra * ebs_rates['iops'] / HOURS_PER_MONTH
+            iops_cost = extra * ebs_rates["iops"] / HOURS_PER_MONTH
         else:
             iops_cost = 0
         stopped_price += iops_cost + throughput_cost + storage_cost
     return {
-        'stopped': stopped_price,
-        'running': stopped_price + instance_rates['usd_per_hour']
+        "stopped": stopped_price,
+        "running": stopped_price + instance_rates["usd_per_hour"],
     }

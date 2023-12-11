@@ -3,6 +3,7 @@ from pathlib import Path
 
 from . import config
 
+CONDA_DEFAULTS = config.CONDA_DEFAULTS
 EC2_DEFAULTS = config.EC2_DEFAULTS
 GENERAL_DEFAULTS = config.GENERAL_DEFAULTS
 
@@ -12,7 +13,8 @@ except ImportError:
     user_config = None
 
 for category, name in zip(
-    (EC2_DEFAULTS, GENERAL_DEFAULTS), ("EC2_DEFAULTS", "GENERAL_DEFAULTS")
+    (CONDA_DEFAULTS, EC2_DEFAULTS, GENERAL_DEFAULTS),
+    ("CONDA_DEFAULTS", "EC2_DEFAULTS", "GENERAL_DEFAULTS")
 ):
     try:
         category |= getattr(user_config, name)

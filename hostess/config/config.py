@@ -28,3 +28,10 @@ EC2_DEFAULTS = {
     "volume_type": "gp3",
     "volume_size": 8,
 }
+CONDA_DEFAULTS = {
+    "installer_url": (
+        "https://github.com/conda-forge/miniforge/releases/latest/download/"
+        "Miniforge3-Linux-x86_64.sh"
+    ),
+    "prefix": "$HOME/miniforge3"
+}
