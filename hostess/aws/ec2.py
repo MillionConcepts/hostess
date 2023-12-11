@@ -646,7 +646,7 @@ class Instance:
         installer_url=CONDA_DEFAULTS['installer_url'],
         prefix=CONDA_DEFAULTS['prefix'],
         **kwargs: bool
-    ):
+    ) -> Processlike:
         """
         install a Conda Python distribution on the instance.
 
@@ -655,7 +655,7 @@ class Instance:
                 miniforge3 Linux x86_64 installer.
             prefix: path for Conda installation. If a Conda installation
                 already exists at this path, it will be updated. Defaults
-                to $HOME/miniconda3.
+                to $HOME/miniforge3.
             kwargs: kwargs to pass to `self.commands()`. Only meta-options are
                 recommended.
 
@@ -1506,6 +1506,10 @@ class Cluster:
         return self._async_method_call(
             "_prep_connection", lazy=False, maxtries=maxtries, delay=delay
         )
+
+    def update(self) -> list:
+        """update basic information for instances."""
+        return self._async_method_call("update")
 
     def start(self, *args, **kwargs) -> list:
         """
