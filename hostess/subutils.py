@@ -753,6 +753,10 @@ class Viewer:
     def __repr__(self) -> str:
         return self.__str__()
 
+    @property
+    def host(self):
+        return self.runner.context.host
+
     def wait_for_output(
         self,
         stream: Literal["out", "err", "any"] = "any",
