@@ -2081,15 +2081,12 @@ class Cluster:
         )
 
     def __getitem__(self, item):
-        if isinstance(item, int):
+        if isinstance(item, (int, slice)):
             return self.instances[item]
         for attr in ("name", "ip", "instance_id"):
             matches = [i for i in self.instances if getattr(i, attr) == item]
-            if len(matches) > 1:
-                raise KeyError("ambiguous instance descriptor")
-            if len(matches) == 0:
-                continue
-            return matches[0]
+            if len(matches) > 0:
+                return matches
         raise KeyError
 
     def __repr__(self):
