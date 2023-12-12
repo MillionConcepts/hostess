@@ -2085,6 +2085,8 @@ class Cluster:
             return self.instances[item]
         for attr in ("name", "ip", "instance_id"):
             matches = [i for i in self.instances if getattr(i, attr) == item]
+            if len(matches) == 1:
+                return matches[0]
             if len(matches) > 0:
                 return matches
         raise KeyError
