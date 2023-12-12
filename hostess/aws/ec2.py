@@ -1214,34 +1214,9 @@ class Cluster:
                 len(seq) != len(self)
             ):
                 raise ValueError("argument sequence has incorrect length.")
-        exc = ThreadPoolExecutor(len(self))
         argseq = cycle([()]) if argseq is None else argseq
         kwargseq = cycle([{}]) if kwargseq is None else kwargseq
-        futures = []
-        for instance, args, kwargs in zip(self.instances, argseq, kwargseq):
-            if isinstance(args, str):
-                args = (args,)
-            futures.append(
-                exc.submit(getattr(instance, method_name), *args, **kwargs)
-            )
-        while not all(f.done() for f in futures):
-            time.sleep(0.01)
-        results = [f.result() for f in futures]
-        done = False
-        while done is False:
-            for r in results:
-                if not hasattr(r, "running"):
-                    done = True
-                    continue
-                if r.running is True:
-                    time.sleep(0.01)
-                    done = False
-                    break
-                done = True
-        return [
-            f.exception() if f.exception() is not None else f.result()
-            for f in futures
-        ]
+
 
     @staticmethod
     def _dispatch_cycle_arguments(argseq, kwargseq):
@@ -1278,7 +1253,8 @@ class Cluster:
             Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]
         ] = None,
         _permissive: bool = False,
-        _warn: bool = True
+        _warn: bool = True,
+        _wait: bool = False
     ) -> list[Processlike, ...]:
         """
         Map a shell command or commands across this `Cluster's` `Instances`,
