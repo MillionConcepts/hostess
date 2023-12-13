@@ -739,7 +739,9 @@ class Viewer:
 
     def __str__(self) -> str:
         runstring = "running" if self.running else "finished"
-        base = f"Viewer for {runstring} process {self.command}"
+        cmdlines = self.command.split("\n")
+        cmdstring = f"{cmdlines[0]}..." if len(cmdlines) > 1 else cmdlines[0]
+        base = f"Viewer for {runstring} process {cmdstring}"
         try:
             base += f", PID {self.pid}"
         except AttributeError:

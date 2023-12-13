@@ -59,6 +59,7 @@ from hostess.caller import (
 )
 from hostess.config import CONDA_DEFAULTS, EC2_DEFAULTS, GENERAL_DEFAULTS
 import hostess.shortcuts as hs
+from hostess.serverpool import ServerPool
 from hostess.ssh import (
     find_conda_env,
     find_ssh_key,
@@ -215,8 +216,8 @@ def _instances_from_ids(
 
 class Instance:
     """
-    Interface to an EC2 instance. Enables permitting state control,
-    monitoring, and remote procedure calls.
+    Interface to an EC2 instance. Enables remote procedure calls, state
+    control, and monitoring.
     """
 
     def __init__(
@@ -329,7 +330,7 @@ class Instance:
         documentation.
 
         Returns:
-            an Instance associated with a newly-launched instance.
+            an Instance associated with a newly-launched EC2 instance.
         """
         return Cluster.launch(
             1,
@@ -344,8 +345,8 @@ class Instance:
             **instance_kwargs,
         )[0]
 
-    def wait_on_connection(self, maxtries):
-
+    def wait_on_connection(self, maxtries: int):
+        """block until an SSH connection to the instance is established"""
         while not self.is_connected:
             try:
                 self.connect(maxtries=maxtries)
@@ -595,6 +596,7 @@ class Instance:
             **kwargs,
         )
 
+    # noinspection PyTypeChecker
     @connectwrap
     def commands(
         self,
@@ -662,6 +664,7 @@ class Instance:
         Returns:
             Output of `self.commands()` for installer script fetch/execution.
         """
+        # noinspection PyArgumentList
         return self.commands(
             [
                 f"wget {installer_url}",
@@ -869,13 +872,12 @@ class Instance:
 
         Raises:
             OSError: if unable to execute `pip show`
-            FileNotFoundError: if
-                package doesn't appear to be installed
+            FileNotFoundError: if package doesn't appear to be installed
         """
         if env is None:
             pip = "pip"
         else:
-            pip = f"{self.conda_env(env)}/bin/pip"
+            pip = f"{self.conda_env(env)}bin/pip"
         try:
             result = self.command(f"{pip} show {package}", _wait=True)
             if len(result.stderr) > 0:
@@ -1067,9 +1069,10 @@ class Instance:
                 "path to a Python interpreter (one or the other, not both)."
             )
         if env is not None:
-            interpreter = f"{self.conda_env(env)}/bin/python"
-        if interpreter is None:
-            interpreter = "python"
+            path = self.conda_env(env)
+            path = path + "/" if not path.endswith("/") else path
+            interpreter = f"{path}bin/python"
+        interpreter = "python" if interpreter is None else interpreter
         python_command_string = generic_python_endpoint(
             module,
             func,
@@ -1187,16 +1190,18 @@ class Cluster:
     
     def _async_method_map(
         self,
-        method_name: str,
+        method: str,
         argseq: Optional[Union[Sequence[Sequence], cycle]] = None,
         kwargseq: Optional[Union[Sequence[Mapping[str, Any]], cycle]] = None,
-    ) -> list[Any]:
+        max_concurrent: int = 1,
+        poll: float = 0.03
+    ) -> ServerPool:
         """
         Internal wrapper function: make multithreaded calls to a specified
         method of all this Cluster's Instances with shared arguments.
 
         Args:
-             method_name: named method of Instance to call on all our Instances
+             method: name of method of Instance to call on Instances
              argseq: optional args to pass to these method calls -- one
                 sequence of args per Instance. either `args` or `kwargs` must
                 be defined.
@@ -1209,14 +1214,25 @@ class Cluster:
         """
         if (argseq is None) and (kwargseq is None):
             raise TypeError("Must pass at least one of argseq or kwargseq.")
-        for seq in (argseq, kwargseq):
-            if (not isinstance(seq, (cycle, NoneType))) and (
-                len(seq) != len(self)
-            ):
-                raise ValueError("argument sequence has incorrect length.")
+        if not any(
+            map(lambda x: isinstance(x, (cycle, NoneType)), (argseq, kwargseq))
+        ):
+            if len(argseq) != len(kwargseq):
+                raise ValueError(
+                    "sequences of args and kwargs must have matching lengths."
+                )
         argseq = cycle([()]) if argseq is None else argseq
         kwargseq = cycle([{}]) if kwargseq is None else kwargseq
-
+        pool = ServerPool(self.instances, max_concurrent, poll)
+        # attempt to prevent accidentally mapping an infinite number of tasks
+        if isinstance(argseq, cycle) and isinstance(kwargseq, cycle):
+            pool.max_concurrent = 1
+            for _, args, kwargs in zip(self.instances, argseq, kwargseq):
+                pool.apply(method, args, kwargs)
+        else:
+            for args, kwargs in zip(argseq, kwargseq):
+                pool.apply(method, args, kwargs)
+        return pool
 
     @staticmethod
     def _dispatch_cycle_arguments(argseq, kwargseq):
@@ -1252,56 +1268,83 @@ class Cluster:
         kwargseq: Optional[
             Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]
         ] = None,
-        _permissive: bool = False,
-        _warn: bool = True,
-        _wait: bool = False
-    ) -> list[Processlike]:
+        wait: bool = True,
+        max_concurrent: int = 1
+    ) -> Union[list[Viewer], ServerPool]:
         """
         Map a shell command or commands across this `Cluster's` `Instances`,
         asynchronously calling `Instance.command()` with optionally-variable
-        args and kwargs.
+        args and kwargs. This method enables a wide variety of dispatch/map
+        behaviors, and as such, has a very flexible signature.
+
+        Notes:
+            * Unlike `Cluster.command()`, this method blocks by default until
+                all tasks have completed. If you do not wish it to block, pass
+                `wait=False`, which will cause it to return a `ServerPool` you
+                can later poll or join for output.
+            * If neither `argseq` and `kwargseq` specify a finite number of
+                tasks (e.g., `argseq` is a `str` and `kwargseq` is `None`),
+                this method will execute the command once on each instance,
+                much as if you had passed the same arguments to
+                `Cluster.command()`.
+            * If both `argseq` and `kwargseq` specify a finite number of tasks
+                (e.g., `argseq` is a `list` of `tuples` and `kwargseq` is a
+                `list` of `dicts`), they must have equal length.
+            * Task order is always preserved in output, but if the number of
+                tasks is greater than `len(self) * max_concurrent` (e.g.,
+                `argseq` is a `list` of 30 `tuples`, `max_concurrent` is 1,
+                and this `Cluster` has 4 `Instances`), there is no guarantee
+                that tasks past the first `len(self) * max_concurrent` tasks
+                will execute on any particular instance -- the underlying
+                `ServerPool` will dispatch pending tasks as instances complete
+                older ones. First come, first serves.
+            * This method ignores the `_viewer=False` meta-option. It always
+                returns either `Viewers` or a `ServerPool` that creates
+                `Viewers`.
+            * This method ignores the `_disown=True` meta-option.
 
         Args:
-            argseq: Positional argument(s) to map across the instances. This
-                may be either:
+            argseq: Positional argument(s). May be:
 
-                1. A sequence of sequences of args, one per instance, like:
-                    `[("ls", "/home"), ...]`; each element of this sequence
-                    will be `*`-splatted into the `command()` method of a
-                    single `Instance`.
-                2. A single sequence of args, like `("ls", "/home")`; this
-                    sequence will be `*`-splatted into the `command()` method
-                    of all `Instances`.
+                1. A sequence of sequences of args, like:
+                    `[("ls", "/home"), ...]`; each of its elements will be
+                    `*`-splatted into a single `Instance.command()` call.
+                2. A single sequence of args, like `("ls", "/home")`. This will
+                    be `*`-splatted into every `Instance.command()` call.
                 3. A sequence of strings, like `("ls -a", "cat f", "echo 1")`;
-                    each of these strings will be passed directly to the
-                    `command()` method of a single `Instance`.
-                3. A string, like `"ls"`; this string will be passed directly
-                    to the `command()` method of all `Instances`.
-            kwargseq: Optional keyword arguments to map across the instances.
-                This may be either:
+                    each of these strings will be passed directly to a single
+                    `Instance.command()` call.
+                3. A single string, like `"ls"`; this string will be passed
+                    directly to every `Instance.command()` call.
+            kwargseq: Optional keyword argument(s). May be:
 
-                1. A sequence of mappings of kwargs, one per instance, like:
-                   `[{'-a': True, '-l': False}, ...]`; each element of
-                   this sequence will be `**`-splatted into the `command()`
-                   method of a single `Instance`.
+                1. A sequence of mappings of kwargs, like:
+                    `[{'-a': True, '-l': False}, ...]`; each of its elements
+                    will be `**`-splatted into a single `command()` call.
                 2. A single mapping of kwargs, like:
                     `{'-a': True, '-l': False}`; these kwargs will be
-                    `**`-splatted into the `command()`  method of all
-                    `Instances`.
+                    `**`-splatted into every `command()` call.
                 3. `None`: no kwargs for anyone.
-            _permissive: if False, raise first Exception encountered, if any.
-            _warn: if True and `permissive` is True, raise a UserWarning for
-                each encountered Exception.
+            wait: if `False`, return a `ServerPool` object that asynchronously
+                polls the running processes. Otherwise, block until all
+                processes complete and return a list of `Viewers`.
+            max_concurrent: maximum number of commands to simultaneously run
+                on each instance.
 
         Returns:
-            A `Processlike` object offering an interface to the results of
-                `Instance.command()` called on each `Instance`, including
-                raised Exceptions for failed calls if `permissive` is True
+            If `wait` is `True`, a list of `Viewers` produced from
+                `Instance.command()` executions. If `wait` is
+                `False`, a `ServerPool` object that can be used to interact
+                with and retrieve the results of the mapped commands.
         """
         argseq, kwargseq = self._dispatch_cycle_arguments(argseq, kwargseq)
-        results = self._async_method_map("command", argseq, kwargseq)
-        self._check_exceptions(results, _permissive, _warn)
-        return results
+        pool = self._async_method_map(
+            "command", argseq, kwargseq, max_concurrent
+        )
+        pool.close()
+        if wait is False:
+            return pool
+        return pool.gather()
 
     def pythonmap(
         self,
@@ -1309,32 +1352,39 @@ class Cluster:
         kwargseq: Optional[
             Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]
         ] = None,
-        _permissive: bool = False,
-        _warn: bool = True
-    ) -> list[Processlike]:
+        wait: bool = True,
+        max_concurrent: int = 1
+    ) -> Union[list[Union[Viewer, Exception]], ServerPool]:
         """
         Map Python calls across this `Cluster's` `Instances`, asynchronously
         calling `Instance.call_python()` with optionally-variable args and
-        kwargs. This shares calling conventions with `Cluster.commandmap()`;
-        see that function's documentation for a detailed description.
+        kwargs. This method has the same flexible calling conventions as
+        `Cluster.commandmap()`; refer to that method's documentation for more
+        detail.
 
         Args:
-            argseq: Positional argument(s) for `Instance.call_python()`.
-            kwargseq: Optional keyword argument(s) for
-                `Instance.call_python()`.
-            _permissive: if False, raise first Exception encountered, if any.
-            _warn: if True and `permissive` is True, raise a UserWarning for
-                each encountered Exception.
+            argseq: Positional argument(s) to `Instance.call_python()`.
+            kwargseq: Optional keyword argument(s) to `Instance.call_python()`.
+            wait: if `False`, return a `ServerPool` object that asynchronously
+                polls the running processes. Otherwise, block until all
+                processes complete and return a list of `Viewers`.
+            max_concurrent: maximum number of calls to simultaneously perform
+                on each instance.
 
         Returns:
-            list of `Processlike` objects offering interfaces to the results of
-                `Instance.call_python()` called on each `Instance`, including
-                raised Exceptions for failed calls if `permissive` is True
+            If `wait` is `True`, a list of `Viewers` produced from
+                `Instance.call_python()` calls.  If `wait` is `False`, a
+                `ServerPool` object that can be used to interact with and
+                retrieve the results of the mapped calls.
         """
         argseq, kwargseq = self._dispatch_cycle_arguments(argseq, kwargseq)
-        results = self._async_method_map("call_python", argseq, kwargseq)
-        self._check_exceptions(results, _permissive, _warn)
-        return results
+        pool = self._async_method_map(
+            "call_python", argseq, kwargseq, max_concurrent
+        )
+        pool.close()
+        if wait is False:
+            return pool
+        return pool.gather()
 
     def command(
         self,

@@ -1,5 +1,6 @@
-import time
 from concurrent.futures import ThreadPoolExecutor
+from itertools import chain
+import time
 from typing import Union, Sequence, Mapping
 
 from hostess.subutils import RunCommand, Viewer
@@ -99,12 +100,13 @@ class ServerPool:
         self.pollthread, self.exc = None, ThreadPoolExecutor(1)
         self.task_ix, self.poll = 0, poll
 
-    def _raise_invalid(self, kwargs):
+    def _rectify_call(self, kwargs):
         if self.closed is True:
             raise ValueError("pool closed")
-        badkwargs = "_viewer", "_detach", "_disown"
-        if any(kwargs.get(b) is False for b in badkwargs):
-            raise ValueError(f"{', '.join(badkwargs)} may not be False.")
+        # TODO: check to make sure the called method returns a Viewer by
+        #   default
+        kwargs.pop('_viewer', None)
+        kwargs.pop('_disown', None)
 
     @property
     def available(self):
@@ -119,6 +121,13 @@ class ServerPool:
         if len((ready := self.available)) == 0:
             return None
         return ready[0]
+
+    @property
+    def running(self):
+        tasks = [
+            [t for t in v.values() if t.running] for v in self.taskmap.values()
+        ]
+        return tuple(chain(*tasks))
 
     def __poll_loop(self):
         while True:
@@ -156,7 +165,7 @@ class ServerPool:
         kwargs: Mapping = None,
     ):
         kwargs = {} if kwargs is None else kwargs
-        self._raise_invalid(kwargs)
+        self._rectify_call(kwargs)
         self.__start()
         if (host := self.next_available) is None:
             self.pending[self.task_ix] = (method, args, kwargs)
@@ -165,6 +174,23 @@ class ServerPool:
                 self.task_ix
             ] = ServerTask(host, method, args, kwargs)
         self.task_ix += 1
+
+    def __str__(self):
+        n_running = len(self.running)
+        if self.terminated:
+            infix = " (terminated) "
+        elif self.closed:
+            infix = " (closed) "
+        else:
+            infix = ""
+        return (
+            f"ServerPool{infix}: {len(self.taskmap)} hosts, {n_running} "
+            f"running, {len(self.pending)} pending, {len(self.completed)} "
+            f"completed"
+        )
+
+    def __repr__(self):
+        return self.__str__()
 
     def close(self):
         self.closed = True
@@ -177,6 +203,12 @@ class ServerPool:
         self.pending = {}
         self.closed, self.terminated = True, True
         self.exc.shutdown()
+
+    def gather(self):
+        self.join()
+        output = [self.completed[i] for i in sorted(self.completed.keys())]
+        self.terminate()
+        return output
 
     def __del__(self):
         self.close()
