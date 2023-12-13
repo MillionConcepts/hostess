@@ -259,8 +259,8 @@ class ServerPool:
         Submit a task to the host pool. Execute it immediately if a host is
         available; otherwise queue it for execution. Unlike some task pool
         methods of this type, `ServerPool.apply()` does not return a
-        futurelike object, but instead performs automated lifecycle
-        management. `ServerPool` moves unexecuted task specifications to
+        futurelike object, but instead relies on `ServerPool's` automated
+        lifecycle management. `ServerPool` moves unexecuted tasks to
         `ServerPool.pending` as `tuples`; executed tasks to
         `ServerPool.taskmap` as futurelike `ServerTask` objects, and completed
         tasks to `ServerPool.completed` as `Viewers`.
