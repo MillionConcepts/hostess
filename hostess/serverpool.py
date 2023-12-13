@@ -332,5 +332,4 @@ class ServerPool:
 
     def __del__(self):
         self.close()
-        self.join()
         self.exc.shutdown()
