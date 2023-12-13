@@ -8,8 +8,7 @@ from hostess.subutils import RunCommand, Viewer
 
 class ServerTask:
     """
-    Wrapper for an asynchronously-executing task. It is primarily intended to
-    be instantiated by `ServerPool` as an abstraction for a process running on
+    Simple future-like object. It is  primarily intended to be instantiated by `ServerPool` as an abstraction for a process running on
     a remote host.
     """
 
@@ -260,9 +259,11 @@ class ServerPool:
         Submit a task to the host pool. Execute it immediately if a host is
         available; otherwise queue it for execution. Unlike some task pool
         methods of this type, `ServerPool.apply()` does not return a
-        future-like object. The analogous object(s) can be found in
-        `ServerPool.pending` when not yet executed, `ServerPool.taskmap` when
-        running, and `ServerPool.completed` once done.
+        futurelike object, but instead performs automated lifecycle
+        management. `ServerPool` moves unexecuted task specifications to
+        `ServerPool.pending` as `tuples`; executed tasks to
+        `ServerPool.taskmap` as futurelike `ServerTask` objects, and completed
+        tasks to `ServerPool.completed` as `Viewers`.
 
         Args:
             method: Name of method of host to call with `args` and `kwargs`.
