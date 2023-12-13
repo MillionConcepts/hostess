@@ -29,7 +29,9 @@ from typing import (
     Mapping,
     MutableMapping,
     Optional,
-    Union, Sequence, Callable,
+    Union,
+    Sequence,
+    Callable,
 )
 
 import boto3
@@ -44,7 +46,10 @@ from dustgoggles.func import naturals
 from hostess.aws.utilities import init_client, init_resource
 from hostess.config.config import S3_DEFAULTS
 from hostess.utilities import (
-    curry, console_and_log, infer_stream_length, stamp
+    curry,
+    console_and_log,
+    infer_stream_length,
+    stamp,
 )
 
 Puttable = Union[str, Path, IOBase, bytes]
@@ -53,9 +58,7 @@ Puttable = Union[str, Path, IOBase, bytes]
 
 @curry
 def splitwrap(
-    method: Callable[
-    ["Bucket", ...], Any],
-    seq_arity: Literal[1, 2]
+    method: Callable[["Bucket", ...], Any], seq_arity: Literal[1, 2]
 ) -> Callable[["Bucket", ...], Any]:
     """
     Dispatch decorator for methods of Bucket that can accept either single
@@ -72,14 +75,13 @@ def splitwrap(
     def maybesplit(*args, **kwargs):
         bound = sig.bind(*args, **kwargs).arguments
         source = bound.get(params[1], defaults[params[1]])
-        sseq = (
-           hasattr(source, "index") and not isinstance(source, (str, bytes))
+        sseq = hasattr(source, "index") and not isinstance(
+            source, (str, bytes)
         )
         if seq_arity == 2:
             target = bound.get(params[2], defaults[params[2]])
-            tseq = (
-                hasattr(target, "index")
-                and not isinstance(target, (str, bytes))
+            tseq = hasattr(target, "index") and not isinstance(
+                target, (str, bytes)
             )
             if sseq is False:
                 if tseq is True:
@@ -149,7 +151,7 @@ class Bucket:
         resource: Optional[boto3.resources.base.ServiceResource] = None,
         session: Optional[boto3.session.Session] = None,
         config: Optional[boto3.s3.transfer.TransferConfig] = None,
-        n_threads: Optional[int] = 4
+        n_threads: Optional[int] = 4,
     ):
         """
         Args:
@@ -175,7 +177,7 @@ class Bucket:
         self.name = bucket_name
         self.contents = []
         if config is None:
-            config = boto3.s3.transfer.TransferConfig(**S3_DEFAULTS['config'])
+            config = boto3.s3.transfer.TransferConfig(**S3_DEFAULTS["config"])
         self.config = config
         # populate s3 operations
         for name, thing in getmembers(sys.modules[__name__]):
@@ -224,7 +226,7 @@ class Bucket:
         if upload_threads is None:
             exc = None
         else:
-            exc =ThreadPoolExecutor(upload_threads)
+            exc = ThreadPoolExecutor(upload_threads)
         kwargs = {
             "config": self.config,
             "download_cache": [b""],
@@ -325,7 +327,8 @@ class Bucket:
             reader = stream.__next__
         else:
             raise TypeError(
-                "can't determine how to consume bytes from stream.")
+                "can't determine how to consume bytes from stream."
+            )
         put_chunk, parts, multipart_upload = self.chunk_putter_factory(
             key, upload_threads, None, verbose
         )
@@ -366,9 +369,8 @@ class Bucket:
     ):
         """helper function for Bucket.put_stream()"""
         download_cache[0] += blob
-        if (
-            (len(download_cache[0]) < config.multipart_chunksize)
-            and (flush is False)
+        if (len(download_cache[0]) < config.multipart_chunksize) and (
+            flush is False
         ):
             return
         number = next(upload_numerator)
@@ -431,7 +433,7 @@ class Bucket:
         Args:
             key: key(s) of object(s) to restore (fully-qualified 'paths')
             tier: retrieval tier. In order of speed and expense, high to low,
-                options are "Expedited", "Standard", and "Bulk". Only
+                options are "Expedited", "Standard", and "Bulk". "Expedited"
                 "Standard" and "Bulk" are available for Deep Archive.
             days: number of days object(s) should remain restored before
                 reverting to Glaciered state
@@ -440,7 +442,8 @@ class Bucket:
             RestoreObject API response, or list of responses and/or Exceptions
         """
         restore_request = {
-            "Days": days, "GlacierJobParameters": {"Tier": tier}
+            "Days": days,
+            "GlacierJobParameters": {"Tier": tier},
         }
         return self.client.restore_object(
             Bucket=self.name, Key=key, RestoreRequest=restore_request
@@ -482,9 +485,8 @@ class Bucket:
         if obj is None:
             obj = BytesIO()
         # directly upload file from local storage
-        if (
-            (isinstance(obj, str) and literal_str is False)
-            or (isinstance(obj, Path))
+        if (isinstance(obj, str) and literal_str is False) or (
+            isinstance(obj, Path)
         ):
             return self.client.upload_file(
                 Bucket=self.name, Filename=str(obj), Key=key, Config=config
@@ -506,13 +508,12 @@ class Bucket:
         key: Union[str, Sequence[str]],
         destination: Union[
             Union[str, Path, IOBase, None],
-            Sequence[Union[str, Path, IOBase, None]]
+            Sequence[Union[str, Path, IOBase, None]],
         ] = None,
         config: Optional[boto3.s3.transfer.TransferConfig] = None,
     ) -> Union[
-            Union[Path, str, IOBase],
-            list[Union[Path, str, IOBase, Exception]]
-        ]:
+        Union[Path, str, IOBase], list[Union[Path, str, IOBase, Exception]]
+    ]:
         """
         write S3 object(s) into file(s) or filelike object(s).
 
@@ -673,7 +674,7 @@ class Bucket:
     ) -> Union[tuple, pd.DataFrame, None]:
         """
         list objects in a bucket.
-    
+
         Args:
             prefix: prefix ('folder') to list (if not specified, defaults to
                 bucket root)
@@ -695,23 +696,23 @@ class Bucket:
             Manifest of contents, format dependent on `formatting`; or None
                 if `cache_only` is True.
         """
-        kwargs = {'Bucket': self.name}
+        kwargs = {"Bucket": self.name}
         if recursive is False:
             # try to treat prefixes like directories.
             # note that 'recursive' behavior is default -- the
             # ListObjects* methods don't treat prefixes as anything but parts
             # of an object key by default. _also_ note that this is different
             # from the default awscli s3 behavior, but not awscli s3api.
-            kwargs['Delimiter'] = '/'
+            kwargs["Delimiter"] = "/"
         if recursive is False and prefix is None:
-            kwargs['Prefix'] = ''
+            kwargs["Prefix"] = ""
         elif prefix is not None:
-            kwargs['Prefix'] = prefix.lstrip('/')
+            kwargs["Prefix"] = prefix.lstrip("/")
         if start_after is not None:
-            kwargs['StartAfter'] = start_after
+            kwargs["StartAfter"] = start_after
         # pagination is typically slightly faster than iteratively passing
         # StartAfter based on the last key of a truncated response
-        paginator = self.client.get_paginator('list_objects_v2')
+        paginator = self.client.get_paginator("list_objects_v2")
         cache = Path(cache) if isinstance(cache, str) else cache
         self._maybe_prep_ls_cache(cache)
         pages = []
@@ -757,7 +758,7 @@ class Bucket:
         """helper function for Bucket.ls()"""
         if (cache is None) or (objects := page.get("Contents") is None):
             return
-        stream = cache if not isinstance(cache, Path) else cache.open('a+')
+        stream = cache if not isinstance(cache, Path) else cache.open("a+")
         try:
             for rec in objects:
                 stream.write(",".join(map(_dtstr, rec.values())) + "\n")
@@ -775,7 +776,7 @@ class Bucket:
 
         Returns:
             None, or, for multi-delete, a list containing None for successful
-                deletes and an Exception for failed
+                deletes and Exceptions for failed
         """
         return self.client.delete_object(Bucket=self.name, Key=key)
 
@@ -820,7 +821,9 @@ class Bucket:
         )
 
     def complete_multipart_upload(
-        self, multipart: Mapping, parts: Mapping,
+        self,
+        multipart: Mapping,
+        parts: Mapping,
     ) -> dict:
         """
         Notify S3 that all parts of an object have been uploaded and it may
