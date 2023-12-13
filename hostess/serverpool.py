@@ -99,6 +99,7 @@ class ServerPool:
         self.closed, self.terminated = False, False
         self.pollthread, self.exc = None, ThreadPoolExecutor(1)
         self.task_ix, self.poll = 0, poll
+        self.used = set()
 
     def _rectify_call(self, kwargs):
         if self.closed is True:
@@ -110,17 +111,26 @@ class ServerPool:
 
     @property
     def available(self):
-        return [
-            self.hosts[i]
+        return {
+            i: self.hosts[i]
             for i, t in self.taskmap.items()
             if len(t) < self.max_concurrent
-        ]
+        }
 
     @property
     def next_available(self):
         if len((ready := self.available)) == 0:
             return None
-        return ready[0]
+        if len(ready) == 1:
+            return list(ready.items())[0]
+        if len(self.used) == len(self.taskmap):
+            self.used = set()
+        options = list((i, r) for i, r in ready.items())
+        filtered = list(o for o in options if o[0] not in self.used)
+        if len(filtered) == 0:
+            return options[0]
+        self.used.add(filtered[0][0])
+        return filtered[0]
 
     @property
     def running(self):
@@ -142,11 +152,11 @@ class ServerPool:
                         rcount += 1
             # note that terminate() immediately sets pending to {}
             for tix in tuple(self.pending.keys()):
-                if (host := self.next_available) is None:
+                if (id_host := self.next_available) is None:
                     continue
-                self.taskmap[getattr(host, self.idattr)][tix] = ServerTask(
-                    host, *self.pending.pop(tix)
-                )
+                self.taskmap[id_host[0]][
+                    tix
+                ] = ServerTask(id_host[1], *self.pending.pop(tix))
             if self.terminated is True or (
                 (rcount + len(self.pending) == 0) and self.closed is True
             ):
@@ -167,12 +177,12 @@ class ServerPool:
         kwargs = {} if kwargs is None else kwargs
         self._rectify_call(kwargs)
         self.__start()
-        if (host := self.next_available) is None:
+        if (id_host := self.next_available) is None:
             self.pending[self.task_ix] = (method, args, kwargs)
         else:
-            self.taskmap[getattr(host, self.idattr)][
+            self.taskmap[id_host[0]][
                 self.task_ix
-            ] = ServerTask(host, method, args, kwargs)
+            ] = ServerTask(id_host[1], method, args, kwargs)
         self.task_ix += 1
 
     def __str__(self):

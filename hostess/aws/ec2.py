@@ -1237,16 +1237,14 @@ class Cluster:
     @staticmethod
     def _dispatch_cycle_arguments(argseq, kwargseq):
         if isinstance(argseq, str):
-            argseq = cycle([argseq])
-        elif (
-            (argseq is not None)
-            and (len(argseq) > 0)
-            and (
-                not isinstance(argseq[1], Sequence)
-                or isinstance(argseq[1], str)
-            )
-        ):
-            argseq = cycle([argseq])
+            argseq = cycle(((argseq,),))
+        elif (argseq is not None) and (len(argseq) > 0):
+            if all(isinstance(a, str) for a in argseq):
+                argseq = tuple((a,) for a in argseq)
+            elif not isinstance(argseq[0], Sequence):
+                argseq = cycle((argseq,))
+            elif not isinstance(argseq, Sequence):
+                raise TypeError("Malformed argseq.")
         if isinstance(kwargseq, Mapping):
             kwargseq = cycle([kwargseq])
         return argseq, kwargseq
