@@ -165,7 +165,9 @@ def done_callback(
 
 class Dispatcher(Composition):
     """
-    Composition capable of skipping steps. can also cache outputs by default.
+    Composition capable of skipping steps. By default creates empty caches
+    that can be used as targets for sends but do not autocapture like the
+    superclass's add_captures() method.
     intended for applications like handling console streams.
     """
 
@@ -202,11 +204,10 @@ class Dispatcher(Composition):
         return super()._do_step(step_name, state)
 
     def reset_caches(self):
-        """reset and initialize caches, including sends from steps."""
+        """reset and initialize caches."""
         self.sends = {}
         for s in self.steps:
             self.caches[s] = []
-            self.add_send(s, target=self.caches[s])
 
     def __getattr__(self, attr):
         try:
@@ -297,6 +298,9 @@ def console_stream_handler(
     handler = Dispatcher(
         steps={"out": strip_newline, "err": strip_newline, "done": identity}
     )
+    handler.caches['out'] = out
+    handler.caches['err'] = err
+    handler.caches['done'] = done
     handler.add_send("out", pipe=handle_out, target=out)
     handler.add_send("err", pipe=handle_err, target=err)
     handler.add_send("done", pipe=handle_done, target=done)

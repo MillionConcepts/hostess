@@ -41,6 +41,7 @@ def encode_payload(
     obj: Any,
     serialization: CallerSerializationType,
     compression: CallerCompressionType,
+    b64: bool
 ) -> Union[str, bytes]:
     """
     encode the 'payload' of a remote procedure call.
@@ -50,6 +51,7 @@ def encode_payload(
         serialization: serialization method for obj
         compression: how to compress the serialized object (None means
             uncompressed)
+        b64: base64-encode 'binary' objects?
 
     Returns:
         string or bytes containing encoded payload.
@@ -78,6 +80,8 @@ def encode_payload(
         serial = gzip.compress(serial)
     elif compression is not None:
         raise NotImplementedError
+    if b64 is False:
+        return serial
     import base64
 
     return base64.b64encode(serial)
@@ -124,6 +128,7 @@ def format_decompressor(
     serialized: Union[str, bytes],
     serialization: CallerSerializationType,
     compression: CallerCompressionType,
+    b64: bool
 ) -> str:
     """
     create decompression section of RPC script.
@@ -132,6 +137,7 @@ def format_decompressor(
         serialized: serialized payload
         serialization: name of serialization method used
         compression: name of compression method used
+        b64: are we expecting a base64-encoded payload?
 
     Returns:
         decompression source code block
@@ -139,14 +145,17 @@ def format_decompressor(
     if _check_mode(serialization, compression) == "text":
         return f"""payload = {serialized}
     """
-    if compression is None:
-        return f"""import base64
+    if b64 is True:
+        paystring = f"""import base64
     payload = base64.b64decode({serialized})
     """
+    else:
+        paystring = f"payload = {serialized}\n    "
+    if compression is None:
+        return paystring
     if compression == "gzip":
-        return f"""import base64
-    import gzip
-    payload = gzip.decompress(base64.b64decode({serialized}))
+        return paystring + f"""import gzip
+    payload = gzip.decompress(payload)
     """
     raise NotImplementedError("only gzip compression is currently supported")
 
@@ -164,16 +173,20 @@ def format_deserializer(serialization: CallerSerializationType) -> str:
     if serialization is None:
         return ""
     if serialization == "json":
-        return f"import json\npayload = json.loads(payload)"
+        return f"""import json
+    payload = json.loads(payload)
+    """
     elif serialization == "pickle":
-        return f"import pickle\npayload = pickle.loads(payload)"
+        return """import pickle
+    payload = pickle.loads(payload)
+    """
     raise NotImplementedError("Unknown serializer. use 'json' or 'pickle'")
 
 
 def _check_reconstructable(
     typeobj: type,
     serialization: CallerSerializationType,
-    compression: CallerSerializationType,
+    compression: CallerCompressionType,
 ):
     """
     Raise an error if we are attempting to transfer a compressed, unserialized
@@ -234,26 +247,44 @@ def format_kwarg_filter(
 def format_returner(
     return_result: bool,
     return_compression: CallerCompressionType,
-    return_serialization: CallerSerializationType
+    return_serialization: CallerSerializationType,
+    b64: bool,
+    sep: Optional[str]
 ) -> str:
     """format return section of RPC script."""
     if return_result is False:
         return ""
     if return_serialization is None:
-        returnval = "returnval = result\n"
+        returnval = "    returnval = result\n"
     elif return_serialization == "json":
-        returnval = f"import json\nreturnval = json.dumps(result)\n"
+        returnval = f"""
+    import json
+    returnval = json.dumps(result)
+    """
     elif return_serialization == "pickle":
-        returnval = f"import pickle\nreturnval = pickle.dumps(payload)\n"
+        returnval = """
+    import pickle
+    returnval = pickle.dumps(result)
+    """
     else:
         raise NotImplementedError("Unknown serializer. use 'json' or 'pickle'")
     if return_compression == "gzip":
-        returnval += f"""import gzip
-    returnval = gzip.compress(result)
+        returnval += """
+    import gzip
     """
+        if return_serialization == "json":
+            returnval += (
+                "returnval = gzip.compress(returnval.encode('ascii'))\n"
+            )
+        else:
+            returnval += "returnval = gzip.compress(returnval)\n"
     elif return_compression is not None:
         raise NotImplementedError("Unsupported compression.")
-    return returnval + "print(returnval)"
+    if b64 is True:
+        returnval += "    returnval = base64.b64encode(returnval)\n"
+    if sep is not None:
+        returnval += f"    print({sep})\n"
+    return returnval + "    print(returnval)"
 
 
 # TODO, maybe: validity check to make sure it compiles
@@ -272,7 +303,9 @@ def generic_python_endpoint(
     for_bash: bool = True,
     literal_none: bool = False,
     return_serialization: CallerSerializationType = None,
-    return_compression: CallerCompressionType = None
+    return_compression: CallerCompressionType = None,
+    b64: bool = True,
+    sep: Optional[str] = None
 ) -> str:
     """
     dynamically construct a Python source code snippet that imports a module
@@ -338,8 +371,11 @@ def generic_python_endpoint(
             `return_result` is False.
         return_compression: compression for return value. does nothing if
             `return_result` is False.
-
-
+        b64: if True, base64-encode any 'binary' values. For insertion into
+            `bash` or transmission over HTTP.
+        sep: if not None, generated script prints this string
+            prior to printing the return value, to facilitate parsing return
+            values from scripts that might generate other output while running.
     Returns:
         Bash command that executes function call in specified interpreter,
         or, if `for_bash` is False, just Python source code for function call.
@@ -356,13 +392,13 @@ def generic_python_endpoint(
     elif payload_encoded is True:
         encoded = repr(payload)
     else:
-        encoded = encode_payload(payload, serialization, compression)
-    decompress = format_decompressor(encoded, serialization, compression)
+        encoded = encode_payload(payload, serialization, compression, b64)
+    decompress = format_decompressor(encoded, serialization, compression, b64)
     deserialize = format_deserializer(serialization)
     kwarg_filter = format_kwarg_filter(filter_kwargs, splat)
     call = f"result = target({splat}payload)\n"
     rval = format_returner(
-        return_result, return_compression, return_serialization
+        return_result, return_compression, return_serialization, b64, sep
     )
     endpoint = import_ + decompress + deserialize + kwarg_filter + call + rval
     if for_bash is True:
@@ -423,3 +459,13 @@ def make_python_endpoint_factory(
             )
 
     return endpoint_factory
+
+#
+# def decode_call_return(
+#     output,
+#     compression: CallerCompressionType = None,
+#     serialization: CallerSerializationType = None,
+#     b64: bool = True,
+#     sep: Optional[str] = None
+#
+# )
