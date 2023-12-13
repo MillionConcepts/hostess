@@ -12,15 +12,15 @@ like the syntax better.
 """
 import datetime as dt
 import inspect
+import sys
 import time
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial, wraps
-from io import BytesIO, IOBase, StringIO
 from inspect import getmembers
+from io import BytesIO, IOBase, StringIO
 from itertools import chain, cycle
-from multiprocessing import Process
 from pathlib import Path
-import sys
 from typing import (
     Any,
     IO,
@@ -31,20 +31,18 @@ from typing import (
     Optional,
     Union, Sequence, Callable,
 )
-import warnings
 
 import boto3
 import boto3.resources.base
 import boto3.s3.transfer
 import botocore.client
 import pandas as pd
+import requests
 from cytoolz import keyfilter, valfilter
 from dustgoggles.func import naturals
-import requests
 
 from hostess.aws.utilities import init_client, init_resource
 from hostess.config.config import S3_DEFAULTS
-from hostess.subutils import piped
 from hostess.utilities import (
     curry, console_and_log, infer_stream_length, stamp
 )
@@ -60,11 +58,11 @@ def splitwrap(
     seq_arity: Literal[1, 2]
 ) -> Callable[["Bucket", ...], Any]:
     """
-    dispatch decorator for methods of Bucket that can accept either single
-    source and/or destination arguments or sequences of them. automatically
-    maps sequences into Bucket's thread pool, if it exists, and returns all
-    results in a list. also fails gracefully, returning Exceptions from any
-    call.
+    Dispatch decorator for methods of Bucket that can accept either single
+    source and/or destination arguments or sequences of them. Automatically
+    maps sequences into a thread pool, unless instructed to run serially,
+    and returns all results in a list. Fails gracefully, returning Exceptions
+    raised by any individual function call rather than raising them.
     """
     sig = inspect.signature(method)
     params = list(sig.parameters)
@@ -142,9 +140,7 @@ def _dtstr(thing: Any):
 
 
 class Bucket:
-    """
-    Interface to and representation of an S3 bucket.
-    """
+    """Interface to and representation of an S3 bucket."""
 
     def __init__(
         self,
