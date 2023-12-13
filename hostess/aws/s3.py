@@ -462,15 +462,16 @@ class Bucket:
         Upload files or buffers to an S3 bucket
 
         Args:
-            obj: an individual str, Path, or filelike / buffer object to
+            obj: An individual str, Path, or filelike / buffer object to
                 upload, or a sequence of such objects
             key: S3 key (fully-qualified 'path' from bucket root); or, if `obj`
-                is a sequences, a sequence keys of the same length of `obj`.
+                is a sequence, a sequence of keys of the same length of `obj`.
                 If `key` is not specified, key(s) are generated from the
-                string representation of the uploaded object(s), truncated to
-                1024 characters (maximum length of an S3 key).
-            literal_str: if True, write passed strings directly to objects;
-                otherwise, interpret them as paths to local files
+                string representation(s) of the uploaded object(s), truncated
+                to 1024 characters (maximum length of an S3 key).
+            literal_str: If True, and `obj` is a string or a sequence
+                containing strings, write all such strings directly to objects.
+                Otherwise, interpret them as paths to local files
             config: boto3.s3.transfer.TransferConfig; bucket's default if None
 
         Returns:
@@ -494,7 +495,7 @@ class Bucket:
             )
         # or: upload in-memory objects
         # encode string to bytes if we're writing it to S3 object instead
-        # of interpreting it as a patha
+        # of interpreting it as a path
         if isinstance(obj, str) and literal_str is True:
             obj = BytesIO(obj.encode("utf-8"))
         elif isinstance(obj, bytes):
