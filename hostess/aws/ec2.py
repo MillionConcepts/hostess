@@ -1255,7 +1255,7 @@ class Cluster:
         _permissive: bool = False,
         _warn: bool = True,
         _wait: bool = False
-    ) -> list[Processlike, ...]:
+    ) -> list[Processlike]:
         """
         Map a shell command or commands across this `Cluster's` `Instances`,
         asynchronously calling `Instance.command()` with optionally-variable
@@ -1311,7 +1311,7 @@ class Cluster:
         ] = None,
         _permissive: bool = False,
         _warn: bool = True
-    ) -> list[Processlike, ...]:
+    ) -> list[Processlike]:
         """
         Map Python calls across this `Cluster's` `Instances`, asynchronously
         calling `Instance.call_python()` with optionally-variable args and
@@ -1343,7 +1343,7 @@ class Cluster:
         _permissive: bool = False,
         _warn: bool = True,
         **kwargs: bool
-    ) -> list[Union[Processlike, Exception], ...]:
+    ) -> list[Union[Processlike, Exception]]:
         """
         Call a shell command on all this Cluster's Instances. See
         `Instance.command()` for further documentation.
@@ -1372,7 +1372,7 @@ class Cluster:
         _permissive: bool = False,
         _warn: bool = True,
         **kwargs: bool
-    ) -> list[Optional[Viewer], ...]:
+    ) -> list[Optional[Viewer]]:
         """
         Run a command 'console-style' on all this cluster's instances. See
         `Instance.con()` for further documentation. Note that this doesn't
@@ -1404,7 +1404,7 @@ class Cluster:
         _permissive: bool = False,
         _warn: bool = True,
         **kwargs: bool,
-    ) -> list[Union[Processlike, Exception], ...]:
+    ) -> list[Union[Processlike, Exception]]:
         """
         Call a sequence of shell commands on all this Cluster's Instances. See
         `Instance.commands()` for further documentation.
@@ -1445,7 +1445,7 @@ class Cluster:
             CallerSerializationType,
             CallerUnpackingOperator,
         ],
-    ) -> list[Processlike, ...]:
+    ) -> list[Processlike]:
         """
         Call a Python function on all this Cluster's Instances. See
         `Instance.call_python()` for further documentation.
