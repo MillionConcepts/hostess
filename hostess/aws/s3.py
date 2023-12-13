@@ -433,8 +433,8 @@ class Bucket:
         Args:
             key: key(s) of object(s) to restore (fully-qualified 'paths')
             tier: retrieval tier. In order of speed and expense, high to low,
-                options are "Expedited", "Standard", and "Bulk". "Expedited"
-                "Standard" and "Bulk" are available for Deep Archive.
+                options are "Expedited", "Standard", and "Bulk". "Expedited" is
+                not available for Deep Archive.
             days: number of days object(s) should remain restored before
                 reverting to Glaciered state
 
