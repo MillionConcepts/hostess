@@ -1,21 +1,29 @@
 # Version History
 
-## [0.8.1] - 2023-12-15
+## [0.9.0] - 2023-12-15
 ### Added
 
-- whole-`Cluster` file upload/download methods (`read()`, `get()`, `put()`, `read_csv()`)
+- whole-`Cluster` file upload/download methods (`read()`, `get()`, `put()`, 
+`read_csv()`)
 - can now set default S3 `TransferConfig` in `hostess.config`
 - `RefAlarm` tool for debugging reference leaks / drops
-- `Cluster` and `Instance` now have `install_conda()` methods that perform managed installation(s) of a Conda distribution of Python (by default miniforge)
-- `ServerPool` object for managed asynchronous dispatch of arbitrary numbers of tasks to remote hosts
-
+- `Cluster` and `Instance` now have `install_conda()` methods that perform 
+managed installation(s) of a Conda distribution of Python (by default miniforge)
+- `ServerPool` object for managed asynchronous dispatch of arbitrary numbers 
+of tasks to remote hosts
 
 ### Changed
-- `Cluster` can now be indexed by `Instance` names, instance ids, and ip addresses as well as their indices within the `Cluster`'s `instances` list
-- `Cluster` wait-until-connected behavior is now available as an individual method (`connect()`), not just from `launch()`
-- various `Cluster` methods can now be run in 'permissive' mode, returning exceptions rather than raising them (intended to allow instructions to execute on some instances even if attempts to execute instructions on others fail)
-- backed by `ServerPool`, `Cluster`'s `commandmap()` and `pythonmap()` now accept arbitrary numbers of tasks, dispatching them to instances as soon as they free up
-- `hostess.caller.generic_python_endpoint()` now permits returning objects in pickled and/or gzipped form (preparation for high-level features in a later version)
+- `Cluster` can now be indexed by `Instance` names, instance ids, and ip 
+addresses as well as their indices within the `Cluster`'s `instances` list
+- `Cluster` wait-until-connected behavior is now available as an individual 
+method (`connect()`), not just from `launch()`
+- various `Cluster` methods can now be run in 'permissive' mode, returning 
+exceptions rather than raising them (intended to allow instructions to execute 
+on some instances even if attempts to execute instructions on others fail)
+- backed by `ServerPool`, `Cluster`'s `commandmap()` and `pythonmap()` now 
+accept arbitrary numbers of tasks, dispatching them to instances as soon as they free up
+- `hostess.caller.generic_python_endpoint()` now permits returning objects in 
+pickled and/or gzipped form (preparation for high-level features in a later version)
 - assorted updates to documentation and examples
 
 ### Fixed
