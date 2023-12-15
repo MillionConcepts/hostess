@@ -30,9 +30,12 @@ now order keys the same way
 
 ### Fixed
 - `Bucket.put_stream()` updated to work with new `Bucket` internals
-- `console_stream_handlers()` no longer creates secret duplicate stdout/stderr caches
+- `console_stream_handlers()` no longer creates secret duplicate stdout/stderr
+caches
 - edge case in `find_conda_env()` that sometimes prevented finding the most 
 recently-created env
+- edge case in caller json serialization for some nested objects containing 
+strings
 - `Instance.conda_env()` now autoconnects as intended
 
 ### Removed
