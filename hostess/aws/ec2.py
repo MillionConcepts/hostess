@@ -839,6 +839,7 @@ class Instance:
         return self._ssh.read_csv(source, encoding, csv_kwargs)
 
     @cache
+    @connectwrap
     def conda_env(self, env: str = "base") -> str:
         """
         Find the root directory of a named conda environment on the instance.
@@ -1187,18 +1188,35 @@ class Cluster:
             f.exception() if f.exception() is not None else f.result()
             for f in futures
         ]
-    
+
+    @staticmethod
+    def _format_map_arguments(argseq, kwargseq):
+        """internal method for preprocessing mapped call arguments"""
+        if (argseq is None) and (kwargseq is None):
+            raise TypeError("Must pass at least one of argseq or kwargseq.")
+        if not any(
+                map(lambda x: isinstance(x, (cycle, NoneType)), (argseq, kwargseq))
+        ):
+            if len(argseq) != len(kwargseq):
+                raise ValueError(
+                    "sequences of args and kwargs must have matching lengths."
+                )
+        argseq = cycle([()]) if argseq is None else argseq
+        kwargseq = cycle([{}]) if kwargseq is None else kwargseq
+        return argseq, kwargseq
+
     def _async_method_map(
         self,
         method: str,
         argseq: Optional[Union[Sequence[Sequence], cycle]] = None,
         kwargseq: Optional[Union[Sequence[Mapping[str, Any]], cycle]] = None,
         max_concurrent: int = 1,
-        poll: float = 0.03
+        poll: float = 0.03,
     ) -> ServerPool:
         """
         Internal wrapper function: make multithreaded calls to a specified
-        method of all this Cluster's Instances with shared arguments.
+        method of this Cluster's Instances with arbitrary number and
+        homogeneity of arguments.
 
         Args:
              method: name of method of Instance to call on Instances
@@ -1212,17 +1230,7 @@ class Cluster:
             list containing result of method call from each Instance,
                 including raised Exceptions for failed calls
         """
-        if (argseq is None) and (kwargseq is None):
-            raise TypeError("Must pass at least one of argseq or kwargseq.")
-        if not any(
-            map(lambda x: isinstance(x, (cycle, NoneType)), (argseq, kwargseq))
-        ):
-            if len(argseq) != len(kwargseq):
-                raise ValueError(
-                    "sequences of args and kwargs must have matching lengths."
-                )
-        argseq = cycle([()]) if argseq is None else argseq
-        kwargseq = cycle([{}]) if kwargseq is None else kwargseq
+        argseq, kwargseq = self._format_map_arguments(argseq, kwargseq)
         pool = ServerPool(self.instances, max_concurrent, poll)
         # attempt to prevent accidentally mapping an infinite number of tasks
         if isinstance(argseq, cycle) and isinstance(kwargseq, cycle):
@@ -1234,14 +1242,52 @@ class Cluster:
                 pool.apply(method, args, kwargs)
         return pool
 
+    def _async_transfer_map(
+        self,
+        method: str,
+        argseq: Optional[Union[Sequence[Sequence], cycle]] = None,
+        kwargseq: Optional[Union[Sequence[Mapping[str, Any]], cycle]] = None,
+    ) -> list[Any]:
+        """"
+        Internal wrapper function: make multithreaded calls to a specified
+        file I/O method of all this Cluster's Instances.
+
+        Args:
+             method: name of file I/O method of Instance
+             argseq: optional args to pass to calls -- one sequence of args,
+                one sequence of args per Instance, or a `cycle`. either `args`
+                or `kwargs` must be defined.
+             kwargseq: optional kwargs to pass to these method calls -- a single
+                `dict` or other `Mapping`, one `Mapping` of kwargs per
+                Instance, or a `cycle`.
+
+        Returns:
+            list containing result of method call from each Instance,
+                including raised Exceptions for failed calls
+        """
+        # TODO: there may be some formatting redundancy here
+        argseq, kwargseq = self._format_map_arguments(argseq, kwargseq)
+        exc, futures = ThreadPoolExecutor(len(self)), []
+        for args, kwargs, instance in zip(argseq, kwargseq, self.instances):
+            futures.append(
+                exc.submit(getattr(instance, method), *args, **kwargs)
+            )
+        while not all(f.done() for f in futures):
+            time.sleep(0.01)
+        return [
+            f.exception() if f.exception() is not None else f.result()
+            for f in futures
+        ]
+
     @staticmethod
     def _dispatch_cycle_arguments(argseq, kwargseq):
         if isinstance(argseq, str):
             argseq = cycle(((argseq,),))
         elif (argseq is not None) and (len(argseq) > 0):
-            if all(isinstance(a, str) for a in argseq):
-                argseq = tuple((a,) for a in argseq)
-            elif not isinstance(argseq[0], Sequence):
+            if (
+                isinstance(argseq[0], str)
+                or not isinstance(argseq[0], Sequence)
+            ):
                 argseq = cycle((argseq,))
             elif not isinstance(argseq, Sequence):
                 raise TypeError("Malformed argseq.")
@@ -1309,9 +1355,6 @@ class Cluster:
                     `*`-splatted into a single `Instance.command()` call.
                 2. A single sequence of args, like `("ls", "/home")`. This will
                     be `*`-splatted into every `Instance.command()` call.
-                3. A sequence of strings, like `("ls -a", "cat f", "echo 1")`;
-                    each of these strings will be passed directly to a single
-                    `Instance.command()` call.
                 3. A single string, like `"ls"`; this string will be passed
                     directly to every `Instance.command()` call.
             kwargseq: Optional keyword argument(s). May be:
@@ -1617,7 +1660,7 @@ class Cluster:
                 "a sequence of sources must have the same length as instances"
             )
         kwargs['literal_str'] = literal_str
-        results = self._async_method_map(
+        results = self._async_transfer_map(
             "put",
             # we need self.instances to bound length; s & t can both be cycles.
             [(s, t, *args) for s, t, _ in zip(source, target, self.instances)],
@@ -1669,7 +1712,7 @@ class Cluster:
             raise ValueError(
                 "a sequence of sources must have the same length as instances"
             )
-        results = self._async_method_map(
+        results = self._async_transfer_map(
             "get", [(s, t) for s, t in zip(source, target)], cycle((kwargs,))
         )
         self._check_exceptions(results, _permissive, _warn)
@@ -1740,7 +1783,7 @@ class Cluster:
             raise ValueError(
                 "a sequence of modes must have the same length of instances"
             )
-        results = self._async_method_map(
+        results = self._async_transfer_map(
             "read",
             [
                 (s, m, encoding, True)
@@ -2874,6 +2917,6 @@ def instance_price_per_hour(instance: Instance):
             iops_cost = 0
         stopped_price += iops_cost + throughput_cost + storage_cost
     return {
-        "stopped": stopped_price,
         "running": stopped_price + instance_rates["usd_per_hour"],
+        "stopped": stopped_price,
     }

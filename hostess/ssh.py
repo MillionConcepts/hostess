@@ -513,7 +513,7 @@ def find_conda_env(cmd: RunCommand, env: str = None) -> str:
     try:
         cat = cmd(f"cat ~/.conda/environments.txt", _viewer=True)
         cat.wait()
-        envs = cat.out
+        envs = "".join(cat.out).split("\n")
         if env == "base":
             return next(filter(lambda l: "envs" not in l, envs)).strip()
         else:

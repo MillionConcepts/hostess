@@ -280,8 +280,6 @@ def format_returner(
             returnval += "returnval = gzip.compress(returnval)\n"
     elif return_compression is not None:
         raise NotImplementedError("Unsupported compression.")
-    if b64 is True:
-        returnval += "    returnval = base64.b64encode(returnval)\n"
     if sep is not None:
         returnval += f"    print({sep})\n"
     return returnval + "    print(returnval)"

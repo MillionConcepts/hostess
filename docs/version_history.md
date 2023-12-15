@@ -24,11 +24,23 @@ on some instances even if attempts to execute instructions on others fail)
 accept arbitrary numbers of tasks, dispatching them to instances as soon as they free up
 - `hostess.caller.generic_python_endpoint()` now permits returning objects in 
 pickled and/or gzipped form (preparation for high-level features in a later version)
+- `dicts` returned by the `price_per_hour()` methods of `Cluster` and `Instance`
+now order keys the same way
 - assorted updates to documentation and examples
 
 ### Fixed
 - `Bucket.put_stream()` updated to work with new `Bucket` internals
 - `console_stream_handlers()` no longer creates secret duplicate stdout/stderr caches
+- edge case in `find_conda_env()` that sometimes prevented finding the most 
+recently-created env
+- `Instance.conda_env()` now autoconnects as intended
+
+### Removed
+- Because they now accept arbitrary numbers of tasks, `Cluster.commandmap()` 
+and `pythonmap()` no longer interpret sequences of bare strings passed to 
+`argseq` as individual tasks (due to both ambiguity and partial incompatibility
+with `pythonmap()'s` signature). They will always interpret a sequence of bare 
+strings as a `tuple` of args to be included in all tasks.
 
 ## [0.8.0] - 2023-12-07
 ### Added
