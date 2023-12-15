@@ -70,7 +70,7 @@ def encode_payload(
         raise NotImplementedError
     if _check_mode(serialization, compression) == "text":
         if serialization == "json":
-            return f'"""{serial}"""'
+            return f"\"\"\"{serial}\"\"\""
         return serial
     if isinstance(serial, str):
         serial = serial.encode("ascii")
@@ -98,29 +98,25 @@ def format_importer(module: Optional[str], func: str) -> str:
     Returns:
         import source code block
     """
-    importer = f"""if __name__ == "__main__":
-    """
     if module is None:
-        importer += f"""target = {func}
-    """
-        return importer
+        return f"target = {func}\n"
     if module.endswith(".py"):
-        importer += f"""import importlib.util
-    import sys
-    spec = importlib.util.spec_from_file_location(
-        "{Path(module).stem}", "{module}"
-    )
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["{Path(module).stem}"] = module
-    spec.loader.exec_module(module)
-    """
+        importer = f"""import importlib.util
+import sys
+spec = importlib.util.spec_from_file_location(
+    "{Path(module).stem}", "{module}"
+)
+module = importlib.util.module_from_spec(spec)
+sys.modules["{Path(module).stem}"] = module
+spec.loader.exec_module(module)
+"""
     else:
-        importer += f"""import {module}
-    module = {module}
-    """
+        importer = f"""import {module}
+module = {module}
+"""
     if func is not None:
         importer += f"""target = getattr(module, "{func}")
-    """
+"""
     return importer
 
 
@@ -143,20 +139,19 @@ def format_decompressor(
         decompression source code block
     """
     if _check_mode(serialization, compression) == "text":
-        return f"""payload = {serialized}
-    """
+        return f"payload = {serialized}\n"
     if b64 is True:
         paystring = f"""import base64
-    payload = base64.b64decode({serialized})
-    """
+payload = base64.b64decode({serialized})
+"""
     else:
-        paystring = f"payload = {serialized}\n    "
+        paystring = f"payload = {serialized}\n"
     if compression is None:
         return paystring
     if compression == "gzip":
         return paystring + f"""import gzip
-    payload = gzip.decompress(payload)
-    """
+payload = gzip.decompress(payload)
+"""
     raise NotImplementedError("only gzip compression is currently supported")
 
 
@@ -173,13 +168,13 @@ def format_deserializer(serialization: CallerSerializationType) -> str:
     if serialization is None:
         return ""
     if serialization == "json":
-        return f"""import json
-    payload = json.loads(payload)
-    """
+        return """import json
+payload = json.loads(payload)
+"""
     elif serialization == "pickle":
         return """import pickle
-    payload = pickle.loads(payload)
-    """
+payload = pickle.loads(payload)
+"""
     raise NotImplementedError("Unknown serializer. use 'json' or 'pickle'")
 
 
@@ -236,12 +231,12 @@ def format_kwarg_filter(
     if (filter_kwargs is not True) or (splat != "**"):
         return ""
     return """from inspect import getfullargspec
-    spec = getfullargspec(target)
-    payload = {
-        k: v for k, v in payload.items() 
-        if k in spec.args + spec.kwonlyargs
-    }
-    """
+spec = getfullargspec(target)
+payload = {
+    k: v for k, v in payload.items() 
+    if k in spec.args + spec.kwonlyargs
+}
+"""
 
 
 def format_returner(
@@ -255,34 +250,34 @@ def format_returner(
     if return_result is False:
         return ""
     if return_serialization is None:
-        returnval = "    returnval = result\n"
+        returnval = "\nreturnval = result\n"
     elif return_serialization == "json":
         returnval = f"""
-    import json
-    returnval = json.dumps(result)
-    """
+import json
+returnval = json.dumps(result)
+"""
     elif return_serialization == "pickle":
         returnval = """
-    import pickle
-    returnval = pickle.dumps(result)
-    """
+import pickle
+returnval = pickle.dumps(result)
+"""
     else:
         raise NotImplementedError("Unknown serializer. use 'json' or 'pickle'")
     if return_compression == "gzip":
         returnval += """
-    import gzip
-    """
+import gzip
+"""
         if return_serialization == "json":
             returnval += (
-                "returnval = gzip.compress(returnval.encode('ascii'))\n"
+                "\nreturnval = gzip.compress(returnval.encode('ascii'))\n"
             )
         else:
-            returnval += "returnval = gzip.compress(returnval)\n"
+            returnval += "\nreturnval = gzip.compress(returnval)\n"
     elif return_compression is not None:
         raise NotImplementedError("Unsupported compression.")
     if sep is not None:
-        returnval += f"    print({sep})\n"
-    return returnval + "    print(returnval)"
+        returnval += f"print({sep})\n"
+    return returnval + "print(returnval)"
 
 
 # TODO, maybe: validity check to make sure it compiles
@@ -399,6 +394,8 @@ def generic_python_endpoint(
         return_result, return_compression, return_serialization, b64, sep
     )
     endpoint = import_ + decompress + deserialize + kwarg_filter + call + rval
+    endpoint = "\n".join("    " + line for line in endpoint.splitlines())
+    endpoint = f'if __name__ == "__main__":\n{endpoint}'
     if for_bash is True:
         if interpreter is None:
             interpreter = sys.executable
@@ -443,14 +440,12 @@ def make_python_endpoint_factory(
         raise ValueError("cannot bind a payload to the endpoint factory")
 
     if func is not None:
-
         def endpoint_factory(payload):
             return generic_python_endpoint(
                 module, func=func, payload=payload, **endpoint_kwargs
             )
 
     else:
-
         def endpoint_factory(function_name, payload):
             return generic_python_endpoint(
                 module, function_name, payload=payload, **endpoint_kwargs
