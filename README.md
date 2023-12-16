@@ -62,7 +62,7 @@ carefully.
 `hostess` includes a simple test suite compatible with `pytest`. More 
 comprehensive tests are planned. (In particular, non-local networking features 
 currently lack test coverage.) You can run the tests by executing `pytest -s` 
-in the root directory. The `-s` flag is mandatory because `pytest`'s captures
+in the root directory. The `-s` flag is mandatory because `pytest` captures
 stdout by default, which breaks some `hostess` features covered by the tests.
 
 Tests require two additional dependencies: `pytest` and `pillow`.
