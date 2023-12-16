@@ -76,6 +76,12 @@
     options:
         heading_level: 3
 
+## serverpool
+
+::: hostess.serverpool
+    options:
+        heading_level: 3
+
 ## shortcuts
 
 ::: hostess.shortcuts
