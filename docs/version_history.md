@@ -1,5 +1,10 @@
 # Version History
 
+## [0.9.1] - 2023-12-16
+### Fixed
+
+- issue with finding base conda env in some cases
+
 ## [0.9.0] - 2023-12-15
 ### Added
 

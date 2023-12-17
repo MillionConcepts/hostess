@@ -515,7 +515,9 @@ def find_conda_env(cmd: RunCommand, env: str = None) -> str:
         cat.wait()
         envs = "".join(cat.out).split("\n")
         if env == "base":
-            return next(filter(lambda l: "envs" not in l, envs)).strip()
+            return next(
+                filter(lambda l: "envs" not in l and len(l) > 0, envs)
+            ).strip()
         else:
             return next(filter(lambda l: suffix in l, envs)).strip()
     except (UnexpectedExit, StopIteration):
