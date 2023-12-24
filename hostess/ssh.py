@@ -56,7 +56,7 @@ def launch_tunnel_thread(
 
     Returns:
         signal received if closed gracefully; tuple of the Connection
-         object and the Exception if it hits an exception.
+        object and the Exception if it hits an exception.
     """
     conn = SSH.connect(host, uname, keyfile).conn
     try:
@@ -143,8 +143,7 @@ class SSH(RunCommand):
     functionality for managed command execution. NOTE: supports only keyfile
     authentication.
 
-    Example of use:
-
+    Examples:
         >>> ssh = SSH.connect(
         ...    "1.11.11.111", 'remote_user', '/home/user/.ssh/keyfile.pem'
         ... )
@@ -155,10 +154,10 @@ class SSH(RunCommand):
         >>> print(','.join([s.strip() for s in tail.out]))
         >>> ssh.con('ls -l / | grep dev')
 
-    output:
+        expected output:
 
-        hi, 0, 1, 2, 3
-        drwxr-xr-x  15 root   root     3320 Nov 12 01:50 dev
+            hi, 0, 1, 2, 3
+            drwxr-xr-x  15 root   root     3320 Nov 12 01:50 dev
     """
 
     def __init__(
@@ -344,8 +343,8 @@ class SSH(RunCommand):
         **kwargs: Union[int, float, str, bool],
     ) -> Processlike:
         """
-        run a shell command in the remote host's default interpreter.
-        See RunCommand.__call__ for details on calling conventions and options.
+        run a shell command in the remote host's default interpreter. See
+        `RunCommand.__call__()` for details on calling conventions and options.
 
         Args:
             *args: args to use to construct the command.

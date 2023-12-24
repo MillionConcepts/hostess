@@ -271,7 +271,6 @@ class Bucket:
         and streams of unknown length.
 
         Args:
-            self: Bucket or name of bucket
             obj: source of stream to upload. May be a path, a URL, a filelike
                 object, or any iterator that yields bytes.
             key: key of object to create from stream (fully-qualified 'path'

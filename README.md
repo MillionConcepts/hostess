@@ -30,7 +30,7 @@ Examples for working with EC2 instances can be found [in this jupyter notebook](
 
 Examples for working with S3 buckets can be found [in this jupyter notebook](https://github.com/MillionConcepts/hostess/blob/main/examples/s3.ipynb).
 
-[You can find extended documentation and an API reference on readthedocs.](https://hostess.readthedocs.io)
+[You can find an API reference and full changelog on readthedocs.](https://hostess.readthedocs.io)
 [![Documentation Status](https://readthedocs.org/projects/hostess/badge/?version=latest)](https://hostess.readthedocs.io/en/latest/?badge=latest)
 
 ## compatibility
@@ -45,8 +45,9 @@ example Notebooks for more details on this.
 3. `hostess` requires Python >= 3.9.
 4. `hostess` is very lightweight. If a machine has enough resources to run 
 a Python interpreter, it can probably run `hostess`.
-5. `hostess.station` is not fully compatible with MacOS or WSL. MacOS and WSL compatibility
-is planned. All other parts of `hostess` are compatible with MacOS and WSL.
+5. `hostess.station` is not fully compatible with MacOS or WSL. MacOS and WSL 
+compatibility is planned. All other parts of `hostess` are compatible with 
+MacOS and WSL.
 
 ## cautions
 

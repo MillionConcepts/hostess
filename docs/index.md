@@ -45,8 +45,9 @@ example Notebooks for more details on this.
 3. `hostess` requires Python >= 3.9.
 4. `hostess` is very lightweight. If a machine has enough resources to run 
 a Python interpreter, it can probably run `hostess`.
-5. `hostess.station` is not fully compatible with MacOS. MacOS compatibility
-is planned. All other parts of `hostess` are compatible with MacOS.
+5. `hostess.station` is not fully compatible with MacOS or WSL. MacOS and WSL 
+compatibility is planned. All other parts of `hostess` are compatible with 
+MacOS and WSL.
 
 ## cautions
 
@@ -70,4 +71,4 @@ Tests require two additional dependencies: `pytest` and `pillow`.
 ## licensing
 
 You can do almost anything with this software that you like, subject only to 
-the extremely permissive terms of the [BSD 3-Clause License](LICENSE).
+the extremely permissive terms of the [BSD 3-Clause License](LICENSE.md).

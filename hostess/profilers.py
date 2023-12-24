@@ -39,29 +39,28 @@ class Profiler:
     """
     simple profiling object for specific sections of code.
 
-    example of use:
-    ```
-    from array import array
-    from hostess.monitors import RAM, Stopwatch
-    from hostess.profilers import Profiler
+    Examples:
+        >>> from array import array
+        >>> from hostess.monitors import RAM, Stopwatch
+        >>> from hostess.profilers import Profiler
 
-    prof = Profiler({'time': Stopwatch(), 'memory': RAM()})
-    with prof.context("f"):
-        var1 = array("B", [0 for _ in range(1024**2 * 100)])
-    with prof.context("g"):
-        var2 = array("B", [0 for _ in range(1024**2 * 250)])
-    print(prof)
-    ```
-    general form of expected output (exact results are system-dependent):
-    ```
-    Profiler
-    f
-      time: 2.935
-      memory: 105.47
-    g
-      time: 7.171
-      memory: 261.76
-    ```
+        >>> prof = Profiler({'time': Stopwatch(), 'memory': RAM()})
+        >>> with prof.context("f"):
+            >>> var1 = array("B", [0 for _ in range(1024**2 * 100)])
+        >>> with prof.context("g"):
+            >>> var2 = array("B", [0 for _ in range(1024**2 * 250)])
+        >>> print(prof)
+
+        general form of expected output (exact results are system-dependent):
+        ```
+        Profiler
+        f
+          time: 2.935
+          memory: 105.47
+        g
+          time: 7.171
+          memory: 261.76
+        ```
     """
 
     def __init__(self, monitors: MutableMapping[str, AbstractMonitor]):
@@ -636,30 +635,30 @@ def analyze_references(
     """
     analyze 'references' to or from obj. designed for, but not limited to,
     analyzing references tracked by the Python garbage collector.
-    Notes:
 
-    1. TAKE SPECIAL CARE WHEN DECORATING THIS FUNCTION OR CALLING IT FROM
+    Danger: careful use is required to avoid memory leaks
+        TAKE SPECIAL CARE WHEN DECORATING THIS FUNCTION OR CALLING IT FROM
         A LAMBDA FUNCTION OR GENERATOR EXPRESSION, NO MATTER HOW HARMLESS-
         LOOKING. These operations may add references that are difficult to
-        recognize or interpret. Calls that do not add context are much
-        safer.
-    2. This function is only completely compatible with CPython.
-    3. All 'exclude', 'permit', and 'filter' operations are implicitly
-        connected by boolean AND. Represented as a predicate:
+        recognize or interpret. Calls that do not add context are much safer.
 
-            ```
-            (~PRIMITIVE(REF) | ~FILTER_PRMITIVE)
-            & (~HISTORY(REF) | ~FILTER_HISTORY)
-            & (~SCOPEDICT(REF) | ~FILTER_SCOPEDICT)
-            & ((ID(REF) != ID(OBJ)) | ~FILTER_REFLEXIVE)
-            & ~(ID(REF) ∈ EXCLUDE_IDS)
-            & (ID(REF) ∈ PERMIT_IDS | PERMIT_IDS = ∅)
-            & ~(TYPE(REF) ∈ EXCLUDE_TYPES)
-            & (TYPE(REF) ∈ PERMIT_TYPES | PERMIT_TYPES = ∅)
-            ```
+    Notes:
+        1. All 'exclude', 'permit', and 'filter' operations are implicitly
+            connected by boolean AND. Represented as a predicate:
 
-    4. references from obj to itself are never included. This may change
-       in the future.
+                (~PRIMITIVE(REF) | ~FILTER_PRMITIVE)
+                & (~HISTORY(REF) | ~FILTER_HISTORY)
+                & (~SCOPEDICT(REF) | ~FILTER_SCOPEDICT)
+                & ((ID(REF) != ID(OBJ)) | ~FILTER_REFLEXIVE)
+                & ~(ID(REF) ∈ EXCLUDE_IDS)
+                & (ID(REF) ∈ PERMIT_IDS | PERMIT_IDS = ∅)
+                & ~(TYPE(REF) ∈ EXCLUDE_TYPES)
+                & (TYPE(REF) ∈ PERMIT_TYPES | PERMIT_TYPES = ∅)
+
+        2. References from obj to itself are never included. This may change
+           in the future.
+        3. This function is only completely compatible with CPython.
+
 
     Args:
         obj: object of referential analysis
@@ -817,7 +816,7 @@ class RefAlarm:
         self.ignore_dunder = ignore_dunder
         self.refcaches = defaultdict(list)
 
-    def context(self, name: str = "default"):
+    def context(self, name: str = "default") -> _RefAlarmContext:
         """
         Produce a context manager related to this object.
 

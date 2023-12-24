@@ -239,7 +239,7 @@ class Dispatcher(Composition):
             step: name of step to execute with this callback.
 
         Returns:
-              a function that takes one or no arguments. If it is called
+            a function that takes one or no arguments. If it is called
                 with no argument, it immediately fires the callback. If it
                 is called with an object with a .wait method, it first
                 calls its .wait method. This function returns whatever
@@ -482,10 +482,10 @@ class RunCommand:
         """
         Create a shell command string from *args and **kwargs, including any
         command and kwargs curried into this object. Used as part of the
-        __call__() workflow; can also be used to determine what shell
+        `__call__()` workflow; can also be used to determine what shell
         command this object _would_ execute if you called it.
 
-        See __call__ for a complete description of arg and kwarg parsing.
+        See `__call__` for a complete description of arg and kwarg parsing.
 
         Args:
             args: args to parse into shell command
@@ -526,111 +526,110 @@ class RunCommand:
 
     def __call__(self, *args, **kwargs) -> Optional["Processlike"]:
         """
-         Execute a shell command parsed from `args` and `kwargs`.
+        Execute a shell command parsed from `args` and `kwargs`.
 
-         This method has two legal calling conventions along with a variety of
-         keyword-argument meta-options that modify _how_ it executes the shell
-         command. The meta-options are not defined in the signature in order
-         to facilitate the parsing process.
+        This method has two legal calling conventions along with a variety of
+        keyword-argument meta-options that modify _how_ it executes the shell
+        command.
 
-         **Meta-options:**
+        Calling conventions:
+            These conventions are not mutually exclusive, although it is
+            generally less confusing to pick one or the other.
 
-         RunCommand understands any kwarg whose name begins with `'_'` as a
-         meta-option, unless the remainder of the kwarg name is numeric (e.g.
-         `'_0'`). All meta-options are optional. Internally-recognized
-         meta-options:
+            **1**
 
-         * `_bg` (aliases `_asynchronous`, `_async`): if True, execute the
-             process in the background. Roughly equivalent to the '&' control
-             operator in bash. If False, block until process exit. (Default
-             False)
-         * `_out` (alias `_out_stream`): Additional target for process stdout.
-             Must have a `write()` method. (If `_viewer=True`, defaults to
-             `Viewer`'s default behavior. Otherwise, defaults to a `Nullify`
-             object, which simply discards the stream).
-         * `_err` (alias `_err_stream`): Same as `_out`, but for stderr.
-         * `_viewer` (alias `_v`): if True, return a `Viewer` object permitting
-             additional process inspection and management. `_viewer=True`
-             implies `_bg=True`. (default False)
-         * `_args_at_end`: if True, place positional arguments other than the
-             command string at the end of the parsed shell command, after any
-             shell options parsed from kwargs. Otherwise, place them before
-             shell options. (Default True)
-         * `_done`: a niladic function to call on process exit. Valid only if
-           `_viewer=True`.
+            Pass the shell command as a string. This can be simpler in many cases,
+            and is mandatory for programs with non-standard calling conventions,
+            like the `ffmpeg` command below.
 
-         Any other meta-options are passed directly to the underlying Runner as
-         keyword arguments with `"_"` stripped from their names. `_disown` is
-         often particularly useful.
+            Examples:
+                >>> cmd = RunCommand()
+                >>> cmd('ls')
+                >>> cmd('cp -r /path/to/folder /path/to/other/folder')
+                >>> cmd('ffmpeg -i first.mp4 -filter:v "crop=100:10:20:200" second.mp4')
 
-         **Calling conventions:**
+            **2**
 
-         These conventions are not mutually exclusive, although it is
-         generally less confusing to pick one or the other.
+            Construct the shell command using multiple arguments to `__call__`.
+            This allows you to treat the shell command more like a Python
+            function, which can be simpler and less error-prone than dynamic
+            string formatting when you would like to pass variable parameters to a
+            command.
 
-         **1**
+            RunCommand uses the following rules to parse args and kwargs into
+            shell command strings. They are compatible with most, although not
+            all, shell programs:
 
-         Pass the shell command as a string. This can be simpler in many cases,
-         and is mandatory for programs with non-standard calling conventions,
-         like the `ffmpeg` command below.
+            * RunCommand treats the first positional argument like a shell
+              command name. This means that passing a positional argument is
+              mandatory if you did not bind a command to the RunCommand when
+              creating it. The parsed command string always starts with this
+              argument.
+            * Subsequent positional arguments are command parameters. By
+              default, the parser places them at the end of the command string,
+              after any command options. Pass `_args_at_end=False` to place
+              them before command options.
+            * Keyword arguments are command options. The parser transforms
+              keyword argument names in order to make Python naming and calling
+              conventions compatible with shell conventions.
+                * It ignores `"_"` characters at the start and end of
+                  names. This can be used to pass numeric options, like
+                  `"_0=True"`, or options that share a name with a Python
+                  reserved keyword, like `"dir_=/opt"`.
+                * it treats single-character names (not counting prefixed or
+                  suffixed `"_"`) as options preceded by a `"-"` and does not
+                  use an `'='` to separate them from their values.
+                  `cmd("ls", I="a*")` is equivalent to `"ls -I a*"`.
+                * it treats longer names as options preceded by `"--"` and uses
+                  an `'='` to separate them from their values.
+                  `cmd("ls", width=20)` is equivalent to `"ls --width=20"`.
+                * It replaces `"_"` characters within names with `"-"`.
+                  `cmd("ls", time_style="iso")` is equivalent to
+                  `"ls --time-style=iso"`.
+                * if a keyword argument is True, RunCommand treats it as a
+                  "switch". `cmd("ls", a=True)` is equivalent to `"ls -a"`.
+                * if a keyword argument is False, RunCommand ignores it.
+                  `cmd("ls", a=False)` is equivalent to `"ls"`.
 
-         Examples:
+        Meta-options:
+            RunCommand understands any kwarg whose name begins with `'_'` as
+            a meta-option, unless the remainder of the kwarg name is numeric
+            (e.g. `'_0'`). All meta-options are optional. The meta-options are
+            not defined in the signature in order to facilitate the parsing
+            process. Internally-recognized meta-options are:
 
-             >>> cmd = RunCommand()
-             >>> cmd('ls')
-             >>> cmd('cp -r /path/to/folder /path/to/other/folder')
-             >>> cmd('ffmpeg -i first.mp4 -filter:v "crop=100:10:20:200" second.mp4')
+            * `_bg` (aliases `_asynchronous`, `_async`): if True, execute the
+                 process in the background. Roughly equivalent to the '&'
+                 control operator in bash. If False, block until process exit.
+                 (Default False)
+             * `_out` (alias `_out_stream`): Additional target for process
+                stdout.  Must have a `write()` method. (If `_viewer=True`,
+                defaults to `Viewer`'s default behavior. Otherwise, defaults
+                to a `Nullify` object, which simply discards the stream).
+             * `_err` (alias `_err_stream`): Same as `_out`, but for stderr.
+             * `_viewer` (alias `_v`): if True, return a `Viewer` object
+                permitting additional process inspection and management.
+                `_viewer=True`  implies `_bg=True`. (default False)
+             * `_args_at_end`: if True, place positional arguments other than
+                the command string at the end of the parsed shell command,
+                after any shell options parsed from kwargs. Otherwise, place
+                them before shell options. (Default True)
+             * `_done`: a niladic function to call on process exit. Valid only
+                if `_viewer=True`.
 
-         **2**
+             Any other meta-options are passed directly to the underlying
+             `Runner` as keyword arguments with `"_"` stripped from their
+             names. `_disown` is often particularly useful.
 
-         Construct the shell command using multiple arguments to `__call__`.
-         This allows you to treat the shell command more like a Python
-         function, which can be simpler and less error-prone than dynamic
-         string formatting when you would like to pass variable parameters to a
-         command.
-
-         RunCommand uses the following rules to parse args and kwargs into
-         shell command strings. They are compatible with most, although not
-         all, shell programs:
-
-        * RunCommand treats the first positional argument like a shell command
-          name. This means that passing a positional argument is mandatory if
-          you did not bind a command to the RunCommand when creating it. The
-          parsed command string always starts with this argument.
-        * Subsequent positional arguments are command parameters. By
-          default, the parser places them at the end of the command string,
-          after any command options. Pass `_args_at_end=False` to place them
-          before command options.
-        * Keyword arguments are command options. The parser transforms
-          keyword argument names in order to make Python naming and calling
-          conventions compatible with shell conventions.
-            * It ignores `"_"` characters at the start and end of
-              names. This can be used to pass numeric options, like
-              `"_0=True"`, or options that share a name with a Python
-              reserved keyword, like `"dir_=/opt"`.
-            * it treats single-character names (not counting prefixed or
-              suffixed `"_"`) as options preceded by a `"-"` and does not
-              use an `'='` to separate them from their values.
-              `cmd("ls", I="a*")` is equivalent to `"ls -I a*"`.
-            * it treats longer names as options preceded by `"--"` and uses
-              an `'='` to separate them from their values.
-              `cmd("ls", width=20)` is equivalent to `"ls --width=20"`.
-            * It replaces `"_"` characters within names with `"-"`.
-              `cmd("ls", time_style="iso")` is equivalent to
-              `"ls --time-style=iso"`.
-            * if a keyword argument is True, RunCommand treats it as a
-              "switch". `cmd("ls", a=True)` is equivalent to `"ls -a"`.
-            * if a keyword argument is False, RunCommand ignores it.
-              `cmd("ls", a=False)` is equivalent to `"ls"`.
-
-         In addition to these conventions, bear in mind that if you specified a
-         command when you construct a RunCommand object, that command will
-         always be used as the first positional argument to `__call__`, and if
-         you specified kwargs, they will be added to any kwargs you pass or
-         don't pass to `__call__`.
+        Tip:
+            In addition to these conventions, bear in mind that if you
+            specified a command when you construct a RunCommand object, that
+            command will always be used as the first positional argument to
+            `__call__()`, and if you specified kwargs, they will be added to
+            any kwargs you pass or don't pass to `__call__()`.
 
          Returns:
-             Interface object for executed process. of variable type: if
+             Interface object for executed process. Of variable type: if
                  `_viewer=True`, a Viewer; if `_viewer=False` and `_bg=True`,
                  an Invoke `Result`; if `_viewer=False` and `_bg=False`, an
                  Invoke `Runner`.

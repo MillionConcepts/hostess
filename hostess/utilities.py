@@ -264,18 +264,21 @@ def curry(func: Callable, *args, **kwargs) -> Callable:
 
 class Aliased:
     """
-    generic wrapper for aliasing a class method. for instance, if you'd like a
-    library function to `append` to a list, but it's only willing to `write`:
+    generic wrapper for aliasing a class method.
 
-    ```
-    >>> import json
-    >>> my_list = []
-    >>> writeable_list = Aliased(my_list, ("write",), "append")
-    >>> json.dump([1, 2, 3], writeable_list)
-    >>> print(writeable_list)
-    Aliased: ('write',) -> append:
-    ['[1', ', 2', ', 3', ']']
-    ```
+    Examples:
+        If you'd like a library function to `append` to a list, but it's only
+        willing to `write`:
+
+        ```
+        >>> import json
+        >>> my_list = []
+        >>> writeable_list = Aliased(my_list, ("write",), "append")
+        >>> json.dump([1, 2, 3], writeable_list)
+        >>> print(writeable_list)
+        Aliased: ('write',) -> append:
+        ['[1', ', 2', ', 3', ']']
+        ```
     """
 
     def __init__(self, wrapped: Any, aliases: Sequence[str], referent: str):

@@ -218,6 +218,34 @@ class Instance:
     """
     Interface to an EC2 instance. Enables remote procedure calls, state
     control, and monitoring.
+
+    Attributes:
+        session (boto3.Session): session for API calls
+        client (botocore.client.BaseClient): client for API calls
+        resource (boto3.resources.base.ServiceResource): resource for API calls
+        instance_ (boto3.EC2.Instance): underlying boto3 `Instance` used for
+            some API operations
+        instance_id (str): AWS instance id
+        instance_type (str): AWS instance type (e.g. 't3a.micro')
+        tags (dict): AWS resource tags for instance
+        launch_time (datetime): Time instance was launched
+        name (Optional[str]): Value of 'Name' tag; None if not present
+        zone (str): AWS Availability Zone
+        uname (Optional[str]): Username for SSH operations (if known)
+        passed_key (Optional[Path]): User-specified path to SSH keyfile, if any
+        state (InstanceState): state of instance (e.g. 'running')
+        _ssh (hostess.ssh.SSH): Underlying `SSH` object for command execution
+        address_type (Literal["private", "public"]): Whether we are using the
+            instance's public or private IP for SSH connections. (Private IP
+            should generally only be used from within AWS).
+        ip (Optional[str]): IPv4 address of instance -- its private
+            IP if `address_type` is "private"; public IP otherwise. None if the
+            instance has no IP (e.g., if it's stopped) or its IP cannot be
+            determined.
+        key (Optional[str]): stringified path to actually-existing SSH keyfile,
+            if found
+        key_errstring (Optional[str]): detailed description of what went wrong
+            with our last attempt to find and load an SSH keyfile, if anything
     """
 
     def __init__(
@@ -531,7 +559,7 @@ class Instance:
 
         Args:
             command: command name or full text of command
-                (see hostess.subutils.RunCommand.__call__() for detailed
+                (see `hostess.subutils.RunCommand.__call__()` for details on
                 calling conventions).
             *args: args to pass to `self._ssh.__call__()`.
             _viewer: if `True`, return a `Viewer` object. otherwise return
@@ -574,7 +602,7 @@ class Instance:
 
         Args:
             command: command name or full text of command
-                (see hostess.subutils.RunCommand.__call__() for detailed
+                (see `hostess.subutils.RunCommand.__call__()` for details on
                 calling conventions).
             _poll: polling rate for process output, in seconds
             _timeout: if not None, raise a TimeoutError if this many seconds
@@ -645,8 +673,8 @@ class Instance:
     @connectwrap
     def install_conda(
         self,
-        installer_url=CONDA_DEFAULTS['installer_url'],
-        prefix=CONDA_DEFAULTS['prefix'],
+        installer_url: str = CONDA_DEFAULTS['installer_url'],
+        prefix: str = CONDA_DEFAULTS['prefix'],
         **kwargs: bool
     ) -> Processlike:
         """
@@ -1043,7 +1071,7 @@ class Instance:
                 if any.
             compression: compression for payload. 'gzip' or None.
             serialization: how to serialize `payload`. 'json' means serialize
-                to JSON; 'pickle' means serialize using pickle; None means just
+                to knownJSON; 'pickle' means serialize using pickle; None means just
                 use the string representation of `payload`.
             splat: Operator for splatting the payload into the function call.
                 `"*"` means `func(*payload)`, `"**"` means `func(**payload)`;
@@ -1141,12 +1169,7 @@ class Instance:
         return self.__repr__()
 
     key = None
-    """path to SSH keyfile"""
     key_errstring = None
-    """
-    detailed description of what's wrong with our attempt to find an SSH 
-    keyfile, if anything
-    """
 
 
 class Cluster:
@@ -1219,11 +1242,11 @@ class Cluster:
         homogeneity of arguments.
 
         Args:
-             method: name of method of Instance to call on Instances
-             argseq: optional args to pass to these method calls -- one
+            method: name of method of Instance to call on Instances
+            argseq: optional args to pass to these method calls -- one
                 sequence of args per Instance. either `args` or `kwargs` must
                 be defined.
-             kwargseq: optional kwargs to pass to these method calls -- one
+            kwargseq: optional kwargs to pass to these method calls -- one
                 `dict` or other `Mapping` of kwargs per Instance.
 
         Returns:
@@ -1253,11 +1276,11 @@ class Cluster:
         file I/O method of all this Cluster's Instances.
 
         Args:
-             method: name of file I/O method of Instance
-             argseq: optional args to pass to calls -- one sequence of args,
-                one sequence of args per Instance, or a `cycle`. either `args`
-                or `kwargs` must be defined.
-             kwargseq: optional kwargs to pass to these method calls -- a single
+            method: name of file I/O method of Instance
+            argseq: optional args to pass to calls -- one sequence of args,
+                one sequence of args per Instance, or a `cycle`. either
+                `args` or `kwargs` must be defined.
+            kwargseq: optional kwargs to pass to these method calls -- a single
                 `dict` or other `Mapping`, one `Mapping` of kwargs per
                 Instance, or a `cycle`.
 
@@ -1877,8 +1900,8 @@ class Cluster:
 
     def install_conda(
         self,
-        installer_url=CONDA_DEFAULTS['installer_url'],
-        prefix=CONDA_DEFAULTS['prefix'],
+        installer_url: str =CONDA_DEFAULTS['installer_url'],
+        prefix: str = CONDA_DEFAULTS['prefix'],
         _permissive: bool = False,
         _warn: bool = False,
         **kwargs: bool
