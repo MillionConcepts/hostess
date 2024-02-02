@@ -443,6 +443,7 @@ class RunCommand:
         command: Optional[str] = None,
         ctx: Optional[invoke.context.Context] = None,
         runclass: Optional[type(invoke.Runner)] = None,
+        chunksize: int = 20000,
         **kwargs: Any,
     ):
         """
@@ -455,6 +456,10 @@ class RunCommand:
             ctx: optional Context object (just makes a new one if not given)
             runclass: optional Runner subclass (uses the default of ctx if
                 not given; if both are None, uses invoke.runners.Local)
+            chunksize: maximum number of bytes to read at once from
+                a child process's stdout/stderr. higher values will generally
+                increase performance but may have undesirable effects in some
+                cases.
             **kwargs: optional keyword arguments to bind to this object;
                 Will be added to any kwargs passed to calls to this object.
                 See __call__ for a complete description of behavior.
