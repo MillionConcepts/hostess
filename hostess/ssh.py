@@ -434,8 +434,8 @@ class SSH(RunCommand):
             return process
 
     def close(self):
-        for process, _ in self.tunnels:
-            process.kill()
+        for kill_signal, _meta in self.tunnels:
+            kill_signal()
         if self.conn is not None:
             self.conn.close()
 
