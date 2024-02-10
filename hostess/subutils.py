@@ -636,8 +636,7 @@ class RunCommand:
          Returns:
              Interface object for executed process. Of variable type: if
                  `_viewer=True`, a Viewer; if `_viewer=False` and `_bg=True`,
-                 an Invoke `Result`; if `_viewer=False` and `_bg=False`, an
-                 Invoke `Runner`.
+                 an Invoke `Result`; if `_viewer=False` an\
         """
         rkwargs = keyfilter(
             lambda k: k.startswith("_") and not k.strip("_").isnumeric(),
@@ -653,6 +652,9 @@ class RunCommand:
                 "_viewer": ("_v",),
             },
         )
+        # _asynchronous is redundant with _disown, and it upsets Invoke
+        if "_disown" in rkwargs:
+            rkwargs.pop("_asynchronous", None)
         # do not print to stdout/stderr by default
         verbose = rkwargs.pop("verbose", False)
         if verbose is not True:
@@ -1114,9 +1116,11 @@ def runv(*args, **kwargs):
     return Viewer.from_command(*args, **kwargs)
 
 
-def run(*args, **kwargs):
+def run(*args, **kwargs) -> Optional[str]:
     """run a command not in a Viewer"""
-    return RunCommand(*args, **kwargs)().stdout
+    # return value should be None iff caller passes _disown=True
+    if (cmd := RunCommand(*args, **kwargs)()) is not None:
+        return cmd.stdout
 
 
 Processlike = Union[Viewer, invoke.runners.Runner, invoke.runners.Result]
