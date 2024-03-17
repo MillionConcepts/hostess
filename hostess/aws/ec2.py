@@ -1900,7 +1900,7 @@ class Cluster:
 
     def install_conda(
         self,
-        installer_url: str =CONDA_DEFAULTS['installer_url'],
+        installer_url: str = CONDA_DEFAULTS['installer_url'],
         prefix: str = CONDA_DEFAULTS['prefix'],
         _permissive: bool = False,
         _warn: bool = False,
