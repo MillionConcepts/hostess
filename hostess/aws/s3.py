@@ -190,6 +190,7 @@ class Bucket:
         self,
         prefix: Optional[str] = None,
         cache: Optional[Union[str, Path, IOBase]] = None,
+        fetch_owner: bool = False
     ):
         """
         recursively scan the contents of the bucket and store the result in
@@ -200,9 +201,14 @@ class Bucket:
                 entire bucket.
             cache: optional file or filelike object to write scan results to
                 in addition to storing them in self.contents.
+            fetch_owner: if True, include owner of objects in response.
         """
         self.contents = self.ls(
-            recursive=True, prefix=prefix, cache=cache, formatting="contents"
+            recursive=True,
+            prefix=prefix,
+            cache=cache,
+            formatting="contents",
+            fetch_owner=fetch_owner,
         )
 
     def chunk_putter_factory(
@@ -670,6 +676,7 @@ class Bucket:
         cache: Union[str, Path, IOBase, None] = None,
         start_after: Optional[str] = None,
         cache_only: bool = False,
+        fetch_owner: bool = False
     ) -> Union[tuple, pd.DataFrame, None]:
         """
         list objects in a bucket.
@@ -690,6 +697,8 @@ class Bucket:
             cache_only: _only_ write results into the specified cache; do not
                 retain them in memory. intended mainly for cases in which the
                 full list would be larger than available memory.
+            fetch_owner: if True, include owner of objects in output. Not
+                enabled by default due to permissioning and performance issues.
 
         Returns:
             Manifest of contents, format dependent on `formatting`; or None
@@ -709,6 +718,7 @@ class Bucket:
             kwargs["Prefix"] = prefix.lstrip("/")
         if start_after is not None:
             kwargs["StartAfter"] = start_after
+        kwargs["FetchOwner"] = fetch_owner
         # pagination is typically slightly faster than iteratively passing
         # StartAfter based on the last key of a truncated response
         paginator = self.client.get_paginator("list_objects_v2")
@@ -737,7 +747,11 @@ class Bucket:
             )
         if formatting == "contents":
             return tuple(objects)
-        return pd.DataFrame(objects)
+        if fetch_owner is False:
+            return pd.DataFrame(objects)
+        objects = tuple(objects)
+        owner_info = pd.DataFrame([o.pop('Owner') for o in objects])
+        return pd.concat(map(pd.DataFrame, (objects, owner_info)), axis=1)
 
     @staticmethod
     def _maybe_prep_ls_cache(cache: Optional[Union[Path, IO]]):
