@@ -260,6 +260,13 @@ class SSH(RunCommand):
         Returns:
             dict giving transfer metadata: local, remote, host, and port
         """
+        # TODO, maybe: try to improve speed, possibly by increasing chunksize.
+        #  this may require backing transfers with something other than
+        #  paramiko, which by default uses SFTP and includes dire warnings
+        #  about packet sizes > 32kb. Always caching in-memory before writes
+        #  to disk might also improve speed; requires testing.
+        #  more radical options like actually creating an in-memory sshfs
+        #  filesystem of some kind are also possibilities.
         return unpack_transfer_result(
             self.conn.get(str(source), target, *args, **kwargs)
         )
