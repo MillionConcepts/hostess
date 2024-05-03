@@ -46,17 +46,18 @@ def parse_aws_identity_file(
         return {"_".join(k.lower().split(" ")): v for k, v in parsed.items()}
     parsed = {}
     if profile is not None:
-        try:
-            lineno, _ = first(
-                i
-                for i, l in enumerate(lines)
-                if l.strip().startswith(f"[{profile}")
-            )
-        except StopIteration:
-            raise OSError(f"{profile} not described in identity file")
+        err, search = f"{profile} not described in identity file", f"[{profile}"
+    else:
+        err, search = "Identity file empty or malformatted", "["
+    try:
+        lineno = first(
+            i for i, l in enumerate(lines) if l.strip().startswith(search)
+        )
+    except StopIteration:
+        raise OSError(err)
     else:
         try:
-            lineno, _ = first(
+            lineno = first(
                 i for i, l in enumerate(lines) if l.strip().startswith("[")
             )
         except StopIteration:
@@ -92,7 +93,7 @@ def make_boto_session(
     """
     if credential_file is None:
         return boto3.Session(profile_name=profile, region_name=region)
-    creds = parse_aws_identity_file(credential_file)
+    creds = parse_aws_identity_file(credential_file, profile)
     for disliked_kwarg in ("user_name", "password"):
         if disliked_kwarg in creds.keys():
             del creds[disliked_kwarg]
