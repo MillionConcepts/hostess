@@ -640,7 +640,9 @@ class RunCommand:
          Returns:
              Interface object for executed process. Of variable type: if
                  `_viewer=True`, a Viewer; if `_viewer=False` and `_bg=True`,
-                 an Invoke `Result`; if `_viewer=False` an\
+                 an Invoke `Result`; if `_viewer=False` and `_bg=False`, an
+                 Invoke `Runner`; if `_viewer=False` and `_disown=True`,
+                 `None` (`_disown=True` overrides the value of `_bg`.)
         """
         rkwargs = keyfilter(
             lambda k: k.startswith("_") and not k.strip("_").isnumeric(),

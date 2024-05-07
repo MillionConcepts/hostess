@@ -2,7 +2,7 @@ from setuptools import find_packages, setup
 
 setup(
     name="hostess",
-    version="0.9.1",
+    version="0.9.2",
     description="intuitive admin library",
     author="Million Concepts",
     author_email="mstclair@millionconcepts.com",

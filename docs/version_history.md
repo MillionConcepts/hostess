@@ -1,5 +1,25 @@
 # Version History
 
+## [0.9.2] - 2024-05-07
+
+### Added
+- stdout/stderr stream chunksize (in bytes) for most process execution objects 
+can now be modified by passing the `chunksize` argument, e.g. 
+`Viewer.from_command('ls', chunksize=100)`
+- `Bucket.ls()` will also retrieve object owner information when passed 
+`fetch_owner=True`
+
+### Fixed
+- bug that caused AWS credential file parsing to fail on non-default account
+creds stored in non-default credentials file
+- occasional failures when attempting to disown processes
+- bug that sometimes prevented SSH tunnel cleanup on interpreter exit / 
+  `SSH` object destruction
+  
+### Changed
+- default stdout/stderr stream chunksize increased from 1K to 20K
+- assorted linting, stability tweaks, etc.
+
 ## [0.9.1] - 2023-12-16
 ### Fixed
 
