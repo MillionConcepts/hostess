@@ -13,9 +13,9 @@ can now be modified by passing the `chunksize` argument, e.g.
 - bug that caused AWS credential file parsing to fail on non-default account
 creds stored in non-default credentials file
 - occasional failures when attempting to disown processes
-- bug that sometimes prevented SSH tunnel cleanup on interpreter exit / 
-  `SSH` object destruction
-  
+- bug that sporadically delayed SSH tunnel cleanup for closed / destroyed 
+  `SSH` objects until interpreter exit 
+
 ### Changed
 - default stdout/stderr stream chunksize increased from 1K to 20K
 - assorted linting, stability tweaks, etc.
