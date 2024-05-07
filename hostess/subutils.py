@@ -465,6 +465,10 @@ class RunCommand:
                 See __call__ for a complete description of behavior.
         """
         self.command = command
+        # TODO: passing this around and directly assigning the attribute is
+        #  inconvenient, but Invoke doesn't seem to explicitly expose it
+        #  anywhere. Check and make sure.
+        self.chunksize = chunksize
         if ctx is None:
             self.ctx = invoke.context.Context()
         else:
@@ -677,11 +681,14 @@ class RunCommand:
                 *args,
                 ctx=self.ctx,
                 runclass=self.runclass,
+                chunksize=self.chunksize
                 **(rkwargs | kwargs),
             )
         else:
+            runner = self.runclass(self.ctx)
+            runner.read_chunk_size = self.chunksize
             rkwargs = {k[1:]: v for k, v in rkwargs.items()}
-            output = self.runclass(self.ctx).run(cstring, **rkwargs)
+            output = runner.run(cstring, **rkwargs)
         # disowned case
         if output is None:
             return
@@ -811,6 +818,7 @@ class Viewer:
         ctx: Optional[invoke.context.Context] = None,
         runclass: Optional[invoke.Runner] = None,
         cbuffer: Optional[CBuffer] = None,
+        chunksize: int = 20000,
         **kwargs: Any,
     ) -> "Viewer":
         """
@@ -831,6 +839,7 @@ class Viewer:
                 does not.
             cbuffer: context buffer for `Viewer`. Creates a new `CBuffer` if
                 not specified.
+            chunksize: number of bytes to read at once from stdout/stderr.
             kwargs: additional keyword arguments for the executed shell
                 command. See `RunCommand.__call__()` for a detailed
                 description of behavior.
@@ -841,7 +850,7 @@ class Viewer:
         if cbuffer is None:
             cbuffer = CBuffer()
         if not isinstance(command, RunCommand):
-            command = RunCommand(command, ctx, runclass)
+            command = RunCommand(command, ctx, runclass, chunksize=chunksize)
         # note that Viewers _only_ run commands asynchronously. use the wait
         # or wait_for_output methods if you want to block.
         base_kwargs = {
