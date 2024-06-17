@@ -683,7 +683,7 @@ class RunCommand:
                 *args,
                 ctx=self.ctx,
                 runclass=self.runclass,
-                chunksize=self.chunksize
+                chunksize=self.chunksize,
                 **(rkwargs | kwargs),
             )
         else:
