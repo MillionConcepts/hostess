@@ -1,5 +1,10 @@
 # Version History
 
+## [0.9.21] - 2024-06-17
+
+### Fixed
+- bug in `subutils` that broke some remote invocations
+
 ## [0.9.2] - 2024-05-07
 
 ### Added
