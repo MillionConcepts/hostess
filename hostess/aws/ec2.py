@@ -1968,7 +1968,7 @@ class Cluster:
         options: Optional[dict] = None,
         tags: Optional[dict] = None,
         client: Optional[botocore.client.BaseClient] = None,
-        session: Optional[boto3.session] = None,
+        session: Optional[boto3.Session] = None,
         wait: bool = True,
         connect: bool = False,
         maxtries: int = 40,
@@ -2194,7 +2194,7 @@ class Cluster:
 def get_canonical_images(
     architecture: Literal["x86_64", "arm64", "i386"] = "x86_64",
     client: Optional[botocore.client.BaseClient] = None,
-    session: Optional[boto3.session] = None,
+    session: Optional[boto3.Session] = None,
 ) -> list[dict]:
     """
     fetch the subset of official (we refuse to make the obvious pun) Ubuntu
@@ -2232,7 +2232,7 @@ def get_canonical_images(
 def get_stock_ubuntu_image(
     architecture: Literal["x86_64", "arm64", "i386"] = "x86_64",
     client: Optional[botocore.client.BaseClient] = None,
-    session: Optional[boto3.session] = None,
+    session: Optional[boto3.Session] = None,
 ) -> str:
     """
     retrieve image ID of the most recent officially-supported
@@ -2332,7 +2332,7 @@ def describe_instance_type(
     pricing: bool = True,
     ec2_client: Optional[botocore.client.BaseClient] = None,
     pricing_client: Optional[botocore.client.BaseClient] = None,
-    session: Optional[boto3.session.Session] = None,
+    session: Optional[boto3.Session] = None,
 ) -> dict:
     """
     Retrieve a succinct description of an EC2 instance type.
@@ -2371,7 +2371,7 @@ def describe_instance_type(
 
 def _retrieve_instance_type_info(
     client: Optional[botocore.client.BaseClient] = None,
-    session: Optional[boto3.session.Session] = None,
+    session: Optional[boto3.Session] = None,
     reset_cache: bool = False,
 ) -> tuple[dict]:
     """
@@ -2417,7 +2417,7 @@ def _retrieve_instance_type_info(
 def instance_catalog(
     family: Optional[str] = None,
     client: Optional[botocore.client.BaseClient] = None,
-    session: Optional[boto3.session.Session] = None,
+    session: Optional[boto3.Session] = None,
 ) -> pd.DataFrame:
     """
     Construct a catalog of available instance types, including their
@@ -2563,7 +2563,7 @@ def create_security_group(
     description: Optional[str] = None,
     client: Optional[botocore.client.BaseClient] = None,
     resource: Optional[boto3.resources.base.ServiceResource] = None,
-    session: Optional[boto3.session.Session] = None,
+    session: Optional[boto3.Session] = None,
 ) -> "SecurityGroup":
     """
     Create a new EC2 security group in the caller's AWS account with default
@@ -2632,7 +2632,7 @@ def create_ec2_key(
     key_name: Optional[str] = None,
     save_key: bool = True,
     resource: Optional[boto3.resources.base.ServiceResource] = None,
-    session: Optional[boto3.session.Session] = None,
+    session: Optional[boto3.Session] = None,
 ) -> "KeyPair":
     """
     Create a new EC2 SSH key pair in the caller's AWS account. Optionally also
@@ -2680,7 +2680,7 @@ def create_launch_template(
     tags: Optional[dict] = None,
     key_name: Optional[str] = None,
     client: Optional[botocore.client.BaseClient] = None,
-    session: Optional[boto3.session.Session] = None,
+    session: Optional[boto3.Session] = None,
 ) -> dict:
     """
     Create a new EC2 launch template in the caller's AWS account (see
