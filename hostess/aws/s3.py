@@ -769,7 +769,7 @@ class Bucket:
     @staticmethod
     def _maybe_write_ls_cache(page: dict, cache: Optional[Union[Path, IO]]):
         """helper function for Bucket.ls()"""
-        if (cache is None) or (objects := page.get("Contents") is None):
+        if (cache is None) or (objects := page.get("Contents")) is None:
             return
         stream = cache if not isinstance(cache, Path) else cache.open("a+")
         try:
