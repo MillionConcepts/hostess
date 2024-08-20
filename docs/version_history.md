@@ -8,7 +8,7 @@
 - bug causing `aws.s3.Bucket.ls` to fail in cache-write mode
 
 ### Removed
-- `hostess` no longer supportss Python 3.9.
+- `hostess` no longer supports Python 3.9.
 
 ## [0.9.2] - 2024-05-07
 
