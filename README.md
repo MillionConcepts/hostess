@@ -17,8 +17,8 @@ a general-purpose utility and administration library.
 ## installation
 
 `hostess` is available on PyPI and conda-forge. We recommend installing it
-into a Conda environment using `mamba`:
-`mamba install -n my_environment -c conda-forge hostess`. 
+into a Conda environment using `conda`:
+`conda install -n my_environment -c conda-forge hostess`. 
 
 The conda-forge package installs all optional dependencies other than those
 for tests and Notebooks. If you require more granular control over 
