@@ -1,9 +1,14 @@
 # Version History
 
-## [0.9.21] - 2024-06-17
+## [0.10.1] - 2024-08-20
 
 ### Fixed
-- bug in `subutils` that broke some remote invocations
+- bug causing some remote invocations to fail
+- incorrect `boto.Session` type hints
+- bug causing `aws.s3.Bucket.ls` to fail in cache-write mode
+
+### Removed
+- `hostess` no longer supportss Python 3.9.
 
 ## [0.9.2] - 2024-05-07
 
