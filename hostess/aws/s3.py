@@ -179,11 +179,6 @@ class Bucket:
         if config is None:
             config = boto3.s3.transfer.TransferConfig(**S3_DEFAULTS["config"])
         self.config = config
-        # populate s3 operations
-        for name, thing in getmembers(sys.modules[__name__]):
-            if name not in Bucket.__annotations__.keys():
-                continue
-            setattr(self, name, partial(thing, self, config=self.config))
         self.n_threads = n_threads
 
     def update_contents(
