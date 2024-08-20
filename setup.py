@@ -10,7 +10,7 @@ setup(
     package_data={
         "": ["station/tests/test_data/*.*", "station/proto/*.*"]
     },
-    python_requires=">=3.9",
+    python_requires=">=3.10",
     classifiers=[
         "Development Status :: 4 - Beta",
         "Environment :: Console",
