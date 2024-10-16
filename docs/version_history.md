@@ -1,5 +1,23 @@
 # Version History
 
+## [X.X.X] - 202X-XX-XX
+### Added
+
+#### Features
+
+
+#### Dataset Support
+
+
+### Changed
+
+
+### Fixed
+
+
+### Removed
+
+
 ## [0.10.2] - 2024-10-16
 
 ### Fixed
