@@ -2844,12 +2844,21 @@ def revoke_ingress(
         f"{sg.id}"
     )
     for rule in sg.ip_permissions:
-        # do not modify ingress rules based on security group (and not just IP)
         if not (
-            rule["FromPort"] in ports
-            and rule["IpProtocol"] in protocols
-            and any(sg.ip_permissions[1]["UserIdGroupPairs"])
+            rule["FromPort"] in ports and rule["IpProtocol"] in protocols
         ):
+            continue  # irrelevant rule
+        # do not remove ingress permissions based on security group
+        # (and not just IP).
+        if 'UserIdGroupPairs' in rule:
+            if len(rule.get('IpRanges', []) + rule.get('Ipv6Ranges', [])) == 0:
+                continue
+            # to do this for ingress rules that contain both security group
+            # and IP permissions, you must revoke, modify, and then reauthorize
+            # the rule.
+            sg.revoke_ingress(IpPermissions=[rule])
+            rule['IpRanges'], rule['Ipv6Ranges'] = [], []
+            sg.authorize_ingress(IpPermissions=[rule])
             continue
         sg.revoke_ingress(IpPermissions=[rule])
 
