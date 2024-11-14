@@ -4,6 +4,7 @@ purposes.
 """
 import random
 import time
+import sys
 from itertools import chain
 from pathlib import Path
 from string import ascii_lowercase
@@ -112,6 +113,7 @@ def make_sample_station():
     host, port = "localhost", random.randint(10000, 20000)
 
     station = Station(host, port)
+    station.start()
     station.save_port_to_shared_memory()
     delkwargs = {"update_interval": 0.5, "context": "local"}
     station.launch_delegate(
@@ -146,7 +148,6 @@ def make_sample_station():
     station._handle_incoming_message = ticked(
         station._handle_incoming_message, "Updates received", SITSTATION_TICKER
     )
-    station.start()
     if (textfile := Path("dump.txt")).exists():
         textfile.unlink()
     return station
@@ -187,12 +188,11 @@ def run_sample_backend(n_writes: int = 1000, verbose: bool = True):
             i = _backend_loop(i, n_writes, verbose, station)
     except KeyboardInterrupt:
         print("\nstopping on keyboard interrupt\n")
+        station.shutdown()
     except Exception as ex:
         exception = ex
         print(exception)
-    finally:
         station.shutdown(exception)
-
 
 if __name__ == "__main__":
     fire.Fire(run_sample_backend)
