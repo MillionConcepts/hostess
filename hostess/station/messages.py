@@ -1,5 +1,4 @@
 """utilities for interpreting and constructing hostess protobuf Messages."""
-
 from __future__ import annotations
 
 from ast import literal_eval
@@ -28,11 +27,7 @@ from dustgoggles.func import gmap
 from dustgoggles.structures import dig_for_values
 from google.protobuf.internal.well_known_types import Duration, Timestamp
 from google.protobuf.message import Message
-from google.protobuf.pyext._message import (
-    RepeatedCompositeContainer,
-    RepeatedScalarContainer,
-    ScalarMapContainer,
-)
+
 from more_itertools import split_when, all_equal
 import numpy as np
 
@@ -546,8 +541,12 @@ class Mailbox:
     wilco = property(_get_wilco)
 
 
-def unpack_message(msg: Union[Message, RepeatedCompositeContainer]):
-    if isinstance(msg, RepeatedCompositeContainer):
+# NOTE: We are performing string comparisons for classes because Google keeps
+#  breaking the API for explicitly importing the protobuf message type objects.
+# TODO: is there some workaround? This is probably inefficient.
+
+def unpack_message(msg: Union[Message, "RepeatedCompositeContainer"]):
+    if msg.__class__.__name__ == "RepeatedCompositeContainer":
         formatted = []
         for i in msg:
             try:
@@ -574,16 +573,21 @@ def unpack_message(msg: Union[Message, RepeatedCompositeContainer]):
         # they look like lists, but they're not!
         elif hasattr(element, "__len__") and (len(element) == 0):
             continue
-        elif isinstance(element, ScalarMapContainer):
+        # TODO: this appears to be replaced in protobuf5 with ScalarMap. the
+        #  comparison to the ABC is inefficient but perhaps unavoidable.
+        elif isinstance(element, MutableMapping):
             formatted[k] = dict(element)
-        elif isinstance(element, RepeatedScalarContainer):
+        elif element.__class__.__name__ == "RepeatedScalarContainer":
             # noinspection PyTypeChecker
             formatted[k] = list(element)
         elif isinstance(element, (Timestamp, Duration)):
             formatted[k] = element.ToJsonString()
         elif ("ListFields" in dir(element)) and (element.ListFields() == []):
             continue
-        elif isinstance(element, Union[Message, RepeatedCompositeContainer]):
+        elif (
+            isinstance(element, Message)
+            or element.__class__.__name__ == "RepeatedCompositeContainer"
+        ):
             formatted[k] = unpack_message(element)
         else:
             formatted[k] = element

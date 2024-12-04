@@ -32,7 +32,7 @@ from dustgoggles.dynamic import exc_report
 import yaml
 
 # noinspection PyProtectedMember
-from google.protobuf.pyext._message import Message
+from google.protobuf.message import Message
 
 from hostess.station.handlers import flatten_for_json, json_sanitize
 from hostess.station.messages import Mailbox
