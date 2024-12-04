@@ -4,7 +4,7 @@
 
 [project]
 name        = "hostess"
-version     = "0.10.1"
+version     = "0.10.2"
 description = "intuitive admin library"
 readme      = "README.md"
 license     = { file = "LICENSE.md" }
@@ -59,8 +59,8 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.package-data]
 hostess = ["station/tests/test_data/*.*", "station/proto/*.*"]
 
-[tool.setuptools]
-packages = ["hostess"]
+[tool.setuptools.packages]
+find = {namespaces = false}
 
 # Recommended for new projects by pytest manual.
 [tool.pytest.ini_options]

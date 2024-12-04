@@ -1,5 +1,10 @@
 # Version History
 
+## [0.10.2] - 2024-10-16
+
+### Fixed
+- bug in pyproject.toml which left out aws and config modules in fresh installs
+
 ## [0.10.1] - 2024-08-20
 
 ### Fixed
