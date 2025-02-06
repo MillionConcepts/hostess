@@ -234,11 +234,16 @@ def _maybe_release_locals(localdict: MutableMapping, frame: FrameType) -> bool:
         frame: frame `localdict` came from
 
     Returns:
-        True if we cleared `localdict`, False we didn't
+        True if we cleared `localdict`,, False we didn't
+
+    Note:
+        Always skipped in Python>=3.13, as the introduction of FrameLocalsProxy
+            makes it unnecessary.
     """
     if frame.f_code.co_name != "<module>":
-        localdict.clear()
-        return True
+        if hasattr(localdict, "clear"):
+            localdict.clear()
+            return True
     return False
 
 
