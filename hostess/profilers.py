@@ -455,7 +455,8 @@ def yclept(obj: Any, terse: bool = True, stepback: int = 1) -> Refnom:
         if frame.f_code.co_name != "<module>":
             # don't bother adding redundant local varnames at top level
             _add_varnames(obj, localdict, rec, "locals")
-            localdict.clear()  # see _maybe_release_locals
+            if hasattr(localdict, "clear"):
+                localdict.clear()  # see _maybe_release_locals
         del globaldict, localdict, builtindict
         if len(rec["names"]) > 0:
             rec["names"] = tuple(rec["names"])
