@@ -64,14 +64,14 @@ def get_ec2_product_family_pricelists(
 
 
 def get_ebs_iops_rates(region=None, client=None, session=None):
-    return {
-        pricelist["product"]["attributes"]["volumeApiName"].lower(): float(
-            dig_for_value(pricelist, "USD")
-        )
-        for pricelist in get_ec2_product_family_pricelists(
-            "System Operation", region, client, session
-        )
-    }
+    rates = {}
+    for pl in get_ec2_product_family_pricelists(
+        "System Operation", region, client, session
+    ):
+        voltype = pl["product"]["attributes"].get("volumeApiName")
+        if voltype is not None:
+            rates[voltype.lower()] = float(dig_for_value(pl, "USD"))
+    return rates
 
 
 def get_ebs_throughput_rates(region=None, client=None, session=None):
