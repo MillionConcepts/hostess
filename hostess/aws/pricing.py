@@ -75,14 +75,15 @@ def get_ebs_iops_rates(region=None, client=None, session=None):
 
 
 def get_ebs_throughput_rates(region=None, client=None, session=None):
-    return {
-        pricelist["product"]["attributes"]["volumeApiName"].lower(): float(
-            dig_for_value(pricelist, "USD")
-        )
-        for pricelist in get_ec2_product_family_pricelists(
-            "Provisioned Throughput", region, client, session
-        )
-    }
+    rates = {}
+    for pl in get_ec2_product_family_pricelists(
+        "Provisioned Throughput", region, client, session
+    ):
+        voltype = pl["product"]["attributes"].get("volumeApiName")
+        if voltype is not None:
+            # price is given in GiBps-mo for some reason
+            rates[voltype.lower()] = float(dig_for_value(pl, "USD")) / 1024
+    return rates
 
 
 def get_ebs_storage_rates(region=None, client=None, session=None):
