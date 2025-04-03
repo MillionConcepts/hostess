@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from itertools import chain
+from queue import Queue
 import time
 from typing import Hashable, Mapping, Optional, Sequence, Union
 
@@ -145,6 +146,7 @@ class ServerPool:
         self.taskmap = {getattr(h, idattr): {} for h in hosts}
         self.idattr = idattr
         self.pending, self.completed = {}, {}
+        self.completed_queue = Queue()
         self.closed, self.terminated = False, False
         self.pollthread, self.exc = None, ThreadPoolExecutor(1)
         self.task_ix, self.poll = 0, poll
@@ -223,6 +225,7 @@ class ServerPool:
                 for tix, task in tuple(tasks.items()):
                     if task.done:
                         self.completed[tix] = tasks.pop(tix).get()
+                        self.completed_queue.put(self.completed[tix])
                     elif self.terminated is True:
                         task.kill()
                     else:
