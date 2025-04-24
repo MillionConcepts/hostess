@@ -333,6 +333,61 @@ class Instance:
         self.update()
 
     @classmethod
+    def find(
+        cls,
+        identifier: Optional[InstanceIdentifier] = None,
+        states: Sequence[str] = ("running", "pending", "stopping", "stopped"),
+        raw_filters: Optional[Sequence[Mapping[str, str]]] = None,
+        client: Optional[botocore.client.BaseClient] = None,
+        session: Optional[boto3.Session] = None,
+        long: bool = False,
+        tag_regex: bool = True,
+        uname: str = GENERAL_DEFAULTS["uname"],
+        *,
+        key: Optional[Path] = None,
+        resource: Optional[boto3.resources.base.ServiceResource] = None,
+        use_private_ip: bool = False,
+        pick_first: bool = False,
+        **tag_filters: str
+    ) -> "Instance":
+        """
+        Forwards relevant passed arguments to `ls_instances()` and returns an
+        Instance constructed from the first match, passing relevant arguments
+        to `Instance.__init__()`. It also accepts one unique argument,
+        `pick_first`; if `True`, it will return the first instance found in
+        the case of multiple matches; otherwise (default) raise a ValueError.
+
+        Arguments passed to `ls_instances()`:
+            `identifier`, `states`, `raw_filters`, `client`, `session`,
+            `long`, `tag_regex`, `tag_filters`
+
+        Arguments passed to `Instance.__init__()`:
+            `uname`, `key`, `client`, `resource`, `session`, `use_private_ip`
+
+        See documentation for those functions for full discussion of those
+        arguments.
+
+        Raises:
+            KeyError: If `ls_instances()` finds no matching instances.
+            ValueError: If `ls_instances` finds more than one matching
+                instance and `pick_first` is not True.
+        """
+        search_result = ls_instances(identifier, states, raw_filters, client,
+                                     session, long, tag_regex, **tag_filters)
+        if len(search_result) == 0:
+            raise KeyError("No matching instances found")
+        if len(search_result) > 1 and pick_first is not True:
+            raise ValueError(
+                "More than one matching instance found. Pass pick_first=True "
+                "to select the first matching instance. Note that instance "
+                "order in search results is undefined and may not be "
+                "consistent across multiple calls to this function."
+            )
+        return Instance(search_result[0], uname=uname, key=key,
+                        resource=resource, use_private_ip=use_private_ip,
+                        client=client, session=session)
+
+    @classmethod
     def launch(
         cls,
         template=None,
@@ -372,6 +427,27 @@ class Instance:
             maxtries,
             **instance_kwargs,
         )[0]
+
+    def make_ssh_string(self) -> str:
+        """
+        Convenience method that returns a terminal command a local user might
+        run in a shell, assuming correct system configuration, in order
+        to start an interactive SSH session on this instance. This performs
+        no system-level verification that this command will actually work
+        (for instance, it does not check to see if `ssh` is locally
+        installed). This does not imply that `Instance` executed, or will
+        execute, this command at any point (it did not and will not).
+
+        Returns:
+            A string that, if run in a local shell, may start an interactive
+            SSH session.
+        """
+        if self.key is None or self.ip is None:
+            raise ValueError(
+                "No connection established to instance. Cannot confirm "
+                "keyfile or ip. Run self.connect() first."
+            )
+        return f"ssh -i {self.key} {self.uname}@{self.ip}"
 
     def wait_on_connection(self, maxtries: int):
         """block until an SSH connection to the instance is established"""

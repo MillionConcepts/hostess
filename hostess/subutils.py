@@ -743,12 +743,14 @@ class Viewer:
     def __getattr__(self, attr):
         if attr == "runner":
             return super().__getattribute__(attr)
-        elif attr == "process":
+        elif attr == "process" and hasattr(self.runner, "process"):
             return self.runner.process
-        try:
-            return getattr(self.runner, attr)
-        except AttributeError:
-            return getattr(self.process, attr)
+        elif attr == "process":
+            # should occur on remote hosts only
+            return None
+        for underlying in filter(None, (self.runner, self.process)):
+            return getattr(underlying, attr)
+        raise AttributeError(f"'Viewer' object has no attribute {attr}")
 
     def _is_done(self) -> bool:
         return self.runner.process_is_finished
