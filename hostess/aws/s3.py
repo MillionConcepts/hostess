@@ -12,12 +12,10 @@ like the syntax better.
 """
 import datetime as dt
 import inspect
-import sys
 import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial, wraps
-from inspect import getmembers
 from io import BytesIO, IOBase, StringIO
 from itertools import chain, cycle
 from pathlib import Path
@@ -566,8 +564,7 @@ class Bucket:
             if not isinstance(destination, IOBase):
                 Path(destination).parent.mkdir(parents=True, exist_ok=True)
             future = manager.download(*args, **kwargs)
-        print("result", future.result())
-        if "seek" in dir(destination):
+        if hasattr(destination, "seek"):
             destination.seek(0)
         return destination
 
