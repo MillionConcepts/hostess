@@ -42,7 +42,9 @@ import pandas as pd
 import requests
 from cytoolz import keyfilter, valfilter
 from dustgoggles.func import naturals
+from s3transfer.manager import TransferManager
 
+from hostess.aws._s3transfer_extensions.threadpool_range import TransferManagerWithRange
 from hostess.aws.utilities import init_client, init_resource
 from hostess.config.config import S3_DEFAULTS
 from hostess.utilities import (
@@ -553,24 +555,19 @@ class Bucket:
             This may change in the future.
         """
         # TODO: add more useful error messages for streams opened in text mode
-        if config is None:
-            config = self.config
-        if destination is None:
-            destination = BytesIO()
+        config = self.config if config is None else config
+        destination = BytesIO() if destination is None else destination
         start_byte = None if start_byte == 0 else start_byte
+        args, kwargs = (self.name, key, destination), {}
         if start_byte is not None or end_byte is not None:
-            return self._get_ranged(
-                key, destination, config, start_byte, end_byte
-            )
-        if isinstance(destination, IOBase):
-            self.client.download_fileobj(
-                self.name, key, destination, Config=config
-            )
+            manager_class = TransferManagerWithRange
+            kwargs = {'start_byte': start_byte, 'end_byte': end_byte}
         else:
-            Path(destination).parent.mkdir(parents=True, exist_ok=True)
-            self.client.download_file(
-                self.name, key, destination, Config=config
-            )
+            manager_class = TransferManager
+        with manager_class(self.client, config) as manager:
+            if not isinstance(destination, IOBase):
+                Path(destination).parent.mkdir(parents=True, exist_ok=True)
+            manager.download(*args, **kwargs)
         if "seek" in dir(destination):
             destination.seek(0)
         return destination
@@ -580,6 +577,8 @@ class Bucket:
         key: str,
         mode: Literal["r", "rb"] = "r",
         return_buffer: bool = False,
+        start_byte: Optional[int] = None,
+        end_byte: Optional[int] = None
     ) -> Union[bytes, str, BytesIO, StringIO]:
         """
         Read an S3 object into memory.
@@ -589,12 +588,14 @@ class Bucket:
             mode: 'r' to read as text, 'rb' as bytes
             return_buffer: if True, return object as a StringIO/BytesIO; if
                 False, return it as str/bytes
+            start_byte: if not None, start reading at this byte
+            end_byte: if not None, stop reading at this byte
 
         Returns:
             Contents of object, in format specified by `mode` and
                 `return_buffer`.
         """
-        buf = self.get(key)
+        buf = self.get(key, start_byte=start_byte, end_byte=end_byte)
         if return_buffer is True:
             if mode == "rb":
                 return buf
