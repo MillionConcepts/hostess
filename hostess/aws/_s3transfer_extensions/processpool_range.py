@@ -39,13 +39,11 @@ def calculate_range_parameter_with_bounds(
 class GetObjectSubmitterWithRange(GetObjectSubmitter):
 
     def _get_size(self, download_file_request):
-        
-        size = (
+        return (
             download_file_request.end_byte 
             - download_file_request.start_byte 
             + 1
         )
-        return size
 
     def _submit_get_object_jobs(self, download_file_request):
         size = self._get_size(download_file_request)
@@ -131,7 +129,6 @@ class ProcessPoolDownloaderWithRange(ProcessPoolDownloader):
             start_byte=start_byte,
             end_byte=end_byte
         )
-
         self._download_request_queue.put(download_file_request)
         call_args = CallArgs(
             bucket=bucket,

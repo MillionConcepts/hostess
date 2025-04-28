@@ -511,6 +511,8 @@ class Bucket:
             Sequence[Union[str, Path, IOBase, None]],
         ] = None,
         config: Optional[boto3.s3.transfer.TransferConfig] = None,
+        start_byte: Optional[int] = None,
+        end_byte: Optional[int] = None
     ) -> Union[
         Union[Path, str, IOBase], list[Union[Path, str, IOBase, Exception]]
     ]:
@@ -523,17 +525,43 @@ class Bucket:
                 or filelike object(s). If not specified, constructs new BytesIO
                 buffer(s).
             config: optional transfer config
-
+            start_byte: Byte index at which to begin read. None
+                (default) or 0 means the first byte of the object. Must be
+                0, positive, or None.
+            end_byte: Byte index at which to end read. None
+                (default) means the last byte of the object. Negative
+                integers are interpreted as Python-style negative slice
+                indices. e.g., passing `start_byte=0` and `end_byte=-1` means
+                'read all the bytes but the last one', analogous to
+                `my_list[0:-1]`.
         Returns:
             outpath: the path, string, or buffer we wrote the object to, or,
                 for multi-get, a list containing one such outpath for each
                 successful write and an Exception for each failed write
+
+        Caution:
+            This does not currently support specifying different byte ranges
+            for different objects. In other words, this is not legal:
+            ```
+            Bucket.get(
+                [k1, k2], [f1, f2], start_byte=[s1, s2], end_byte=[e1, e2]
+            )
+            ```
+            If specified in a multi-object call to `get()`, `start_byte` and
+            `end_byte` will fetch the same range from each object.
+
+            This may change in the future.
         """
         # TODO: add more useful error messages for streams opened in text mode
         if config is None:
             config = self.config
         if destination is None:
             destination = BytesIO()
+        start_byte = None if start_byte == 0 else start_byte
+        if start_byte is not None or end_byte is not None:
+            return self._get_ranged(
+                key, destination, config, start_byte, end_byte
+            )
         if isinstance(destination, IOBase):
             self.client.download_fileobj(
                 self.name, key, destination, Config=config
@@ -725,7 +753,7 @@ class Bucket:
             if cache_only is False:
                 pages.append(page)
         if cache_only is True:
-            return
+            return None
         if formatting not in ("raw", "simple", "df", "contents"):
             warnings.warn(
                 f"invalid formatting '{formatting}', defaulting to 'simple'"
