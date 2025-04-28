@@ -1,9 +1,13 @@
+"""
+This module extends s3transfer's ProcessPoolDownloader and GetObjectSubmitter
+objects to support range requests. It is not currently used in hostess's
+high-level interface. This may change in the future.
+"""
 import collections
 from typing import Optional
 
 from s3transfer.processpool import GetObjectSubmitter, ProcessPoolDownloader
 from s3transfer.utils import calculate_num_parts, CallArgs
-
 
 
 DownloadFileRequestWithRange = collections.namedtuple(

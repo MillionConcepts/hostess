@@ -1,3 +1,7 @@
+"""
+This module extends s3transfer's TransferManager and DownloadSubmissionTask
+objects to support range requests.
+"""
 from s3transfer.download import DownloadSubmissionTask, GetObjectTask
 from s3transfer.manager import TransferManager
 from s3transfer.utils import (
