@@ -58,8 +58,6 @@ class DownloadSubmissionTaskWithRange(DownloadSubmissionTask):
         transfer_future,
         bandwidth_limiter,
     ):
-        call_args = transfer_future.meta.call_args
-
         # Get the needed progress callbacks for the task
         progress_callbacks = get_callbacks(transfer_future, 'progress')
 
@@ -74,16 +72,19 @@ class DownloadSubmissionTaskWithRange(DownloadSubmissionTask):
         start_byte = call_args.start_byte
         end_byte = call_args.end_byte
         start_byte = 0 if start_byte is None else start_byte
-        if end_byte is None or end_byte < 0:
+        if end_byte is None or end_byte < 0 or start_byte < 0:
             total_size = client.head_object(
                 Bucket=call_args.bucket,
                 Key=call_args.key,
                 **call_args.extra_args,
             )['ContentLength']
-            seekback = 0 if end_byte is None else end_byte
-            end_byte = total_size + seekback - 1
+            if end_byte is None or end_byte < 0:
+                seekback = 0 if end_byte is None else end_byte
+                end_byte = total_size + seekback - 1
+            if start_byte < 0:
+                start_byte = total_size + start_byte
 
-        num_parts = calculate_num_parts(end_byte - start_byte, part_size)
+        num_parts = calculate_num_parts(end_byte - start_byte + 1, part_size)
 
         # Get any associated tags for the get object task.
         get_object_tag = download_output_manager.get_download_task_tag()
@@ -100,7 +101,7 @@ class DownloadSubmissionTaskWithRange(DownloadSubmissionTask):
             range_parameter = calculate_range_parameter_with_bounds(
                 part_size, i, num_parts, start_byte, end_byte
             )
-
+            # range_parameter = 'bytes=294-294'
             # Inject the Range parameter to the parameters to be passed in
             # as extra args
             extra_args = {'Range': range_parameter}

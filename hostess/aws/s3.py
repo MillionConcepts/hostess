@@ -527,15 +527,13 @@ class Bucket:
                 or filelike object(s). If not specified, constructs new BytesIO
                 buffer(s).
             config: optional transfer config
-            start_byte: Byte index at which to begin read. None
-                (default) or 0 means the first byte of the object. Must be
-                0, positive, or None.
-            end_byte: Byte index at which to end read. None
-                (default) means the last byte of the object. Negative
-                integers are interpreted as Python-style negative slice
-                indices. e.g., passing `start_byte=0` and `end_byte=-1` means
-                'read all the bytes but the last one', analogous to
-                `my_list[0:-1]`.
+            start_byte: Byte index at which to begin read. None (default) or
+                0 means the first byte of the object. Negative integers are
+                interpreted as Python-style negative slice indices. e.g.,
+                `start_byte=0` and `end_byte=-1` means 'read all the bytes
+                but the last one', analogous to `my_list[0:-1]`.
+            end_byte: Byte index at which to end read. None (default) means
+                the last byte of the object.
         Returns:
             outpath: the path, string, or buffer we wrote the object to, or,
                 for multi-get, a list containing one such outpath for each
@@ -567,7 +565,8 @@ class Bucket:
         with manager_class(self.client, config) as manager:
             if not isinstance(destination, IOBase):
                 Path(destination).parent.mkdir(parents=True, exist_ok=True)
-            manager.download(*args, **kwargs)
+            future = manager.download(*args, **kwargs)
+        print("result", future.result())
         if "seek" in dir(destination):
             destination.seek(0)
         return destination

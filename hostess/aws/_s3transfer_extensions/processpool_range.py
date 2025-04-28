@@ -112,14 +112,16 @@ class ProcessPoolDownloaderWithRange(ProcessPoolDownloader):
         self._validate_all_known_args(extra_args)
         transfer_id = self._transfer_monitor.notify_new_transfer()
         start_byte = 0 if start_byte is None else start_byte
-        if end_byte is None or end_byte < 0:
+        if end_byte is None or end_byte < 0 or start_byte < 0:
             total_size = self._client_factory.create_client().head_object(
                 Bucket=bucket,
                 Key=key,
                 **extra_args,
             )['ContentLength']
-            seekback = 0 if end_byte is None else end_byte
-            end_byte = total_size + seekback - 1
+            seekback_end = 0 if end_byte is None else end_byte
+            end_byte = total_size + seekback_end - 1
+            seekback_start = 0 if start_byte >= 0 else start_byte
+            start_byte = total_size + seekback_start - 1
         download_file_request = DownloadFileRequestWithRange(
             transfer_id=transfer_id,
             bucket=bucket,
