@@ -1,39 +1,14 @@
-import atexit
-import random
 from itertools import chain
 from pathlib import Path
-from string import ascii_lowercase
+import random
 from tempfile import NamedTemporaryFile
-from typing import Callable, Any
 
 import boto3
-import pytest
 from botocore.exceptions import ClientError
+import pytest
 
 from hostess.aws.s3 import Bucket
-from hostess.aws.utilities import init_client, whoami
-
-
-@pytest.fixture(scope="session")
-def aws_reachable():
-    """
-    Check that we can access AWS at all. Avoids use of hostess
-    code. This calls STS GetCallerIdentity, which is always available to every
-    AWS account even if an administrator attempts to explicitly remove
-    permissions for it. If this fails, there could be a regression in boto3,
-    but it probably indicates an expired account, missing or mangled local
-    config/credential files, or a network issue.
-    """
-    session = boto3.Session()
-    sts = session.client("sts")
-    try:
-        ident = sts.get_caller_identity()
-    except ClientError as ce:
-        raise OSError(
-            f"Can't reach AWS: {ce}. Skipping all live AWS tests. Check "
-            f"network status and local account configuration."
-        )
-    return ident
+from hostess.aws.tests.aws_test_utils import aws_reachable, randstr
 
 
 def empty_bucket(name, *, delete_bucket=False):
@@ -70,7 +45,7 @@ def temp_bucket_name():
     create objects but not delete objects. There is nothing we can do about
     this.
     """
-    name = f"hostess-{''.join(random.choices(ascii_lowercase, k=10))}"
+    name = f"hostess-test-{randstr(20)}"
     try:
         session = boto3.Session()
         s3 = session.client("s3")
@@ -170,9 +145,7 @@ def test_ls_cases(
 def test_df(aws_reachable, temp_bucket_name, clean_temp_bucket):
     bucket = Bucket(temp_bucket_name)
     prefixes = {
-        "".join(random.choices("abcdefghijklmnop123", k=15)):
-            ["".join(random.choices("abcdefghiklmno", k=25)) for _ in range(5)]
-        for _ in range(2)
+        randstr(15): [randstr(25) for _ in range(5)] for _ in range(2)
     }
     all_keys = tuple(
         chain(*([f"{p}/{n}" for n in ns] for p, ns in prefixes.items()))
