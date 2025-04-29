@@ -42,14 +42,13 @@ from cytoolz import keyfilter, valfilter
 from dustgoggles.func import naturals
 from s3transfer.manager import TransferManager
 
-from hostess.aws._s3transfer_extensions.threadpool_range import TransferManagerWithRange
+from hostess.aws.s3transfer_extensions.threadpool_range import (
+    TransferManagerWithRange
+)
 from hostess.aws.utilities import init_client, init_resource
 from hostess.config.config import S3_DEFAULTS
 from hostess.utilities import (
-    curry,
-    console_and_log,
-    infer_stream_length,
-    stamp,
+    curry, console_and_log, infer_stream_length, stamp
 )
 
 Puttable = Union[str, Path, IOBase, bytes]
@@ -91,6 +90,7 @@ def splitwrap(
             bound.pop(params[2], None)
             if (tseq is False) and (target is not None):
                 raise TypeError("Mismatched sequence/nonsequence call")
+            # noinspection PyTypeChecker
             if target is None:
                 target = cycle((None,))
             elif len(source) != len(target):
@@ -411,7 +411,7 @@ class Bucket:
             uri: URI of frozen object, or list containing URI of each
                 frozen object if its freeze succeeded and an Exception if not
         """
-        return self.cp(key, extra_args={"StorageClass": storage_class})
+        return self.cp(key, StorageClass=storage_class)
 
     @splitwrap(seq_arity=1)
     def restore(
@@ -456,6 +456,8 @@ class Bucket:
         key: Optional[Union[str, Sequence[str]]] = None,
         literal_str: bool = False,
         config: Optional[boto3.s3.transfer.TransferConfig] = None,
+        **extra_args: str
+
     ) -> Union[None, list[Optional[Exception]]]:
         """
         Upload files or buffers to an S3 bucket
@@ -472,6 +474,7 @@ class Bucket:
                 containing strings, write all such strings directly to objects.
                 Otherwise, interpret them as paths to local files
             config: boto3.s3.transfer.TransferConfig; bucket's default if None
+            extra_args: ExtraArgs for boto3 bucket object
 
         Returns:
             None, or, for multi-upload, a list containing None for each
@@ -481,6 +484,12 @@ class Bucket:
         # If S3 key was not specified, use string rep of
         # passed object, up to 1024 characters
         key = str(obj)[:1024] if key is None else key
+        base_kwargs = {
+            "Bucket": self.name,
+            "Key": key,
+            "Config": config,
+            "ExtraArgs": extra_args
+        }
         # 'touch' - type behavior
         if obj is None:
             obj = BytesIO()
@@ -488,19 +497,19 @@ class Bucket:
         if (isinstance(obj, str) and literal_str is False) or (
             isinstance(obj, Path)
         ):
-            return self.client.upload_file(
-                Bucket=self.name, Filename=str(obj), Key=key, Config=config
-            )
+            return self.client.upload_file(Filename=str(obj), **base_kwargs)
         # or: upload in-memory objects
-        # encode string to bytes if we're writing it to S3 object instead
+        # encode string to bytes if we're writing it to an S3 object instead
         # of interpreting it as a path
-        if isinstance(obj, str) and literal_str is True:
-            obj = BytesIO(obj.encode("utf-8"))
-        elif isinstance(obj, bytes):
+        if isinstance(obj, str):
+            obj = obj.encode("utf-8")
+        if isinstance(obj, bytes):
             obj = BytesIO(obj)
-        return self.client.upload_fileobj(
-            Bucket=self.name, Fileobj=obj, Key=key, Config=config
-        )
+        # if it's not string or bytes, it has to be buffer/file-like.
+        # this isn't a perfect heuristic, of course!
+        elif not hasattr(obj, "read"):
+            raise TypeError(f"Cannot put object of type {obj}")
+        return self.client.upload_fileobj(Fileobj=obj, **base_kwargs)
 
     @splitwrap(seq_arity=2)
     def get(
@@ -512,7 +521,8 @@ class Bucket:
         ] = None,
         config: Optional[boto3.s3.transfer.TransferConfig] = None,
         start_byte: Optional[int] = None,
-        end_byte: Optional[int] = None
+        end_byte: Optional[int] = None,
+        **extra_args: str
     ) -> Union[
         Union[Path, str, IOBase], list[Union[Path, str, IOBase, Exception]]
     ]:
@@ -532,6 +542,7 @@ class Bucket:
                 but the last one', analogous to `my_list[0:-1]`.
             end_byte: Byte index at which to end read. None (default) means
                 the last byte of the object.
+            extra_args: passed directly to `TransferManager.download()`
         Returns:
             outpath: the path, string, or buffer we wrote the object to, or,
                 for multi-get, a list containing one such outpath for each
@@ -552,21 +563,21 @@ class Bucket:
         """
         # TODO: add more useful error messages for streams opened in text mode
         config = self.config if config is None else config
-        destination = BytesIO() if destination is None else destination
+        dest = BytesIO() if destination is None else destination
         start_byte = None if start_byte == 0 else start_byte
-        args, kwargs = (self.name, key, destination), {}
+        args, kwargs = (self.name, key, dest), {'extra_args': extra_args}
         if start_byte is not None or end_byte is not None:
             manager_class = TransferManagerWithRange
-            kwargs = {'start_byte': start_byte, 'end_byte': end_byte}
+            kwargs |= {'start_byte': start_byte, 'end_byte': end_byte}
         else:
             manager_class = TransferManager
         with manager_class(self.client, config) as manager:
-            if not isinstance(destination, IOBase):
-                Path(destination).parent.mkdir(parents=True, exist_ok=True)
-            future = manager.download(*args, **kwargs)
-        if hasattr(destination, "seek"):
-            destination.seek(0)
-        return destination
+            if not isinstance(dest, IOBase):
+                Path(dest).parent.mkdir(parents=True, exist_ok=True)
+            manager.download(*args, **kwargs)
+        if hasattr(dest, "seek"):
+            dest.seek(0)
+        return dest
 
     def read(
         self,
@@ -612,8 +623,8 @@ class Bucket:
         source: Union[str, Sequence[str]],
         destination: Union[Optional[str], Sequence[Optional[str]]] = None,
         destination_bucket: Optional[str] = None,
-        extra_args: Optional[Mapping[str, str]] = None,
         config: Optional[boto3.s3.transfer.TransferConfig] = None,
+        **extra_args: str
     ) -> Union[str, list[Union[str, Exception]]]:
         """
         Copy S3 object(s) to another location on S3.
@@ -626,8 +637,8 @@ class Bucket:
                 specified, uses source bucket. this means that if destination
                 and destination_bucket are both None, it overwrites the object
                 inplace. this is useful for things like storage class changes.
-            extra_args: ExtraArgs for boto3 bucket object
             config: optional transfer config
+            extra_args: ExtraArgs for boto3 bucket object
 
         Returns:
             uri: S3 URI of newly-created copy, or, for multi-copy, a list
