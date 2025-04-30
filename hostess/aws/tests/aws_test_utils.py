@@ -1,7 +1,6 @@
 import atexit
 import random
 import signal
-import sys
 from string import ascii_lowercase
 
 import boto3
@@ -58,6 +57,11 @@ def empty_bucket(name, *, delete_bucket=False):
             f"Manual cleanup of this bucket is required."
         )
 
+def terminate_instance(instance_ip):
+    from hostess.aws.ec2 import Instance
+
+    Instance(instance_ip).terminate()
+
 def do_aws_fallback_cleanup(signum=None, _frame=None):
     # TODO: log or something
     for task_name in tuple(AWS_CLEANUP_TASKS.keys()):
@@ -70,13 +74,14 @@ def do_aws_fallback_cleanup(signum=None, _frame=None):
 @pytest.fixture(scope="session")
 def aws_fallback_cleanup():
     """
-    prep cleanup for temp AWS resources on unexpected system exit or SIGTERM
+    prep cleanup for temp AWS resources on SIGTERM or unexpected system exit
     """
     atexit.register(do_aws_fallback_cleanup)
     # NOTE: we don't need to install a signal handler for SIGINT; pytest
-    #  handles that in fixtures
+    #  handles that for fixtures
     # TODO, maybe: other signals are still going to leave resources hanging
-    #  around and prevent us from saying anything about it
+    #  around and prevent us from saying anything about it. Addressing this is
+    #  nontrivial and imposes tradeofffs.
     signal.signal(signal.SIGTERM, do_aws_fallback_cleanup)
 
 
