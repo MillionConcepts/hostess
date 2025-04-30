@@ -104,16 +104,23 @@ R = TypeVar("R")
 I = TypeVar("I")
 
 
+# TODO: this signature still seems to confuse static analysis when a method
+#  has no required args (other than implicit self) and is called with none
 def connectwrap(func: Callable[[I, P], R]) -> Callable[[I, P], R]:
+    """
+    Decorator for methods of Instance that require an SSH connection to work.
+    Causes them to check for an open connection, and, if they do not find one,
+    to attempt to open one.
+    """
     @wraps(func)
-    def tryconnect(instance: I, *args: P.args, **kwargs: P.kwargs):
+    def tryconnect(self: I, *args: P.args, **kwargs: P.kwargs):
         # noinspection PyProtectedMember
-        instance._prep_connection()
+        self._prep_connection()
         try:
-            return func(instance, *args, **kwargs)
+            return func(self, *args, **kwargs)
         except (SSHException, NoValidConnectionsError):
-            instance.connect()
-            return func(instance, *args, **kwargs)
+            self.connect()
+            return func(self, *args, **kwargs)
 
     return tryconnect
 
@@ -219,6 +226,12 @@ def _instances_from_ids(
     return instances
 
 
+class DefaultSecurityGroupError(PermissionError):
+    pass
+
+
+# TODO: clean up the verbosity stuff. with real logging.
+
 class Instance:
     """
     Interface to an EC2 instance. Enables remote procedure calls, state
@@ -263,6 +276,7 @@ class Instance:
         resource: Optional[boto3.resources.base.ServiceResource] = None,
         session: Optional[boto3.Session] = None,
         use_private_ip: bool = False,
+        verbose: bool = True
     ):
         """
         Args:
@@ -287,10 +301,12 @@ class Instance:
             client: boto client. creates default client if not given.
             resource: boto resource. creates default resource if not given.
             session: boto session. creates default session if not given.
+            verbose: if True, print some changes in status to stdout.
         """
         self.session = session if session is not None else make_boto_session()
         self.resource = init_resource("ec2", resource, self.session)
         self.client = init_client("ec2", client, self.session)
+        self.verbose = verbose
 
         if isinstance(description, str):
             # if it's got periods in it, assume it's a public IPv4 address
@@ -353,6 +369,7 @@ class Instance:
         resource: Optional[boto3.resources.base.ServiceResource] = None,
         use_private_ip: bool = False,
         pick_first: bool = False,
+        verbose: bool = True,
         **tag_filters: str
     ) -> "Instance":
         """
@@ -367,7 +384,8 @@ class Instance:
             `long`, `tag_regex`, `tag_filters`
 
         Arguments passed to `Instance.__init__()`:
-            `uname`, `key`, `client`, `resource`, `session`, `use_private_ip`
+            `uname`, `key`, `client`, `resource`, `session`, `use_private_ip`,
+            `verbose`
 
         See documentation for those functions for full discussion of those
         arguments.
@@ -390,7 +408,7 @@ class Instance:
             )
         return Instance(search_result[0], uname=uname, key=key,
                         resource=resource, use_private_ip=use_private_ip,
-                        client=client, session=session)
+                        client=client, session=session, verbose=verbose)
 
     @classmethod
     def launch(
@@ -462,7 +480,8 @@ class Instance:
                 break
             except ConnectionError:
                 continue
-        print("connection established")
+        if self.verbose is True:
+            print("connection established")
 
     # TODO: pull more of these command / connect behaviors up to SSH.
 
@@ -807,9 +826,11 @@ class Instance:
         response = self.instance_.start()
         self.update()
         if (wait is True) and (connect is False):
-            print("waiting until instance is running...", end="")
+            if self.verbose is True:
+                print("waiting until instance is running...", end="")
             self.wait_until_running()
-            print("running.")
+            if self.verbose is True:
+                print("running.")
         if connect is True:
             self.wait_until_running()
             self.wait_on_connection(maxtries)
@@ -1210,6 +1231,7 @@ class Instance:
         ip: Optional[str] = None,
         force: bool = False,
         revoke: bool = True,
+        verbose: bool = True
     ):
         """
         Modify this instance's security group(s) to permit SSH access from
@@ -1224,14 +1246,28 @@ class Instance:
             force: if True, will force modification even of default security
                 groups.
             revoke: if True, will revoke all other inbound permissions.
+            verbose: if True, print actions to stdout
         """
         for sg_index in self.instance_.security_groups:
             sg = init_resource("ec2").SecurityGroup(sg_index["GroupId"])
-            if revoke is True:
-                revoke_ingress(sg, force_modification_of_default_sg=force)
-            authorize_ssh_ingress_from_ip(
-                sg, ip=ip, force_modification_of_default_sg=force
-            )
+            try:
+                if revoke is True:
+                    revoke_ingress(
+                        sg,
+                        verbose=verbose,
+                        force_modification_of_default_sg=force
+                    )
+                authorize_ssh_ingress_from_ip(
+                    sg,
+                    ip=ip,
+                    force_modification_of_default_sg=force,
+                    verbose=verbose
+                )
+            except DefaultSecurityGroupError:
+                raise DefaultSecurityGroupError(
+                    "\tRefusing to modify permissions of a default security "
+                    "group. Pass force=True to override."
+                )
 
     def price_per_hour(self):
         return instance_price_per_hour(self)
@@ -2054,6 +2090,7 @@ class Cluster:
         connect: bool = False,
         maxtries: int = 40,
         increment_names: bool = True,
+        verbose: bool = True,
         **instance_kwargs: Union[
             str,
             botocore.client.BaseClient,
@@ -2091,15 +2128,18 @@ class Cluster:
                 integers to the names of each instance in the Cluster,
                 and, if they had Name tags already, add a "ClusterName" tag
                 indicating the base name
+            verbose: if True, print launch progress to stdout
             **instance_kwargs: kwargs to pass to the Instance constructor.
 
         Returns:
             a Cluster created from the newly-launched fleet.
         """
+        print_ = print if verbose is True else lambda *_, **__: None
         if count < 1:
             raise ValueError(f"count must be >= 1.")
         client = init_client("ec2", client, session)
         options = {} if options is None else options
+        options["verbose"] = verbose
         # TODO: add a few more conveniences, clean up
         if instance_kwargs.get("type_") is not None:
             options["instance_type"] = instance_kwargs.pop("type_")
@@ -2111,7 +2151,7 @@ class Cluster:
             if options.get("image_id") is None:
                 # we're always using a stock Canonical image in this case, so
                 # note that we're forcing uname to 'ubuntu':
-                print(
+                print_(
                     "Using stock Canonical image, so setting uname to "
                     "'ubuntu'."
                 )
@@ -2161,8 +2201,8 @@ class Cluster:
                 f"Client returned error(s):\n\n{launch_errors}"
             )
         if n_instances != count:
-            print(
-                f"warning: fewer instances appear to have launched than "
+            warnings.warn(
+                f"fewer instances appear to have launched than "
                 f"requested ({n_instances} vs. {count}). Check the 'Errors' "
                 f"key of this Cluster's 'fleet_request' attribute."
             )
@@ -2201,20 +2241,20 @@ class Cluster:
             for i, instance in enumerate(instances):
                 instance.rename(instance.tags.get("Name", "") + str(i))
         if wait is False:
-            print(f"launched {noun}; wait=False passed, not checking status")
+            print_(f"launched {noun}; wait=False passed, not checking status")
             return cluster
         if connect is True:
-            print(f"launched {noun}; waiting until connectable")
+            print_(f"launched {noun}; waiting until connectable")
         else:
-            print(f"launched {noun}; waiting until running")
+            print_(f"launched {noun}; waiting until running")
         # TODO: also async?
         for instance in cluster.instances:
             if connect is False:
                 instance.wait_until_running()
-                print(f"{instance} is running")
+                print_(f"{instance} is running")
             else:
                 instance.wait_on_connection(maxtries)
-                print(f"connected to {instance}")
+                print_(f"connected to {instance}")
         return cluster
 
     def price_per_hour(self):
@@ -2762,6 +2802,7 @@ def create_launch_template(
     key_name: Optional[str] = None,
     client: Optional[botocore.client.BaseClient] = None,
     session: Optional[boto3.Session] = None,
+    verbose: bool = True
 ) -> dict:
     """
     Create a new EC2 launch template in the caller's AWS account (see
@@ -2802,11 +2843,13 @@ def create_launch_template(
             corresponding key file will be saved to disk in ~/.ssh.
         client: optional preexisting boto ec2 client
         session: optional preexisting boto session
+        verbose: if True, print launch template decision process to stdout
 
     Returns:
         dict created from an AWS
             [LaunchTemplate API response](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_LaunchTemplate.html).
     """
+    print_ = print if verbose is True else lambda *_, **__: None
     default_name = _hostess_placeholder()
     if volume_list is None:
         volume_type = (
@@ -2830,7 +2873,7 @@ def create_launch_template(
             instance_type, pricing=False, ec2_client=client
         )
         image_id = get_stock_ubuntu_image(description["architecture"], client)
-        print(
+        print_(
             f"No AMI specified, using most recent Ubuntu Server LTS "
             f"image from Canonical ({image_id})."
         )
@@ -2851,7 +2894,7 @@ def create_launch_template(
         )["SecurityGroups"]
         if len(sg_response) == 0:
             create_security_group(security_group_name, None, client)
-            print(
+            print_(
                 f"No security group named {security_group_name} exists; "
                 f"created one."
             )
@@ -2859,7 +2902,7 @@ def create_launch_template(
         security_group_name = create_security_group(
             default_name, client=client
         ).group_name
-        print(
+        print_(
             f"No security group specified; created a new one named "
             f"{default_name}."
         )
@@ -2869,10 +2912,10 @@ def create_launch_template(
         ]
         if len(key_response) == 0:
             create_ec2_key(key_name)
-            print(f"No key pair named {key_name} exists; created one.")
+            print_(f"No key pair named {key_name} exists; created one.")
     else:
         key_name = create_ec2_key(default_name).key_name
-        print(
+        print_(
             f"No key pair specified; created one named {default_name} "
             "and saved key material to disk in ~/.ssh."
         )
@@ -2901,6 +2944,7 @@ def revoke_ingress(
     force_modification_of_default_sg: bool = False,
     ports: Collection[int] = (22,),
     protocols: Collection[Literal["tcp", "udp", "icmp"]] = ("tcp",),
+    verbose: bool = True
 ):
     """
     Remove inbound permission rules from a security group. The default
@@ -2913,14 +2957,15 @@ def revoke_ingress(
         ports: revoke only those rules granting ingress on one of these ports
         protocols: revoke only those rules granting ingress via one of these
             protocols
+        verbose: if True, print actions to stdout
     """
     if "default" in sg.id and not force_modification_of_default_sg:
-        print(
+        raise DefaultSecurityGroupError(
             "\tRefusing to modify permissions of a default security group. "
-            "Pass flag to override."
+            "Pass force_modification_of_default_sg=True to override."
         )
-        return
-    print(
+    print_ = print if verbose is True else lambda *_, **__: None
+    print_(
         f"Revoking ingress from all IPs on port(s) {ports} to security group "
         f"{sg.id}"
     )
@@ -2948,6 +2993,7 @@ def authorize_ssh_ingress_from_ip(
     sg: "SecurityGroup",
     ip: Optional[str] = None,
     force_modification_of_default_sg: bool = False,
+    verbose: bool = True
 ):
     """
     Args:
@@ -2955,17 +3001,18 @@ def authorize_ssh_ingress_from_ip(
         ip: ip to authorize
         force_modification_of_default_sg: apply modification even to a default
             security group?
+        verbose: if True, print actions to stdout
     """
+    print_ = print if verbose is True else lambda *_, **__: None
     if ip is None:
         # automatically select the user's ip
         ip = my_external_ip()
-    print(f"Authorizing SSH ingress from {ip} for security group {sg.id}")
+    print_(f"Authorizing SSH ingress from {ip} for security group {sg.id}")
     if "default" in sg.id and not force_modification_of_default_sg:
-        print(
+        raise DefaultSecurityGroupError(
             "\tRefusing to modify permissions of a default security group. "
-            "Pass flag to override."
+            "Pass force_modification_of_default_security_group=True to override."
         )
-        return
     try:
         sg.authorize_ingress(
             IpPermissions=[
@@ -2984,7 +3031,7 @@ def authorize_ssh_ingress_from_ip(
         )
     except botocore.client.ClientError as ce:
         if "InvalidPermission.Duplicate" in str(ce):
-            print(f"** {ip} already authorized for SSH ingress for {sg.id} **")
+            print_(f"** {ip} already authorized for SSH ingress to {sg.id} **")
         else:
             raise
 
