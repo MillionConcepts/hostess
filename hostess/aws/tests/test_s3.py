@@ -19,7 +19,6 @@ from hostess.aws.tests.aws_test_utils import (
     # TODO: make sure this means it's actually being shared
     #  correctly between modules.
     aws_fallback_cleanup,
-    aws_reachable,
     empty_bucket,
     randstr
 )

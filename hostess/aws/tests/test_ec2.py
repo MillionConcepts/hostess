@@ -10,7 +10,6 @@ from hostess.aws.tests.aws_test_utils import (
     # NOTE: do not remove this import. pytest cannot find it for use in
     #  aws_cleanup_tasks() if not in explicit scope of this module.
     aws_fallback_cleanup,
-    aws_reachable,
     delete_keyfile,
     randstr,
     terminate_instance
