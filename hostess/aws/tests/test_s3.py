@@ -1,3 +1,4 @@
+from functools import partial
 from io import BytesIO
 from itertools import chain
 from pathlib import Path
@@ -22,7 +23,6 @@ from hostess.aws.tests.aws_test_utils import (
     empty_bucket,
     randstr
 )
-from hostess.utilities import curry
 
 
 @pytest.fixture(scope="session")
@@ -43,7 +43,7 @@ def temp_bucket_name(aws_cleanup_tasks):
         s3 = session.client("s3")
         response = s3.create_bucket(Bucket=name)
         assert response['ResponseMetadata']['HTTPStatusCode'] == 200
-        aws_cleanup_tasks["s3_bucket"] = curry(
+        aws_cleanup_tasks["s3_bucket"] = partial(
             empty_bucket, name=name, delete_bucket=True
         )
     except ClientError as ce:

@@ -1,11 +1,14 @@
 import atexit
 import random
 import signal
+from pathlib import Path
 from string import ascii_lowercase
 
 import boto3
 import pytest
 from botocore.exceptions import ClientError
+
+from hostess.aws.utilities import init_client
 
 AWS_CLEANUP_TASKS = {}
 
@@ -52,15 +55,56 @@ def empty_bucket(name, *, delete_bucket=False):
             s3.delete_bucket(Bucket=name)
     except ClientError as ce:
         raise OSError(
-            f"Failed to clean up test bucket {name}: {ce}. This likely "
-            f"indicates missing permissions for object or bucket deletion. "
+            f"Failed to clean up test bucket {name}: {ce}. This may "
+            f"indicate missing DeleteObject or DeleteBucket permissions. "
             f"Manual cleanup of this bucket is required."
         )
 
-def terminate_instance(instance_ip):
-    from hostess.aws.ec2 import Instance
+def _termination_error(instance_identifier, exc):
+    return OSError(
+        f"Failed to terminate test instance {instance_identifier} : {type(exc)}: {exc}. This may indicate "
+        f"missing TerminateInstances permissions. Manual cleanup of this "
+        f"instance is required."
+    )
 
-    Instance(instance_ip).terminate()
+
+def terminate_instance(instance_name):
+    from hostess.aws.ec2 import Instance
+    try:
+        inst = Instance.find(name=instance_name, verbose=False)
+    except Exception as ex:
+        raise _termination_error(instance_name, ex)
+    try:
+        inst.terminate()
+    except Exception as ex:
+        raise _termination_error(
+            f"{inst.name} ({inst.instance_.id}) @ {inst.ip}", ex
+        )
+
+
+def delete_security_group(security_group_name):
+    try:
+        client = init_client("ec2")
+        client.delete_security_group(GroupName=security_group_name)
+    except ClientError as ce:
+        raise OSError(
+            f"Failed to delete test security group {security_group_name}: "
+            f"{ce}. This may indicate missing DeleteSecurityGroup "
+            f"permissions. Manual cleanup of this security group is required."
+        )
+
+
+# TODO: we could implement writing keys to tempfiles to remove the necessity
+#  for this, but it would really only be useful for tests
+def delete_keyfile(keyfile_path):
+    try:
+        Path(keyfile_path).unlink()
+    except (OSError, PermissionError) as oe:
+        raise OSError(
+            f"Failed to delete test keyfile {keyfile_path}. Manual cleanup of "
+            f"this file is required."
+        )
+
 
 def do_aws_fallback_cleanup(signum=None, _frame=None):
     # TODO: log or something
@@ -88,11 +132,3 @@ def aws_fallback_cleanup():
 @pytest.fixture(scope="session")
 def aws_cleanup_tasks(aws_fallback_cleanup):
     return AWS_CLEANUP_TASKS
-
-
-
-
-#
-# @pytest.fixture(scope="session")
-# def do_aws_cleanup():
-#
