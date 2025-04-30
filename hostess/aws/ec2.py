@@ -19,7 +19,9 @@ from typing import (
     Literal,
     Mapping,
     Optional,
+    ParamSpec,
     Sequence,
+    TypeVar,
     Union,
 )
 import warnings
@@ -97,11 +99,14 @@ class NoKeyError(OSError):
     """we're trying to do things over SSH, but can't find a valid keyfile."""
 
 
-def connectwrap(
-    func: Callable[["Instance", ...], Any]
-) -> Callable[["Instance", ...], Any]:
+P = ParamSpec("P")
+R = TypeVar("R")
+I = TypeVar("I")
+
+
+def connectwrap(func: Callable[[I, P], R]) -> Callable[[I, P], R]:
     @wraps(func)
-    def tryconnect(instance, *args, **kwargs):
+    def tryconnect(instance: I, *args: P.args, **kwargs: P.kwargs):
         # noinspection PyProtectedMember
         instance._prep_connection()
         try:

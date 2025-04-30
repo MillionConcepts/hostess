@@ -30,6 +30,8 @@ from typing import (
     Union,
     Sequence,
     Callable,
+    TypeVar,
+    ParamSpec
 )
 
 import boto3
@@ -54,13 +56,29 @@ from hostess.utilities import (
 Puttable = Union[str, Path, IOBase, bytes, None]
 """type alias for Python objects Bucket will write to S3 """
 
+# TODO: there's probably a less awkward and more articulate way to do this
+P = ParamSpec("P")
+R = TypeVar("R")
+B = TypeVar("B")
+M = TypeVar("M")
+N = TypeVar("N")
+BMethOne = Callable[[B, M, P], R]
+BMethTwo = Callable[[B, M, N, P], R]
+BMethOneList = Callable[
+    [B, Union[M, Sequence[M]], P], Union[R, list[R]]
+]
+BMethTwoList = Callable[
+    [B, Union[M, Sequence[M]], Union[N, Sequence[N]], P], Union[R, list[R]]
+]
+
 
 @curry
 def splitwrap(
-    method: Callable[["Bucket", ...], Any], seq_arity: Literal[1, 2]
-) -> Callable[["Bucket", ...], Any]:
+    method: Union[BMethOne, BMethTwo],
+    seq_arity: Literal[1, 2]
+) -> Union[BMethOneList, BMethTwoList]:
     """
-    Dispatch decorator for methods of Bucket that can accept either single
+    Decorator for methods of Bucket that permits them to accept either single
     source and/or destination arguments or sequences of them. Automatically
     maps sequences into a thread pool, unless instructed to run serially,
     and returns all results in a list. Fails gracefully, returning Exceptions
