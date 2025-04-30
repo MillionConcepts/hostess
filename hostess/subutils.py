@@ -749,8 +749,11 @@ class Viewer:
             # should occur on remote hosts only
             return None
         for underlying in filter(None, (self.runner, self.process)):
-            return getattr(underlying, attr)
-        raise AttributeError(f"'Viewer' object has no attribute {attr}")
+            try:
+                return getattr(underlying, attr)
+            except AttributeError:
+                pass
+        raise AttributeError(f"'Viewer' object has no attribute '{attr}'")
 
     def _is_done(self) -> bool:
         return self.runner.process_is_finished
