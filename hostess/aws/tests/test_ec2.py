@@ -10,12 +10,12 @@ from hostess.aws.tests.aws_test_utils import (
     # NOTE: do not remove this import. pytest cannot find it for use in
     #  aws_cleanup_tasks() if not in explicit scope of this module.
     aws_fallback_cleanup,
+    aws_reachable,
     delete_keyfile,
     randstr,
     terminate_instance
 )
 
-HAVE_SSH = False
 
 # NOTE: these fixtures are in part tests of hostess, and are a little sloppy to
 #  implement as fixtures. There's nothing really _wrong_ with it, though,
@@ -23,7 +23,7 @@ HAVE_SSH = False
 #  tests is complicated enough that it would basically involve reimplementing
 #  large portions of hostess.aws.ec2 in this module, which is yet sloppier.
 @pytest.fixture(scope="session")
-def temp_instance_name(aws_cleanup_tasks):
+def temp_instance_name(aws_reachable, aws_cleanup_tasks):
     name = f"hostess-test-{randstr(10)}"
     instance = Instance.launch(
         options={
@@ -91,34 +91,37 @@ def has_python(temp_instance_name, can_connect):
         f"to remote Python calls."
     )
 
+@pytest.mark.skipif(
+    "not config.getoption('--run-aws')",
+    reason="live AWS tests only run with --run-aws",
+)
+class TestEC2:
 
-def test_command(temp_instance_name, can_connect):
-    inst = Instance.find(name=temp_instance_name, verbose=False)
-    assert inst.command("uname", _wait=True).out[0] == "Linux"
+    def test_command(self, temp_instance_name, can_connect):
+        inst = Instance.find(name=temp_instance_name, verbose=False)
+        assert inst.command("uname", _wait=True).out[0] == "Linux"
 
+    def test_call_python(self, temp_instance_name, can_connect, has_python):
+        inst = Instance.find(name=temp_instance_name, verbose=False)
+        ints = [random.randint(50, 1000) for _ in range(25)]
+        proc = inst.call_python(
+            "math",
+            "lcm",
+            ints,
+            env="base",
+            splat="*",
+            serialization="pickle",
+            compression="gzip",
+            _wait=True
+        )
+        assert math.lcm(*ints) == int(proc.out[0])
 
-def test_call_python(temp_instance_name, can_connect, has_python):
-    inst = Instance.find(name=temp_instance_name, verbose=False)
-    ints = [random.randint(50, 1000) for _ in range(25)]
-    proc = inst.call_python(
-        "math",
-        "lcm",
-        ints,
-        env="base",
-        splat="*",
-        serialization="pickle",
-        compression="gzip",
-        _wait=True
-    )
-    assert math.lcm(*ints) == int(proc.out[0])
-
-
-def test_stop_start(temp_instance_name):
-    inst = Instance.find(name=temp_instance_name, verbose=False)
-    inst.stop()
-    inst.wait_until_stopped(timeout=65)
-    assert inst.state == "stopped", "instance failed to stop before timeout"
-    inst.start()
-    inst.wait_until_running(timeout=65)
-    assert inst.state == "running", "instance failed to start before timeout"
+    def test_stop_start(self, temp_instance_name):
+        inst = Instance.find(name=temp_instance_name, verbose=False)
+        inst.stop()
+        inst.wait_until_stopped(timeout=65)
+        assert inst.state == "stopped", "instance failed to stop before timeout"
+        inst.start()
+        inst.wait_until_running(timeout=65)
+        assert inst.state == "running", "instance failed to start before timeout"
 

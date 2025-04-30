@@ -26,7 +26,7 @@ from hostess.aws.tests.aws_test_utils import (
 
 
 @pytest.fixture(scope="session")
-def temp_bucket_name(aws_cleanup_tasks):
+def temp_bucket_name(aws_reachable, aws_cleanup_tasks):
     """
     Make a temporary S3 bucket for use by tests in this module, and attempt to
     clean it up when tests are done. Avoids use of hostess code. If this
@@ -81,81 +81,85 @@ def temp_data():
         files.append(f)
     yield {"contents": contents, "files": files}
 
+@pytest.mark.skipif(
+    "not config.getoption('--run-aws')",
+    reason="live AWS tests only run with --run-aws",
+)
+class TestS3:
 
-def test_roundtrip_disk(
-    aws_reachable, temp_bucket_name, temp_data, clean_temp_bucket
-):
-    bucket = Bucket(temp_bucket_name)
-    bucket.put(
-        [f.name for f in temp_data["files"]],
-        [Path(f.name).name for f in temp_data["files"]]
-    )
-    targets = [NamedTemporaryFile() for _ in temp_data["files"]]
-    _results = bucket.get(
-        [Path(f.name).name for f in temp_data["files"]],
-        [t.name for t in targets]
-    )
-    for t, b in zip(targets, temp_data["contents"]):
-        with open(t.name, "rb") as stream:
-            assert stream.read() == b
-
-
-def test_roundtrip_mem(
-    aws_reachable, temp_bucket_name, temp_data, clean_temp_bucket
-):
-    bucket = Bucket(temp_bucket_name)
-    bucket.put(
-        [c for c in temp_data["contents"]],
-        [str(i) for i in range(len(temp_data["contents"]))]
-    )
-    bufs = bucket.get(
-        [str(i) for i in range(len(temp_data["contents"]))]
-    )
-    for io_, b in zip(bufs, temp_data["contents"]):
-        io_: BytesIO
-        io_.seek(0)
-        assert io_.read() == b
+    def test_roundtrip_disk(
+        self, temp_bucket_name, temp_data, clean_temp_bucket
+    ):
+        bucket = Bucket(temp_bucket_name)
+        bucket.put(
+            [f.name for f in temp_data["files"]],
+            [Path(f.name).name for f in temp_data["files"]]
+        )
+        targets = [NamedTemporaryFile() for _ in temp_data["files"]]
+        _results = bucket.get(
+            [Path(f.name).name for f in temp_data["files"]],
+            [t.name for t in targets]
+        )
+        for t, b in zip(targets, temp_data["contents"]):
+            with open(t.name, "rb") as stream:
+                assert stream.read() == b
 
 
-def test_ls_cases(
-    aws_reachable, temp_bucket_name, temp_data, clean_temp_bucket
-):
-    bucket = Bucket(temp_bucket_name)
-    bucket.put(
-        [f.name for f in temp_data["files"]],
-        [str(i) for i in range(len(temp_data["files"]))]
-    )
-    simple = bucket.ls(formatting="simple")
-    contents = bucket.ls(formatting="contents")
-    df = bucket.ls(formatting="df")
-    for i, f in enumerate(temp_data["files"]):
-        path = Path(f.name)
-        assert simple[i] == str(i)
-        assert contents[i]["Key"] == str(i)
-        size = path.stat().st_size
-        # TODO: this could be wrong
-        assert contents[i]["Size"] == size
-        row = df.loc[i]
-        assert row["Key"] == str(i)
-        assert row["Size"] == size
+    def test_roundtrip_mem(
+        self, temp_bucket_name, temp_data, clean_temp_bucket
+    ):
+        bucket = Bucket(temp_bucket_name)
+        bucket.put(
+            [c for c in temp_data["contents"]],
+            [str(i) for i in range(len(temp_data["contents"]))]
+        )
+        bufs = bucket.get(
+            [str(i) for i in range(len(temp_data["contents"]))]
+        )
+        for io_, b in zip(bufs, temp_data["contents"]):
+            io_: BytesIO
+            io_.seek(0)
+            assert io_.read() == b
 
 
-def test_df(aws_reachable, temp_bucket_name, clean_temp_bucket):
-    bucket = Bucket(temp_bucket_name)
-    prefixes = {
-        randstr(15): [randstr(25) for _ in range(5)] for _ in range(2)
-    }
-    all_keys = tuple(
-        chain(*([f"{p}/{n}" for n in ns] for p, ns in prefixes.items()))
-    )
-    bucket.put([None for _ in all_keys], all_keys)
-    df = bucket.df()
-    assert set(df['Key']) == set(all_keys)
-    for p, ns in prefixes.items():
-        preslice = df.loc[df['Key'].str.startswith(p), 'Key']
-        assert set(preslice.str.replace(f"{p}/", "")) == set(ns)
-    # noinspection PyUnresolvedReferences
-    assert (df['Size'] == 0).all()
+    def test_ls_cases(
+        self, temp_bucket_name, temp_data, clean_temp_bucket
+    ):
+        bucket = Bucket(temp_bucket_name)
+        bucket.put(
+            [f.name for f in temp_data["files"]],
+            [str(i) for i in range(len(temp_data["files"]))]
+        )
+        simple = bucket.ls(formatting="simple")
+        contents = bucket.ls(formatting="contents")
+        df = bucket.ls(formatting="df")
+        for i, f in enumerate(temp_data["files"]):
+            path = Path(f.name)
+            assert simple[i] == str(i)
+            assert contents[i]["Key"] == str(i)
+            size = path.stat().st_size
+            # TODO: this could be wrong
+            assert contents[i]["Size"] == size
+            row = df.loc[i]
+            assert row["Key"] == str(i)
+            assert row["Size"] == size
+
+    def test_df(self, temp_bucket_name, clean_temp_bucket):
+        bucket = Bucket(temp_bucket_name)
+        prefixes = {
+            randstr(15): [randstr(25) for _ in range(5)] for _ in range(2)
+        }
+        all_keys = tuple(
+            chain(*([f"{p}/{n}" for n in ns] for p, ns in prefixes.items()))
+        )
+        bucket.put([None for _ in all_keys], all_keys)
+        df = bucket.df()
+        assert set(df['Key']) == set(all_keys)
+        for p, ns in prefixes.items():
+            preslice = df.loc[df['Key'].str.startswith(p), 'Key']
+            assert set(preslice.str.replace(f"{p}/", "")) == set(ns)
+        # noinspection PyUnresolvedReferences
+        assert (df['Size'] == 0).all()
 
 
 # TODO: test various streaming features
