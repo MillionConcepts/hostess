@@ -36,10 +36,10 @@ import boto3
 import boto3.resources.base
 import boto3.s3.transfer
 import botocore.client
-import pandas as pd
-import requests
 from cytoolz import keyfilter, valfilter
 from dustgoggles.func import naturals
+import pandas as pd
+import requests
 from s3transfer.manager import TransferManager
 
 from hostess.aws.s3transfer_extensions.threadpool_range import (
@@ -51,7 +51,7 @@ from hostess.utilities import (
     curry, console_and_log, infer_stream_length, stamp
 )
 
-Puttable = Union[str, Path, IOBase, bytes]
+Puttable = Union[str, Path, IOBase, bytes, None]
 """type alias for Python objects Bucket will write to S3 """
 
 
@@ -457,7 +457,6 @@ class Bucket:
         literal_str: bool = False,
         config: Optional[boto3.s3.transfer.TransferConfig] = None,
         **extra_args: str
-
     ) -> Union[None, list[Optional[Exception]]]:
         """
         Upload files or buffers to an S3 bucket
