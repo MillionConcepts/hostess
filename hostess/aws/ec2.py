@@ -84,7 +84,7 @@ InstanceState = Literal[
 InstanceIdentifier = str
 """
 stringified IP (e.g. `'111.11.11.1'` or full instance id 
-(e.g. `i-0243d3f8g0a85cb18`), used as an explicit instance identifier by some 
+(e.g. `'i-0243d3f8g0a85cb18'`), used as an instance identifier by some 
 functions in this module.
 """
 

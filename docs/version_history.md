@@ -1,5 +1,49 @@
 # Version History
 
+## [0.11.0] - 2025-04-30
+
+### Added
+
+- `hostess.aws` now has 'live' tests. You can run them by passing `--run-aws` 
+to `pytest`. See the readme for system requirements and cautions.
+- `aws.s3.Bucket` now supports byte range requests via its `get()` and 
+`read()` methods. Examples:
+  ```
+  # i want the first 20 bytes of 'key'
+  bucket.get(key, end_byte=20)
+  
+  # i want up to the last 20 bytes of 'key'
+  bucket.get(key, end_byte=-20)
+  
+  # i want bytes 100-200 of 'key'
+  bucket.get(key, start_byte=100, end_byte=200)
+  
+  # i want the last byte of 'key'
+  bucket.get(key, start_byte=-1)
+  ```
+- `ServerPool` now has a `completed_queue` attribute. Like `completed`, 
+tasks are added to this queue as they complete; _unlike_ `completed`, it can 
+be safely modified while the pool is running. This is designed to facilitate 
+creation of ad-hoc callbacks.
+- Some `Instance` and `Cluster` methods now offer control over 
+verbosity. This is a preliminary to more sophisticated logging options in the
+near future.
+
+### Fixed
+
+- attribute lookup dispatch issue in remote `Viewer`s that created confusing 
+error messages in some cases
+
+### Changed
+
+- protocol buffer-related type checks now compatible with protobuf v5+ API
+- stack inspection code now behaves properly with `FrameLocalsProxy` in Python 
+  3.13+
+- `aws.pricing` IOPS/throughput calculations now compatible with most recent 
+  price catalog structures 
+- assorted light cleanup and refactoring
+
+
 ## [0.10.2] - 2024-10-16
 
 ### Fixed

@@ -22,7 +22,7 @@ into a Conda environment using `conda`:
 
 The conda-forge package installs all optional dependencies other than those
 for tests and Notebooks. If you require more granular control over 
-dependencies, please install from source.
+dependencies, please install from PyPI or source.
 
 ## documentation
 
@@ -42,7 +42,7 @@ doesn't.
 2. Some `hostess` modules require network access, specifically `ssh` and the
 `aws` submodules. The `aws` submodules also require an AWS account. See the 
 example Notebooks for more details on this.
-3. `hostess` requires Python >= 3.9.
+3. `hostess` requires Python >= 3.10.
 4. `hostess` is very lightweight. If a machine has enough resources to run 
 a Python interpreter, it can probably run `hostess`.
 5. `hostess.station` is not fully compatible with MacOS or WSL. MacOS and WSL 
@@ -60,13 +60,33 @@ carefully.
 
 ## tests
 
-`hostess` includes a simple test suite compatible with `pytest`. More 
-comprehensive tests are planned. (In particular, non-local networking features 
-currently lack test coverage.) You can run the tests by executing `pytest -s` 
-in the root directory. The `-s` flag is mandatory because `pytest` captures
-stdout by default, which breaks some `hostess` features covered by the tests.
+`hostess` includes a simple test suite compatible with `pytest`.
+You can run the tests by executing `pytest -s` in the root directory. 
+The `-s` flag is mandatory because `pytest` captures stdout by default, which 
+breaks some `hostess` features covered by the tests.
 
-Tests require two additional dependencies: `pytest` and `pillow`.
+Tests require two additional Python dependencies: `pytest` and `pillow`.
+
+### non-local tests
+
+'Live' tests of non-local functionality provision AWS resources using the 
+default AWS credentials (if any) available in the executing environment. 
+These tests do not run by default. To execute these tests, pass `--run-aws`
+to `pytest`. They will only run successfully if the available AWS credentials
+are valid and if their associated account has the required permissions: 
+ListObjectsV2, CreateBucket, DeleteBucket, GetObject, PutObject, DeleteObject, 
+HeadObject, DescribeInstances, CreateFleet, StartInstances, StopInstances, 
+TerminateInstances, CreateLaunchTemplate, and DeleteLaunchTemplete. 
+
+**Warning**:
+If the available AWS account has permissions to create but 
+not delete resources, resources provisioned for tests will require manual 
+cleanup. It is not in general possible to detect this permissions condition 
+without actually creating and then attempting to delete a resource.
+
+Manual cleanup may also be required if the OS kills the Python process
+running the tests, if the machine on which the tests are running fails, etc.
+
 
 ## licensing
 
