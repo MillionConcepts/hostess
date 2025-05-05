@@ -86,6 +86,12 @@ AZ_IDPAT = re.compile(r"[a-z]{3}\d-az(?P<number>\d)")
 BUCKET_TYPE = Literal["general", "directory"]
 
 
+def _should_be_file(obj, literal_str):
+    return (
+        (isinstance(obj, str) and literal_str is False)
+        or (isinstance(obj, Path))
+    )
+
 def _attach_directory_bucket_suffix(name, azid):
     return f"{name}--{azid}--x-s3"
 
@@ -349,8 +355,11 @@ class Bucket:
 
         # note that we're just relying on botocore for exceptions at this
         # stage. If it doesn't raise one, we assume it worked.
+        kwargs = {'Bucket': name}
+        if len(conf) > 0:
+            kwargs['CreateBucketConfiguration'] = conf
         try:
-            client.create_bucket(Bucket=name, CreateBucketConfiguration=conf)
+            client.create_bucket(**kwargs)
         except ClientError as ce:
             if "InvalidBucketName" in str(ce) and bucket_type == "directory":
                 raise ValueError(
@@ -687,9 +696,7 @@ class Bucket:
         if obj is None:
             obj = BytesIO()
         # directly upload file from local storage
-        if (isinstance(obj, str) and literal_str is False) or (
-            isinstance(obj, Path)
-        ):
+        if _should_be_file(obj, literal_str):
             return self.client.upload_file(Filename=str(obj), **base_kwargs)
         # or: upload in-memory objects
         # encode string to bytes if we're writing it to an S3 object instead
@@ -701,7 +708,7 @@ class Bucket:
         # if it's not string or bytes, it has to be buffer/file-like.
         # this isn't a perfect heuristic, of course!
         elif not hasattr(obj, "read"):
-            raise TypeError(f"Cannot put object of type {obj}")
+            raise TypeError(f"Cannot put object of type {type(obj)}")
         return self.client.upload_fileobj(Fileobj=obj, **base_kwargs)
 
     @splitwrap(seq_arity=2)
@@ -765,9 +772,21 @@ class Bucket:
         else:
             manager_class = TransferManager
         with manager_class(self.client, config) as manager:
+            dirs_we_made = []
             if not isinstance(dest, IOBase):
-                Path(dest).parent.mkdir(parents=True, exist_ok=True)
-            manager.download(*args, **kwargs)
+                for p in reversed(Path(dest).parents):
+                    if p.exists() is False:
+                        p.mkdir()
+                        dirs_we_made.append(p)
+            future = manager.download(*args, **kwargs)
+            try:
+                # this call is strictly intended to raise exceptions,
+                # e.g. attempts to get objects that don't exist.
+                future.result()
+            except Exception as ex:
+                for d in reversed(dirs_we_made):
+                    d.rmdir()
+                raise ex
         if hasattr(dest, "seek"):
             dest.seek(0)
         return dest
@@ -852,6 +871,61 @@ class Bucket:
             copy_source, destination, ExtraArgs=extra_args, Config=config
         )
         return f"s3://{destination_bucket}:{destination}"
+
+    # def append(
+    #     self,
+    #     obj: Puttable,
+    #     key: str,
+    #     literal_str: bool = False,
+    #     offset: int | None = None
+    # ) -> None:
+    #     """
+    #     Write data at an offset to an S3 Express One Zone object. If no offset
+    #     is specified, appends data to the end of the object.
+    #
+    #     Args:
+    #         obj: string, Path, bytes, or filelike / buffer object to write.
+    #
+    #             If None and `key` does not yet exist, performs "touch"-type
+    #             behavior (creates an empty object).
+    #         key: key of S3 object in this bucket to write `obj` to.
+    #         literal_str: if True and `obj` is a `str`, write that string to
+    #             `key`. Otherwise, interpret it as a path to a local file.
+    #         offset: Number of bytes from the beginning of the `key` to
+    #             begin writing `obj`. If None (default), write to the end of
+    #             the object.
+    #
+    #     Returns:
+    #         None.
+    #
+    #     Cautions:
+    #         `append()` does not currently perform managed multipart uploads.
+    #         This means that if `obj` is > 5 GB, the operation will fail, and
+    #         also that `append()` is generally inefficient for large writes.
+    #         This will change in the future.
+    #     """
+    #     if offset is None:
+    #         try:
+    #             offset = self.head(key)['ContentLength']
+    #         except ClientError:
+    #
+    #
+    #     if obj is None:
+    #         buf = BytesIO()
+    #     elif _should_be_file(obj, literal_str):
+    #         with Path(obj).open("rb") as stream:
+    #             buf = BytesIO(stream.read())
+    #     elif isinstance(obj, str):
+    #         buf = BytesIO(obj.encode('utf-8'))
+    #     elif isinstance(obj, bytes):
+    #         buf = BytesIO(obj)
+    #     elif not hasattr(obj, "read") and hasattr(obj, "seek"):
+    #         raise TypeError(f"Cannot put object of type {type(obj)}")
+    #     else:
+    #         buf = obj
+    #     buf.seek(0)
+
+
 
     # TODO: verify types of returned dict values
     @splitwrap(seq_arity=1)
