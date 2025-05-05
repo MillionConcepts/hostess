@@ -12,6 +12,7 @@ like the syntax better.
 """
 import datetime as dt
 import inspect
+import re
 import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor
@@ -38,6 +39,7 @@ import boto3
 import boto3.resources.base
 import boto3.s3.transfer
 import botocore.client
+from botocore.exceptions import ClientError
 from cytoolz import keyfilter, valfilter
 from dustgoggles.func import naturals
 import pandas as pd
@@ -47,7 +49,7 @@ from s3transfer.manager import TransferManager
 from hostess.aws.s3transfer_extensions.threadpool_range import (
     TransferManagerWithRange
 )
-from hostess.aws.utilities import init_client, init_resource
+from hostess.aws.utilities import init_client, init_resource, make_boto_session
 from hostess.config.config import S3_DEFAULTS
 from hostess.utilities import (
     curry, console_and_log, infer_stream_length, stamp
@@ -70,6 +72,66 @@ BMethOneList = Callable[
 BMethTwoList = Callable[
     [B, Union[M, Sequence[M]], Union[N, Sequence[N]], P], Union[R, list[R]]
 ]
+
+DIRECTORY_BUCKET_NAMEPAT = re.compile(
+    r"[a-z0-9-.]{1,45}--[a-z]{3}\d-az\d--x-s3"
+)
+"""Legal name for zonal directory bucket"""
+BUCKET_NAMEPAT = re.compile(r"[a-z0-9-.]{3,63}")
+"""Legal name for general-purpose bucket"""
+AZ_NAMEPAT = re.compile(r"[a-z]{2}-[a-z]{3,10}-\d(?P<letter>[a-z])")
+"""Legal AZ name"""
+AZ_IDPAT = re.compile(r"[a-z]{3}\d-az(?P<number>\d)")
+"""Legal AZ id"""
+BUCKET_TYPE = Literal["general", "directory"]
+
+
+def _attach_directory_bucket_suffix(name, azid):
+    return f"{name}--{azid}--x-s3"
+
+
+def _raise_for_owned_use1_bucket(client, name, bucket_type: BUCKET_TYPE):
+    if bucket_type == "general":
+        names = [b["Name"] for b in client.list_buckets()["Buckets"]]
+    else:
+        names = [b["Name"] for b in client.list_directory_buckets()["Buckets"]]
+    if name in names:
+        raise ValueError(
+            f"You already own a bucket named {name} in us-east-1. "
+            f"hostess does not support the legacy ACL-clearing behavior "
+            f"associated with repeat CreateBucket operations in us-east-1."
+        )
+
+def check_az(az: str | int, region_name: str):
+    if isinstance(az, int):
+        az, ident= str(az), "number"
+    elif not isinstance(az, str):
+        raise TypeError(f"'az_name' must be int or string, got {type(az)}")
+    elif len(az) == 1:
+        ident = "number" if re.match(r"\d", az) else "letter"
+    elif AZ_NAMEPAT.match(az):
+        ident = "name"
+    elif AZ_IDPAT.match(az):
+        ident = "id"
+    else:
+        raise ValueError(f"Unrecognized pattern for 'az'.")
+    ec2 = init_client("ec2", region=region_name)
+    zones = ec2.describe_availability_zones()["AvailabilityZones"]
+    if ident == "number":
+        match = [z for z in zones if z['ZoneId'][-1] == az]
+    elif ident == "name":
+        match = [z for z in zones if z['ZoneName'] == az]
+    elif ident == "letter":
+        match = [z for z in zones if z['ZoneName'][-1] == az]
+    else:
+        match = [z for z in zones if z['ZoneId'] == az]
+    if len(match) == 0:
+        raise ValueError(f"No AZ in {region_name} found matching {az}")
+    elif len(match) > 1:
+        raise ValueError(
+            "Multiple AZ matches. This may indicate a bug or an API error."
+        )
+    return match[0]['ZoneId']
 
 
 @curry
@@ -198,6 +260,120 @@ class Bucket:
             config = boto3.s3.transfer.TransferConfig(**S3_DEFAULTS["config"])
         self.config = config
         self.n_threads = n_threads
+
+    @classmethod
+    def create(
+        cls,
+        name: str,
+        client: botocore.client.BaseClient | None = None,
+        session: boto3.session.Session = None,
+        *,
+        bucket_type: BUCKET_TYPE = "general",
+        az: str | int | None = None,
+        bucket_config: Mapping | None = None,
+        **bucket_kwargs
+    ):
+        """
+        Create a new bucket on S3 and return it as a Bucket object.
+
+        Args:
+            name: Name of bucket. If creating a directory bucket, do not
+                include the AZ suffix (e.g. pass "something" instead of
+                "something--use1-az4--x-s3"). `Bucket` will automatically add
+                the correct suffix.
+            client: optional boto3 s3 Client. if not specified, creates a
+                default client.
+            session: optional boto3 Session. if not specified, creates a
+                default session.
+            bucket_type: "general" (default, meaning a general-purpose bucket)
+                or "directory" (meaning a directory bucket). Note that only
+                zonal directory buckets are supported.
+            az: Name, letter, ID, or number of the Availability Zone (AZ) in
+                which to create a directory bucket. For instance, if `session`
+                is associated with the us-east-1 region, 'us-east-1c',
+                `'use1-az4'`, `'c'`, and `4` all refer to the same AZ. Note
+                that creating a bucket in a region other than the one `client`
+                (or `session`, if `client` is not passed) is not supported.
+
+                This argument is ignored when creating general-purpose buckets.
+
+                Note: Not all AZs support directory buckets, and there is no
+                mechanism to discover which do and do not via the API. See:
+                https://docs.aws.amazon.com/AmazonS3/latest/userguide/endpoint-directory-buckets-AZ.html
+            bucket_config: passed to the botocore `create_bucket()` method as
+                the 'CreateBucketConfig' argument.
+            bucket_kwargs: passed directly to `Bucket.__init__()`.
+
+        Caution:
+            In all regions other than us-east-1, the S3 API returns a
+            'bucket aready exists and is owned by you' error if a user
+            attempts to create a bucket with the same name as a bucket they
+            already own. In us-east-1, it instead returns a standard success
+            response and silently erases all ACLs associated with that bucket.
+            We are unwilling to spring this on users, and for this reason,
+            `Bucket.create()` behaves slightly differently in us-east-1. It
+            checks the user already owns a bucket with the requested name,
+            and raises an exception if so. This means that an account must
+            have the ListBuckets permission to use `Bucket.create()` in
+            us-east-1.
+        """
+        client = init_client("s3", client, session)
+        if bucket_type not in ("general", "directory"):
+            raise ValueError("'bucket_type' must be 'general' or 'directory'.")
+        if bucket_type == "directory" and az is None:
+            raise TypeError("'az' must not be None for a directory bucket.")
+        elif bucket_type == "directory":
+            azid = check_az(az, region_name=client.meta.region_name)
+            name = _attach_directory_bucket_suffix(name, azid)
+            pat = DIRECTORY_BUCKET_NAMEPAT
+        else:
+            pat, azid = BUCKET_NAMEPAT, None
+        if pat.match(name) is None:
+            raise ValueError(f"{name} is not a valid bucket name.")
+        if client.meta.region_name == 'us-east-1':
+            _raise_for_owned_use1_bucket(client, name, bucket_type)
+        conf = dict(bucket_config) if bucket_config is not None else {}
+        if bucket_type == "directory":
+            if len({'Location', 'Bucket'}.intersection(conf.keys())) > 0:
+                raise ValueError(
+                    "Please do not specify custom 'Location' or 'Bucket' "
+                    "values in bucket config for directory buckets."
+                )
+            conf |= {
+                'Location': {'Type': "AvailabilityZone", 'Name': azid},
+                'Bucket': {
+                    'Type': 'Directory',
+                    'DataRedundancy': 'SingleAvailabilityZone'
+                }
+            }
+
+        # note that we're just relying on botocore for exceptions at this
+        # stage. If it doesn't raise one, we assume it worked.
+        try:
+            client.create_bucket(Bucket=name, CreateBucketConfiguration=conf)
+        except ClientError as ce:
+            if "InvalidBucketName" in str(ce) and bucket_type == "directory":
+                raise ValueError(
+                    f"Although {name} is a valid directory bucket name, the "
+                    f"S3 API returned an InvalidBucketName error. This "
+                    f"typically indicates that Availability Zone {az} in "
+                    f"{client.meta.region_name} does not support directory "
+                    f"buckets."
+                )
+            else:
+                raise ce
+        return Bucket(name, client=client, **bucket_kwargs)
+
+    def delete(self):
+        """
+        Delete this bucket.
+
+        Notes:
+            S3 will not delete a bucket that contains any objects, and
+            `hostess` does not provide a 'force'-type operation that
+            auto-empties a bucket before deletion.
+        """
+        self.client.delete_bucket(Bucket=self.name)
 
     def update_contents(
         self,
@@ -908,6 +1084,12 @@ class Bucket:
                 ]
             },
         )
+
+    def __str__(self):
+        return f"s3 bucket {self.name} ({self.client.meta.region_name})"
+
+    def __repr__(self):
+        return self.__str__()
 
 
 # noinspection PyProtectedMember

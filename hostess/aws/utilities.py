@@ -49,6 +49,7 @@ def parse_aws_identity_file(
         err, search = f"{profile} not described in identity file", f"[{profile}"
     else:
         err, search = "Identity file empty or malformatted", "["
+    # TODO: I think this is a bug
     try:
         lineno = first(
             i for i, l in enumerate(lines) if l.strip().startswith(search)
@@ -77,6 +78,7 @@ def make_boto_session(
     profile: Optional[str] = None,
     credential_file: Optional[Union[str, Path]] = None,
     region: Optional[str] = None,
+    **session_kwargs
 ) -> boto3.Session:
     """
     Create a new boto session.
@@ -87,6 +89,7 @@ def make_boto_session(
             path if not specified)
         region: name of AWS region, e.g. "us-east-1". (uses profile's default
             region if not specified)
+        session_kwargs: passed directly to botocore Session constructor
 
     Returns:
         boto session.
@@ -105,6 +108,7 @@ def make_boto_client(
     profile: Optional[str] = None,
     credential_file: Optional[Union[str, Path]] = None,
     region: Optional[str] = None,
+    **client_kwargs
 ) -> botocore.client.BaseClient:
     """
     Create a new boto client.
@@ -117,12 +121,14 @@ def make_boto_client(
             credential path if not specified)
         region: optional name of AWS region, e.g. "us-east-1". (uses profile's
             default region if not specified)
+        client_kwargs: passed directly to botocore client constructor
 
     Returns:
         boto client for service.
     """
+    # a little redundant but whatever
     session = make_boto_session(profile, credential_file, region)
-    return session.client(service)
+    return session.client(service, **client_kwargs)
 
 
 def make_boto_resource(
@@ -130,6 +136,7 @@ def make_boto_resource(
     profile: Optional[str] = None,
     credential_file: Optional[Union[str, Path]] = None,
     region: Optional[str] = None,
+    **resource_kwargs
 ) -> boto3.resources.base.ServiceResource:
     """
     Create a new boto resource.
@@ -142,18 +149,22 @@ def make_boto_resource(
             credential path if not specified)
         region: optional name of AWS region, e.g. "us-east-1". (uses profile's
             default region if not specified)
+        resource_kwargs: passed directly to boto resource constructor
 
     Returns:
         boto resource for service.
     """
+    if "region_name" in resource_kwargs:
+        region = resource_kwargs.pop("region_name")
     session = make_boto_session(profile, credential_file, region)
-    return session.resource(service)
+    return session.resource(service, **resource_kwargs)
 
 
 def init_client(
     service: str,
     client: Optional[botocore.client.BaseClient] = None,
     session: Optional[boto3.Session] = None,
+    **client_kwargs
 ) -> botocore.client.BaseClient:
     """
     Utility function used throughout `hostess.aws` to selectively initialize
@@ -165,6 +176,7 @@ def init_client(
         session: if not None and `client` is None, initialize newly-made
             client using this session. Otherwise use a default session. Does
             nothing if `client` is not None.
+        client_kwargs: passed to make_boto_client() or boto client constructor
 
     Returns:
         boto client for `service`.
@@ -172,8 +184,10 @@ def init_client(
     if client is not None:
         return client
     if session is not None:
-        return session.client(service)
-    return make_boto_client(service)
+        if "region" in client_kwargs:
+            client_kwargs["region_name"] = client_kwargs.pop("region")
+        return session.client(service, **client_kwargs)
+    return make_boto_client(service, **client_kwargs)
 
 
 def init_resource(
@@ -207,8 +221,8 @@ def tagfilter(
 ) -> bool:
     """
     Simple predicate function that permits resource matching based on Arrays of
-        Tags in API responses related to that resource.
-        (See https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_Tag.html).
+    Tags in API responses related to that resource.
+    See https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_Tag.html.
 
     Args:
         description: dict produced from an AWS API response.
