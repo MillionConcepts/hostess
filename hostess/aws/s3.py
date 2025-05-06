@@ -872,59 +872,64 @@ class Bucket:
         )
         return f"s3://{destination_bucket}:{destination}"
 
-    # def append(
-    #     self,
-    #     obj: Puttable,
-    #     key: str,
-    #     literal_str: bool = False,
-    #     offset: int | None = None
-    # ) -> None:
-    #     """
-    #     Write data at an offset to an S3 Express One Zone object. If no offset
-    #     is specified, appends data to the end of the object.
-    #
-    #     Args:
-    #         obj: string, Path, bytes, or filelike / buffer object to write.
-    #
-    #             If None and `key` does not yet exist, performs "touch"-type
-    #             behavior (creates an empty object).
-    #         key: key of S3 object in this bucket to write `obj` to.
-    #         literal_str: if True and `obj` is a `str`, write that string to
-    #             `key`. Otherwise, interpret it as a path to a local file.
-    #         offset: Number of bytes from the beginning of the `key` to
-    #             begin writing `obj`. If None (default), write to the end of
-    #             the object.
-    #
-    #     Returns:
-    #         None.
-    #
-    #     Cautions:
-    #         `append()` does not currently perform managed multipart uploads.
-    #         This means that if `obj` is > 5 GB, the operation will fail, and
-    #         also that `append()` is generally inefficient for large writes.
-    #         This will change in the future.
-    #     """
-    #     if offset is None:
-    #         try:
-    #             offset = self.head(key)['ContentLength']
-    #         except ClientError:
-    #
-    #
-    #     if obj is None:
-    #         buf = BytesIO()
-    #     elif _should_be_file(obj, literal_str):
-    #         with Path(obj).open("rb") as stream:
-    #             buf = BytesIO(stream.read())
-    #     elif isinstance(obj, str):
-    #         buf = BytesIO(obj.encode('utf-8'))
-    #     elif isinstance(obj, bytes):
-    #         buf = BytesIO(obj)
-    #     elif not hasattr(obj, "read") and hasattr(obj, "seek"):
-    #         raise TypeError(f"Cannot put object of type {type(obj)}")
-    #     else:
-    #         buf = obj
-    #     buf.seek(0)
+    def append(
+        self,
+        obj: Puttable,
+        key: str,
+        literal_str: bool = False,
+    ) -> None:
+        """
+        Write data at an offset to an S3 Express One Zone object. If no offset
+        is specified, appends data to the end of the object.
 
+        Args:
+            obj: string, Path, bytes, or filelike / buffer object to write.
+
+                If None and `key` does not yet exist, performs "touch"-type
+                behavior (creates an empty object).
+            key: key of S3 object in this bucket to write `obj` to.
+            literal_str: if True and `obj` is a `str`, write that string to
+                `key`. Otherwise, interpret it as a path to a local file.
+
+        Returns:
+            None.
+
+        Cautions:
+            `append()` does not currently perform managed multipart uploads.
+            This means that if `obj` is > 5 GB, the operation will fail, and
+            also that `append()` is generally inefficient for large writes.
+            This will change in the future.
+        """
+        offset, touch = None, True
+        try:
+            offset = self.head(key)['ContentLength']
+            touch = False
+        except ClientError as ce:
+            if "not found" not in str(ce):
+                raise ce
+        file = None
+        try:
+            if obj is None:
+                file = BytesIO()
+            elif _should_be_file(obj, literal_str):
+                file = Path(obj).open("rb")
+            elif isinstance(obj, str):
+                file = BytesIO(obj.encode('utf-8'))
+            elif isinstance(obj, bytes):
+                file = BytesIO(obj)
+            elif not hasattr(obj, "read") and hasattr(obj, "seek"):
+                raise TypeError(f"Cannot put object of type {type(obj)}")
+            else:
+                file = obj
+            file.seek(0)
+            kwargs = {"Bucket": self.name, "Body": file, "Key": key}
+            if touch is False:
+                kwargs["WriteOffsetBytes"] = offset
+            resp = self.client.put_object(**kwargs)
+        finally:
+            if file is not None:
+                file.close()
+        return resp
 
 
     # TODO: verify types of returned dict values
