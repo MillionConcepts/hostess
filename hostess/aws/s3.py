@@ -15,6 +15,7 @@ import inspect
 import re
 import time
 import warnings
+from collections.abc import MutableSequence
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial, wraps
 from io import BytesIO, IOBase, StringIO
@@ -32,7 +33,7 @@ from typing import (
     Sequence,
     Callable,
     TypeVar,
-    ParamSpec
+    ParamSpec, BinaryIO, TextIO
 )
 
 import boto3
@@ -52,7 +53,7 @@ from hostess.aws.s3transfer_extensions.threadpool_range import (
 from hostess.aws.utilities import init_client, init_resource, make_boto_session
 from hostess.config.config import S3_DEFAULTS
 from hostess.utilities import (
-    curry, console_and_log, infer_stream_length, stamp
+    curry, console_and_log, infer_stream_length, stamp, signal_factory
 )
 
 Puttable = Union[str, Path, IOBase, bytes, None]
@@ -86,11 +87,63 @@ AZ_IDPAT = re.compile(r"[a-z]{3}\d-az(?P<number>\d)")
 BUCKET_TYPE = Literal["general", "directory"]
 
 
+class StoppableFuture:
+    def __init__(self, future, signaler):
+        self.future = future
+        self.signaler = signaler
+
+    def stop(self):
+        self.signaler()
+
+    def __getattr__(self, item):
+        return getattr(self.future, item)
+
+    def __str__(self):
+        return f"stoppable {self.future}"
+
+    def __repr__(self):
+        return f"stoppable {self.future.__repr__()}"
+
+
 def _should_be_file(obj, literal_str):
     return (
         (isinstance(obj, str) and literal_str is False)
         or (isinstance(obj, Path))
     )
+
+
+def _poll_obj(
+    bucket: "Bucket",
+    key: str,
+    start_pos: int | None,
+    signal: dict[int, int | None],
+    text_mode: bool,
+    destination: MutableSequence | BinaryIO | TextIO | IOBase | Path | str,
+    poll: float,
+):
+    if start_pos is None:
+        start_pos = bucket.head(key)['ContentLength']
+    if isinstance(destination, str):
+        destination = Path(destination)
+    pos = start_pos
+    while signal[0] is None:
+        result = bucket.get(key, start_byte=pos).read()
+        if len(result) == 0:
+            time.sleep(poll)
+            continue
+        pos += len(result)
+        if text_mode is True:
+            result = result.decode("utf-8")
+        if isinstance(destination, MutableSequence):
+            destination.append(result)
+        elif isinstance(destination, Path):
+            mode = "ab" if text_mode is False else "a"
+            with destination.open(mode) as stream:
+                stream.write(result)
+        else:
+            stream.write(result)
+        time.sleep(poll)
+
 
 def _attach_directory_bucket_suffix(name, azid):
     return f"{name}--{azid}--x-s3"
@@ -970,6 +1023,56 @@ class Bucket:
         if "LastModified" in head_dict:
             head_dict["LastModified"] = head_dict["LastModified"].isoformat()
         return head_dict
+
+    def tail(
+        self,
+        key: str,
+        destination: MutableSequence | BinaryIO | TextIO | IOBase | Path | str,
+        start_pos: int | None = None,
+        poll: float = 1,
+        text_mode: bool = True
+    ):
+        """
+        Asynchronous `tail -f`-like behavior for an S3 object. Note that this
+        function is primarily intended for following append-writes to SEOZ
+        objects, and if the size of the object _decreases_ while tailing, the
+        method may no longer accurately fetch subsequent writes to the file.
+        In the future, we may add an option to perform an additional HEAD
+        request to check object length before each normal HEAD / GET pair.
+
+        Args:
+            key: object key (fully-qualified 'path' from root)
+            destination: where to write the tail chunks. If a sequence,
+                appends each chunk as a new item.
+            start_pos: start reading from where? If None, start at the length
+                of the object when `tail()` is called.
+            poll: poll rate in seconds
+            text_mode: if True, decode each chunk as utf-8 text
+
+        Returns:
+            A `StoppableFuture` for the poll loop. call its `stop()` method to
+                stop tailing.
+
+        Notes:
+            Running this for a full day at the default 1-second poll rate
+            on a single S3 Standard object costs approximately $0.07. On a
+            SEOZ object, it costs approximately $0.005.
+        """
+        sigdict = {0: None}
+        sig = signal_factory(sigdict)
+        exc = ThreadPoolExecutor(1)
+        future = exc.submit(
+            _poll_obj,
+            bucket=self,
+            key=key,
+            start_pos=start_pos,
+            signal=sigdict,
+            text_mode=text_mode,
+            destination=destination,
+            poll=poll
+        )
+        return StoppableFuture(future, sig)
+
 
     def ls(
         self,

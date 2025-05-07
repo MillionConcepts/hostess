@@ -154,7 +154,16 @@ def make_boto_resource(
     Returns:
         boto resource for service.
     """
-    if "region_name" in resource_kwargs:
+    if (
+        "region_name" in resource_kwargs
+        and region is not None
+        and resource_kwargs["region_name"] != region
+    ):
+        raise ValueError(
+            "Please do not pass conflicting regions in 'resource_kwargs' "
+            "and 'region'."
+        )
+    elif "region_name" in resource_kwargs:
         region = resource_kwargs.pop("region_name")
     session = make_boto_session(profile, credential_file, region)
     return session.resource(service, **resource_kwargs)
@@ -268,7 +277,7 @@ def clarify_region(region: Optional[str] = None, boto_obj: Any = None) -> str:
         return region
     if "region_name" in dir(boto_obj):
         return boto_obj.region_name
-    elif "_client_config" in dir(boto_obj):
+    if "_client_config" in dir(boto_obj):
         return boto_obj._client_config.region_name
     raise AttributeError(f"Don't know how to read region from {boto_obj}.")
 
