@@ -1,5 +1,31 @@
 # Version History
 
+## [0.11.1] - 2025-05-07
+
+### Added
+
+- `aws.s3.Bucket` now has `create()` and `delete()` methods. `create()` is 
+  a class constructor that attempts to create an S3 bucket and returns an
+  associated `Bucket` if the API operation succeeds. `delete()` deletes the
+  associated S3 bucket iff it is empty.
+- `aws.s3.Bucket` now supports some managed operations on zonal directory 
+  buckets and S3 Express One Zone (SEOZ) objects, including:
+  - configuration and naming setup for zonal bucket creation in 
+  `Bucket.create()`
+  - append-writes via `Bucket.append()`
+- `aws.s3.Bucket` now has a `tail()` method that implements `tail -f`-like 
+  behavior for S3 objects. It asynchronously polls a selected object and 
+  copies any newly-written content at the end of that object into a target 
+  file, buffer, or sequence. This is intended primarily to follow 
+  append-writes to SEOZ objects for log tracking and similar applications.
+
+### Fixed
+
+- a bug in which `Bucket.get()` would sometimes fail to raise an exception 
+  when attempting to fetch a nonexistent object
+- a pytest configuration issue that could sometimes prevent the parser from 
+  recognizing the `--run-aws` option
+
 ## [0.11.0] - 2025-04-30
 
 ### Added
