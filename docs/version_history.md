@@ -32,21 +32,22 @@
 
 - `hostess.aws` now has 'live' tests. You can run them by passing `--run-aws` 
 to `pytest`. See the readme for system requirements and cautions.
-- `aws.s3.Bucket` now supports byte range requests via its `get()` and 
-`read()` methods. Examples:
-  ```
-  # i want the first 20 bytes of 'key'
-  bucket.get(key, end_byte=20)
+- `aws.s3.Bucket`'s `get()` and `read()` methods now support byte-range 
+requests. Examples:
   
-  # i want up to the last 20 bytes of 'key'
-  bucket.get(key, end_byte=-20)
-  
-  # i want bytes 100-200 of 'key'
-  bucket.get(key, start_byte=100, end_byte=200)
-  
-  # i want the last byte of 'key'
-  bucket.get(key, start_byte=-1)
-  ```
+```
+# i want the first 20 bytes of 'key'
+bucket.get(key, end_byte=20)
+
+# i want up to the last 20 bytes of 'key'
+bucket.get(key, end_byte=-20)
+
+# i want bytes 100-200 of 'key'
+bucket.get(key, start_byte=100, end_byte=200)
+
+# i want the last byte of 'key'
+bucket.get(key, start_byte=-1)
+ ```
 - `ServerPool` now has a `completed_queue` attribute. Like `completed`, 
 tasks are added to this queue as they complete; _unlike_ `completed`, it can 
 be safely modified while the pool is running. This is designed to facilitate 
