@@ -1,8 +1,8 @@
 """
 This module provides managed operations on AWS S3 objects. Its centerpiece
 is a Bucket object providing a high-level interface to operations on a single
-S3 bucket. The original motivation for this module was quickly constructing
-inventories of large buckets in pandas DataFrames.
+S3 bucket. This module was originally motivated by the need to quickly
+construct pandas DataFrames containing inventories of large buckets.
 
 Much of this module wraps lower-level methods of boto3, so it is in some sense
 an alternative implementation of boto3's own high-level managed S3 methods
@@ -832,14 +832,16 @@ class Bucket:
                         p.mkdir()
                         dirs_we_made.append(p)
             future = manager.download(*args, **kwargs)
+            ok = False
             try:
                 # this call is strictly intended to raise exceptions,
                 # e.g. attempts to get objects that don't exist.
                 future.result()
-            except Exception as ex:
-                for d in reversed(dirs_we_made):
-                    d.rmdir()
-                raise ex
+                ok = True
+            finally:
+                if ok is False:
+                    for d in reversed(dirs_we_made):
+                        d.rmdir()
         if hasattr(dest, "seek"):
             dest.seek(0)
         return dest
@@ -998,8 +1000,8 @@ class Bucket:
 
         Returns:
             dict containing a curated selection of object headers, or, for
-                a multi-object call, a list containing a dict for each
-                successful head and an Exception for each failed
+            a multi-object call, a list containing a dict for each
+            successful head and an Exception for each failed
         """
         response = self.client.head_object(Bucket=self.name, Key=key)
         headers = response["ResponseMetadata"].get("HTTPHeaders", {})
