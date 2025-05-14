@@ -17,9 +17,10 @@ import time
 import warnings
 from collections.abc import MutableSequence
 from concurrent.futures import ThreadPoolExecutor
+import concurrent.futures
 from functools import partial, wraps
 from io import BytesIO, IOBase, StringIO
-from itertools import chain, cycle
+from itertools import chain, repeat
 from pathlib import Path
 from typing import (
     Any,
@@ -33,7 +34,7 @@ from typing import (
     Sequence,
     Callable,
     TypeVar,
-    ParamSpec, BinaryIO, TextIO
+    ParamSpec, BinaryIO, TextIO, Concatenate, overload
 )
 
 import boto3
@@ -59,20 +60,142 @@ from hostess.utilities import (
 Puttable = Union[str, Path, IOBase, bytes, None]
 """type alias for Python objects Bucket will write to S3 """
 
-# TODO: there's probably a less awkward and more articulate way to do this
 P = ParamSpec("P")
 R = TypeVar("R")
 B = TypeVar("B")
 M = TypeVar("M")
 N = TypeVar("N")
-BMethOne = Callable[[B, M, P], R]
-BMethTwo = Callable[[B, M, N, P], R]
+
+BMethOne = Callable[Concatenate[B, M, P], R]
+BMethTwo = Callable[Concatenate[B, M, N, P], R]
 BMethOneList = Callable[
-    [B, Union[M, Sequence[M]], P], Union[R, list[R]]
+    Concatenate[B, M | Sequence[M], P],
+    R | list[R]
 ]
 BMethTwoList = Callable[
-    [B, Union[M, Sequence[M]], Union[N, Sequence[N]], P], Union[R, list[R]]
+    Concatenate[B, M | Sequence[M], N | Sequence[N], P],
+    R | list[R]
 ]
+
+
+def split_threaded(method, bucket, seq_iter, bound):
+    output = []
+    with ThreadPoolExecutor(bucket.n_threads) as exc:
+        futures = [
+            exc.submit(method, bucket, *pre, **bound) for pre in seq_iter
+        ]
+        concurrent.futures.wait(futures)
+        # loop over the original list rather than what .wait returns,
+        # to preserve the original order
+        for f in futures:
+            try:
+                output.append(f.result())
+            except BaseException as ex:
+                output.append(ex)
+    return output
+
+
+def split_sequential(method, bucket, seq_iter, bound):
+    output = []
+    for pre in seq_iter:
+        try:
+            output.append(method(bucket, *pre, **bound))
+        except Exception as ex:
+            output.append(ex)
+    return output
+
+
+def splitwrap_arity_1(method: BMethOne) -> BMethOneList:
+    sig = inspect.signature(method)
+    params = list(sig.parameters)
+    defaults = {n: p.default for n, p in sig.parameters.items()}
+
+    @wraps(method)
+    def maybesplit_arity_1(*args, **kwargs):
+        bound = sig.bind(*args, **kwargs).arguments
+        source = bound.get(params[1], defaults[params[1]])
+        sseq = hasattr(source, "index") and not isinstance(
+            source, (str, bytes)
+        )
+        if sseq is False:
+            return method(*args, **kwargs)
+        seq_iter = ((x,) for x in source)
+        bound.pop(params[1])
+        bucket = bound.pop(params[0])
+        if bucket.n_threads is None:
+            return split_sequential(method, bucket, seq_iter, bound)
+        else:
+            return split_threaded(method, bucket, seq_iter, bound)
+    return maybesplit_arity_1
+
+
+def splitwrap_arity_2(method: BMethTwo) -> BMethTwoList:
+    sig = inspect.signature(method)
+    params = list(sig.parameters)
+    defaults = {n: p.default for n, p in sig.parameters.items()}
+
+    @wraps(method)
+    def maybesplit_arity_2(*args, **kwargs):
+        bound = sig.bind(*args, **kwargs).arguments
+        source = bound.get(params[1], defaults[params[1]])
+        target = bound.get(params[2], defaults[params[2]])
+        sseq = hasattr(source, "index") and not isinstance(
+            source, (str, bytes)
+        )
+        sseq_len = len(source) if sseq else -1
+        if target is None:
+            tseq = sseq
+            tseq_len = sseq_len
+            if sseq:
+                target = repeat(target, tseq_len)
+        else:
+            tseq = hasattr(target, "index") and not isinstance(
+                target, (str, bytes)
+            )
+            tseq_len = len(target) if tseq else -1
+        if tseq != sseq:
+            raise TypeError("Mismatched sequence/nonsequence call")
+        if not sseq:
+            return method(*args, **kwargs)
+        if tseq_len != sseq_len:
+            raise ValueError("Mismatched source/target sequence lengths")
+        seq_iter = zip(source, target)
+        bound.pop(params[1])
+        bound.pop(params[2], None)
+        bucket = bound.pop(params[0])
+        if bucket.n_threads is None:
+            return split_sequential(method, bucket, seq_iter, bound)
+        else:
+            return split_threaded(method, bucket, seq_iter, bound)
+    return maybesplit_arity_2
+
+
+@overload
+def splitwrap(
+    *, seq_arity: Literal[1]
+) -> Callable[[BMethOne], BMethOneList]: ...
+@overload
+def splitwrap(
+    *, seq_arity: Literal[2]
+) -> Callable[[BMethTwo], BMethTwoList]: ...
+
+
+def splitwrap(*, seq_arity: Literal[1, 2]) -> (
+    Callable[[BMethOne], BMethOneList] | Callable[[BMethTwo], BMethTwoList]
+):
+    """
+    Decorator for methods of Bucket that permits them to accept either single
+    source and/or destination arguments or sequences of them. Automatically
+    maps sequences into a thread pool, unless instructed to run serially,
+    and returns all results in a list. Fails gracefully, returning Exceptions
+    raised by any individual function call rather than raising them.
+    """
+    if seq_arity == 1:
+        return splitwrap_arity_1
+    elif seq_arity == 2:
+        return splitwrap_arity_2
+    raise ValueError(f'seq_arity must be 1 or 2, not {seq_arity!r}')
+
 
 DIRECTORY_BUCKET_NAMEPAT = re.compile(
     r"[a-z0-9-.]{1,45}--[a-z]{3}\d-az\d--x-s3"
@@ -191,83 +314,6 @@ def check_az(az: str | int, region_name: str):
             "Multiple AZ matches. This may indicate a bug or an API error."
         )
     return match[0]['ZoneId']
-
-
-@curry
-def splitwrap(
-    method: Union[BMethOne, BMethTwo],
-    seq_arity: Literal[1, 2]
-) -> Union[BMethOneList, BMethTwoList]:
-    """
-    Decorator for methods of Bucket that permits them to accept either single
-    source and/or destination arguments or sequences of them. Automatically
-    maps sequences into a thread pool, unless instructed to run serially,
-    and returns all results in a list. Fails gracefully, returning Exceptions
-    raised by any individual function call rather than raising them.
-    """
-    sig = inspect.signature(method)
-    params = list(sig.parameters)
-    defaults = {n: p.default for n, p in list(sig.parameters.items())}
-
-    @wraps(method)
-    def maybesplit(*args, **kwargs):
-        bound = sig.bind(*args, **kwargs).arguments
-        source = bound.get(params[1], defaults[params[1]])
-        sseq = hasattr(source, "index") and not isinstance(
-            source, (str, bytes)
-        )
-        if seq_arity == 2:
-            target = bound.get(params[2], defaults[params[2]])
-            tseq = hasattr(target, "index") and not isinstance(
-                target, (str, bytes)
-            )
-            if sseq is False:
-                if tseq is True:
-                    raise TypeError("Mismatched sequence/nonsequence call")
-                return method(*args, **kwargs)
-            bound.pop(params[1])
-            bound.pop(params[2], None)
-            if (tseq is False) and (target is not None):
-                raise TypeError("Mismatched sequence/nonsequence call")
-            # noinspection PyTypeChecker
-            if target is None:
-                target = cycle((None,))
-            elif len(source) != len(target):
-                raise ValueError("Mismatched source/target sequence lengths")
-            seq_iter = zip(source, target)
-        elif sseq is False:
-            return method(*args, **kwargs)
-        else:
-            seq_iter = ((x,) for x in source)
-            bound.pop(params[1])
-        bucket = bound.pop(params[0])
-        if bucket.n_threads is None:
-            output = []
-            for pre in seq_iter:
-                try:
-                    output.append(method(bucket, *pre, **bound))
-                except KeyboardInterrupt:
-                    raise
-                except Exception as ex:
-                    output.append(ex)
-            return output
-        exc = ThreadPoolExecutor(bucket.n_threads)
-        futures = [
-            exc.submit(method, bucket, *pre, **bound) for pre in seq_iter
-        ]
-        while not all(f.done() for f in futures):
-            time.sleep(0.02)
-        output = []
-        for f in futures:
-            try:
-                output.append(f.result())
-            except KeyboardInterrupt:
-                raise
-            except Exception as ex:
-                output.append(ex)
-        return output
-
-    return maybesplit
 
 
 def _dtstr(thing: Any):
