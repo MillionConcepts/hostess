@@ -978,6 +978,7 @@ class Bucket:
         obj: Puttable,
         key: str,
         literal_str: bool = False,
+        offset: int | None = None
     ) -> None:
         """
         Write data at an offset to an S3 Express One Zone object. If no offset
@@ -985,12 +986,12 @@ class Bucket:
 
         Args:
             obj: string, Path, bytes, or filelike / buffer object to write.
-
                 If None and `key` does not yet exist, performs "touch"-type
                 behavior (creates an empty object).
             key: key of S3 object in this bucket to write `obj` to.
             literal_str: if True and `obj` is a `str`, write that string to
                 `key`. Otherwise, interpret it as a path to a local file.
+            offset:
 
         Returns:
             None.
@@ -999,14 +1000,17 @@ class Bucket:
             `append()` does not currently perform managed multipart uploads.
             This means that if `obj` is > 5 GB, the operation will fail, and
             also that `append()` is generally inefficient for large writes.
-            This will change in the future.
+            In its current state, it is primarily intended for tasks like
+            tail-writes to logs. This may change in the future.
         """
-        offset, touch = None, True
+        touch = True
         try:
-            offset = self.head(key)['ContentLength']
+            head = self.head(key)
+            if offset in (None, 0):
+                offset = head["ContentLength"]
             touch = False
         except ClientError as ce:
-            if "not found" not in str(ce):
+            if "not found" not in str(ce).lower():
                 raise ce
         file = None
         try:
