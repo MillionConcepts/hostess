@@ -216,7 +216,7 @@ class StoppableFuture:
         self.signaler = signaler
 
     def stop(self):
-        self.signaler()
+        self.signaler(0)
 
     def __getattr__(self, item):
         return getattr(self.future, item)
@@ -243,14 +243,25 @@ def _poll_obj(
     text_mode: bool,
     destination: MutableSequence | BinaryIO | TextIO | IOBase | Path | str,
     poll: float,
+    permit_missing: bool
 ):
+    def _mayberaise(func, *args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except ClientError as ce:
+            if permit_missing is True and "not found" in str(ce).lower():
+                return None
+            raise ce
+
     if start_pos is None:
-        start_pos = bucket.head(key)['ContentLength']
+        head = _mayberaise(bucket.head, key)
+        start_pos = 0 if head is None else head['ContentLength']
     if isinstance(destination, str):
         destination = Path(destination)
     pos = start_pos
     while signal[0] is None:
-        result = bucket.get(key, start_byte=pos).read()
+        result = _mayberaise(bucket.get, key, start_byte=pos)
+        result = "" if result is None else result.read()
         if len(result) == 0:
             time.sleep(poll)
             continue
@@ -1082,7 +1093,8 @@ class Bucket:
         destination: MutableSequence | BinaryIO | TextIO | IOBase | Path | str,
         start_pos: int | None = None,
         poll: float = 1,
-        text_mode: bool = True
+        text_mode: bool = True,
+        permit_missing: bool = False
     ):
         """
         Asynchronous `tail -f`-like behavior for an S3 object. Note that this
@@ -1121,7 +1133,8 @@ class Bucket:
             signal=sigdict,
             text_mode=text_mode,
             destination=destination,
-            poll=poll
+            poll=poll,
+            permit_missing=permit_missing
         )
         return StoppableFuture(future, sig)
 
