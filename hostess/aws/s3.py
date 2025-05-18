@@ -816,9 +816,7 @@ class Bucket:
         start_byte: Optional[int] = None,
         end_byte: Optional[int] = None,
         **extra_args: str
-    ) -> Union[
-        Union[Path, str, IOBase], list[Union[Path, str, IOBase, Exception]]
-    ]:
+    ) -> Union[Path, str, IOBase] | list[Union[Path, str, IOBase, Exception]]:
         """
         write S3 object(s) into file(s) or filelike object(s).
 
