@@ -51,10 +51,10 @@ from s3transfer.manager import TransferManager
 from hostess.aws.s3transfer_extensions.threadpool_range import (
     TransferManagerWithRange
 )
-from hostess.aws.utilities import init_client, init_resource, make_boto_session
+from hostess.aws.utilities import init_client, init_resource
 from hostess.config.config import S3_DEFAULTS
 from hostess.utilities import (
-    curry, console_and_log, infer_stream_length, stamp, signal_factory
+    console_and_log, infer_stream_length, stamp, signal_factory, StoppableFuture
 )
 
 Puttable = Union[str, Path, IOBase, bytes, None]
@@ -210,24 +210,6 @@ AZ_IDPAT = re.compile(r"[a-z]{3}\d-az(?P<number>\d)")
 BUCKET_TYPE = Literal["general", "directory"]
 
 
-class StoppableFuture:
-    def __init__(self, future, signaler):
-        self.future = future
-        self.signaler = signaler
-
-    def stop(self):
-        self.signaler(0)
-
-    def __getattr__(self, item):
-        return getattr(self.future, item)
-
-    def __str__(self):
-        return f"stoppable {self.future}"
-
-    def __repr__(self):
-        return f"stoppable {self.future.__repr__()}"
-
-
 def _should_be_file(obj, literal_str):
     return (
         (isinstance(obj, str) and literal_str is False)
@@ -239,7 +221,8 @@ def _poll_obj(
     bucket: "Bucket",
     key: str,
     start_pos: int | None,
-    signal: dict[int, int | None],
+    _sigdict: dict[int, int | None],
+    _id: int,
     text_mode: bool,
     destination: MutableSequence | BinaryIO | TextIO | IOBase | Path | str,
     poll: float,
@@ -259,7 +242,7 @@ def _poll_obj(
     if isinstance(destination, str):
         destination = Path(destination)
     pos = start_pos
-    while signal[0] is None:
+    while _sigdict.get(0) is None:
         result = _mayberaise(bucket.get, key, start_byte=pos)
         result = "" if result is None else result.read()
         if len(result) == 0:
@@ -1122,21 +1105,17 @@ class Bucket:
             on a single S3 Standard object costs approximately $0.07. On a
             SEOZ object, it costs approximately $0.005.
         """
-        sigdict = {0: None}
-        sig = signal_factory(sigdict)
-        exc = ThreadPoolExecutor(1)
-        future = exc.submit(
+        return StoppableFuture.launch_into(
+            ThreadPoolExecutor(1),
             _poll_obj,
             bucket=self,
             key=key,
             start_pos=start_pos,
-            signal=sigdict,
             text_mode=text_mode,
             destination=destination,
             poll=poll,
             permit_missing=permit_missing
         )
-        return StoppableFuture(future, sig)
 
 
     def ls(

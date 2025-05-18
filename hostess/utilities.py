@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import _io
 import datetime as dt
+from concurrent.futures.thread import ThreadPoolExecutor
 from functools import wraps
 from importlib import import_module
 from importlib.util import spec_from_file_location, module_from_spec
@@ -475,3 +476,30 @@ def is_any(obj: Any, coll: Iterable) -> bool:
         True if `obj` is in `coll`; False if not
     """
     return any(map(lambda item: is_(obj, item), coll))
+
+
+class StoppableFuture:
+    def __init__(self, future, _sigdict, _id=0):
+        self.future = future
+        self.signaler = signal_factory(_sigdict)
+        self._id = _id
+
+    def stop(self, sig=0):
+        self.signaler(self._id, sig)
+
+    def __getattr__(self, item):
+        return getattr(self.future, item)
+
+    def __str__(self):
+        return f"stoppable {self.future} [stoppable]"
+
+    def __repr__(self):
+        return f"{self.future.__repr__()} [stoppable]"
+
+    @classmethod
+    def launch_into(
+        cls, exc: ThreadPoolExecutor, func, *args, _id=0, **kwargs,
+    ) -> "StoppableFuture":
+        _sigdict = {0: None}
+        future = exc.submit(func, *args, **kwargs, _id=0, _sigdict=_sigdict)
+        return StoppableFuture(future, _sigdict)
