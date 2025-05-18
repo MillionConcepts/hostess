@@ -1,5 +1,9 @@
 # Version History
 
+## [0.11.2] - 2025-05-18
+
+- Assorted cleanup, refactoring, and bugfixes in `aws.s3`.`
+
 ## [0.11.1] - 2025-05-07
 
 ### Added
