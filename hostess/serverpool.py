@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from functools import reduce
 from itertools import chain
 from queue import Queue
 import time
@@ -9,8 +10,8 @@ from hostess.subutils import RunCommand, Viewer
 
 class ServerTask:
     """
-    Simple future-like object. It is  primarily intended to be instantiated by `ServerPool` as an abstraction for a process running on
-    a remote host.
+    Simple future-like object. It is  primarily intended to be instantiated
+    by `ServerPool` as an abstraction for a process running on a remote host.
     """
 
     def __init__(
@@ -36,7 +37,7 @@ class ServerTask:
         """
         self.instance, self.method = host, method
         self.args, self.kwargs = args, kwargs
-        self.viewer, self.task = None, None
+        self.viewer, self.task, self.start_timestamp = None, None, None
         self.executed, self.poll, self.exception = False, poll, None
         if defer is False:
             self.run()
@@ -65,6 +66,7 @@ class ServerTask:
     def run(self):
         """Execute the task."""
         self.executed = True
+        self.start_timestamp = time.time()
         try:
             viewer = getattr(
                 self.instance, self.method
@@ -122,6 +124,7 @@ class ServerPool:
         hosts: Sequence[Union["Instance", RunCommand]],
         max_concurrent: int = 1,
         poll: float = 0.03,
+        task_delay: float | None = None
     ):
         """
         Args:
@@ -151,6 +154,27 @@ class ServerPool:
         self.pollthread, self.exc = None, ThreadPoolExecutor(1)
         self.task_ix, self.poll = 0, poll
         self.used = set()
+        self.assignment_criteria = [self._meets_max_concurrent]
+        self.task_delay = task_delay
+        if self.task_delay is not None:
+            self.assignment_criteria.append(self._meets_task_delay)
+
+    def _meets_max_concurrent(self):
+        return {
+            i for i, t in self.taskmap.items() if len(t) < self.max_concurrent
+        }
+
+    def _meets_task_delay(self):
+        now, met = time.time(), set()
+        for i, tasks in self.taskmap.items():
+            if len(tasks) == 0:
+                met.add(i)
+            elif min(
+                now - t.start_timestamp for t in tasks.values()
+            ) > self.task_delay:
+                met.add(i)
+        return met
+
 
     def _rectify_call(self, kwargs):
         """
@@ -162,9 +186,8 @@ class ServerPool:
         """
         if self.closed is True:
             raise ValueError("pool closed")
-        # TODO: check to make sure the called method returns a Viewer by
-        #   default
-        kwargs.pop('_viewer', None)
+        if "_viewer" in kwargs and kwargs["_viewer"] is not True:
+            kwargs.pop("_viewer")
         kwargs.pop('_disown', None)
 
     @property
@@ -175,11 +198,13 @@ class ServerPool:
         Returns:
             `dict` of {host id: host} containing only non-busy hosts.
         """
-        return {
-            i: self.hosts[i]
-            for i, t in self.taskmap.items()
-            if len(t) < self.max_concurrent
-        }
+        available = self.hosts
+        for c in self.assignment_criteria:
+            available = {i: h for i, h in available.items() if i in c()}
+            if len(available) == 0:
+                break
+        return available
+
 
     @property
     def next_available(
