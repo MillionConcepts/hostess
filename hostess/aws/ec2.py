@@ -1351,6 +1351,7 @@ class Cluster:
         argseq: Optional[Union[Sequence[Sequence], cycle]] = None,
         kwargseq: Optional[Union[Sequence[Mapping[str, Any]], cycle]] = None,
         max_concurrent: int = 1,
+        task_delay: float | None = None,
         poll: float = 0.03,
     ) -> ServerPool:
         """
@@ -1371,7 +1372,7 @@ class Cluster:
                 including raised Exceptions for failed calls
         """
         argseq, kwargseq = self._format_map_arguments(argseq, kwargseq)
-        pool = ServerPool(self.instances, max_concurrent, poll)
+        pool = ServerPool(self.instances, max_concurrent, poll, task_delay)
         # attempt to prevent accidentally mapping an infinite number of tasks
         if isinstance(argseq, cycle) and isinstance(kwargseq, cycle):
             pool.max_concurrent = 1
@@ -1453,7 +1454,8 @@ class Cluster:
             Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]
         ] = None,
         wait: bool = True,
-        max_concurrent: int = 1
+        max_concurrent: int = 1,
+        task_delay: float | None = None
     ) -> Union[list[Viewer], ServerPool]:
         """
         Map a shell command or commands across this `Cluster's` `Instances`,
@@ -1511,6 +1513,8 @@ class Cluster:
                 processes complete and return a list of `Viewers`.
             max_concurrent: maximum number of commands to simultaneously run
                 on each instance.
+            task_delay: optional minimum interval, in seconds, between which
+                subsequent tasks may be assigned to any one instance.
 
         Returns:
             If `wait` is `True`, a list of `Viewers` produced from
@@ -1520,7 +1524,7 @@ class Cluster:
         """
         argseq, kwargseq = self._dispatch_cycle_arguments(argseq, kwargseq)
         pool = self._async_method_map(
-            "command", argseq, kwargseq, max_concurrent
+            "command", argseq, kwargseq, max_concurrent, task_delay
         )
         pool.close()
         if wait is False:
@@ -1534,7 +1538,8 @@ class Cluster:
             Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]
         ] = None,
         wait: bool = True,
-        max_concurrent: int = 1
+        max_concurrent: int = 1,
+        task_delay: float | None = None
     ) -> Union[list[Union[Viewer, Exception]], ServerPool]:
         """
         Map Python calls across this `Cluster's` `Instances`, asynchronously
@@ -1551,6 +1556,9 @@ class Cluster:
                 processes complete and return a list of `Viewers`.
             max_concurrent: maximum number of calls to simultaneously perform
                 on each instance.
+            task_delay: optional minimum interval, in seconds, between which
+                subsequent calls may be assigned to any one instance.
+
 
         Returns:
             If `wait` is `True`, a list of `Viewers` produced from
@@ -1560,7 +1568,7 @@ class Cluster:
         """
         argseq, kwargseq = self._dispatch_cycle_arguments(argseq, kwargseq)
         pool = self._async_method_map(
-            "call_python", argseq, kwargseq, max_concurrent
+            "call_python", argseq, kwargseq, max_concurrent, task_delay
         )
         pool.close()
         if wait is False:
