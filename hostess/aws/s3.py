@@ -1209,9 +1209,12 @@ class Bucket:
             each normal HEAD / GET pair.
 
         Notes:
-            Running this for a full day at the default 1-second poll rate
-            on a single S3 Standard object costs approximately $0.07. On a
-            SEOZ object, it costs approximately $0.005.
+            Exclusive of egress costs, running this for a full day at the
+            default 1-second poll rate on a single S3 Standard object costs
+            approximately $0.07. On a SEOZ object, it costs approximately
+            $0.005. Egress costs in this application should be equal to
+            egress for (size of object when tailing ends) minus (the smaller
+            of start_pos or size of object when tailing starts)
         """
         return StoppableFuture.launch_into(
             ThreadPoolExecutor(1),
