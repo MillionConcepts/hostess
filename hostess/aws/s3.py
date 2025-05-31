@@ -54,7 +54,7 @@ from hostess.aws.s3transfer_extensions.threadpool_range import (
 from hostess.aws.utilities import init_client, init_resource
 from hostess.config.config import S3_DEFAULTS
 from hostess.utilities import (
-    console_and_log, infer_stream_length, stamp, signal_factory, StoppableFuture
+    console_and_log, infer_stream_length, stamp, StoppableFuture
 )
 
 Puttable = Union[str, Path, IOBase, bytes, None]
@@ -1181,12 +1181,7 @@ class Bucket:
         permit_missing: bool = False
     ):
         """
-        Asynchronous `tail -f`-like behavior for an S3 object. Note that this
-        function is primarily intended for following append-writes to SEOZ
-        objects, and if the size of the object _decreases_ while tailing, the
-        method may no longer accurately fetch subsequent writes to the file.
-        In the future, we may add an option to perform an additional HEAD
-        request to check object length before each normal HEAD / GET pair.
+        Provides asynchronous `tail -f`-like functionality for S3 objects.
 
         Args:
             key: object key (fully-qualified 'path' from root)
@@ -1196,10 +1191,22 @@ class Bucket:
                 of the object when `tail()` is called.
             poll: poll rate in seconds
             text_mode: if True, decode each chunk as utf-8 text
+            permit_missing: if True, don't raise an error if the object
+                doesn't exist; instead, periodically check to see if the
+                object comes into existence, and if it does, start tailing it.
 
         Returns:
-            A `StoppableFuture` for the poll loop. call its `stop()` method to
-                stop tailing.
+            A `StoppableFuture` for the poll loop. Call its `stop()` method to
+                stop tailing. Note that this future's result will always be
+                `None`.
+
+        Warnings:
+            This function is primarily intended for following append-writes
+            to SEOZ objects, and if the size of the object _decreases_ while
+            tailing, the method may no longer accurately fetch subsequent
+            writes to the file. In the future, we may add an option to
+            perform an additional HEAD request to check object length before
+            each normal HEAD / GET pair.
 
         Notes:
             Running this for a full day at the default 1-second poll rate
@@ -1217,7 +1224,6 @@ class Bucket:
             poll=poll,
             permit_missing=permit_missing
         )
-
 
     def ls(
         self,
