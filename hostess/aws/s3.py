@@ -18,7 +18,7 @@ import warnings
 from collections.abc import MutableSequence
 from concurrent.futures import ThreadPoolExecutor
 import concurrent.futures
-from functools import partial, wraps
+from functools import partial, wraps, cached_property
 from io import BytesIO, IOBase, StringIO
 from itertools import chain, repeat
 from pathlib import Path
@@ -278,9 +278,22 @@ def _raise_for_owned_use1_bucket(client, name, bucket_type: BUCKET_TYPE):
             f"associated with repeat CreateBucket operations in us-east-1."
         )
 
+
 def check_az(az: str | int, region_name: str):
+    """
+    Validate existence of an AvailabilityZone in a particular region, and
+    return its canonical Zone ID.
+
+    Args:
+        az: identifier for Availability Zone. May be its Zone Name, Zone ID,
+            number, or letter.
+        region_name: canonical, unabbreviated region name (e.g. 'us-east-1')
+
+    Returns:
+        Unabbreviated Zone ID for referenced Availability Zone.
+    """
     if isinstance(az, int):
-        az, ident= str(az), "number"
+        az, ident = str(az), "number"
     elif not isinstance(az, str):
         raise TypeError(f"'az_name' must be int or string, got {type(az)}")
     elif len(az) == 1:
@@ -321,7 +334,13 @@ def _dtstr(thing: Any):
 
 
 class Bucket:
-    """Interface to and representation of an S3 bucket."""
+    """
+    Interface to and representation of an S3 bucket.
+
+    Note:
+        Bucket supports only general-purpose and directory buckets, not
+        table buckets.
+    """
 
     def __init__(
         self,
@@ -369,6 +388,7 @@ class Bucket:
         *,
         bucket_type: BUCKET_TYPE = "general",
         az: str | int | None = None,
+        tags: dict[str, str] | None = None,
         bucket_config: Mapping | None = None,
         **bucket_kwargs
     ):
@@ -385,8 +405,8 @@ class Bucket:
             session: optional boto3 Session. if not specified, creates a
                 default session.
             bucket_type: "general" (default, meaning a general-purpose bucket)
-                or "directory" (meaning a directory bucket). Note that only
-                zonal directory buckets are supported.
+                or "directory" (meaning a directory bucket). Note that this
+                method only supports zonal directory buckets.
             az: Name, letter, ID, or number of the Availability Zone (AZ) in
                 which to create a directory bucket. For instance, if `session`
                 is associated with the us-east-1 region, 'us-east-1c',
@@ -394,11 +414,17 @@ class Bucket:
                 that creating a bucket in a region other than the one `client`
                 (or `session`, if `client` is not passed) is not supported.
 
-                This argument is ignored when creating general-purpose buckets.
+                This argument is ignored for general-purpose buckets.
 
-                Note: Not all AZs support directory buckets, and there is no
-                mechanism to discover which do and do not via the API. See:
+                Note that not all AZs support directory buckets, and there is
+                no mechanism to discover which do and do not via the API
+                (other than actually attempting to create one). See:
                 https://docs.aws.amazon.com/AmazonS3/latest/userguide/endpoint-directory-buckets-AZ.html
+            tags: Keys and values of bucket tags to set after successful
+                  bucket creation. If not None, there must be at least one
+                  item in this dict. Note that directory buckets do not
+                  support tags; this method will raise a ValueError if
+                  provided tags for a directory bucket.
             bucket_config: passed to the botocore `create_bucket()` method as
                 the 'CreateBucketConfig' argument.
             bucket_kwargs: passed directly to `Bucket.__init__()`.
@@ -416,6 +442,8 @@ class Bucket:
             have the ListBuckets permission to use `Bucket.create()` in
             us-east-1.
         """
+        if tags is not None and bucket_type == "directory":
+            raise ValueError("Directory buckets do not support tags.")
         client = init_client("s3", client, session)
         if bucket_type not in ("general", "directory"):
             raise ValueError("'bucket_type' must be 'general' or 'directory'.")
@@ -464,7 +492,10 @@ class Bucket:
                 )
             else:
                 raise ce
-        return Bucket(name, client=client, **bucket_kwargs)
+        bucket = Bucket(name, client=client, **bucket_kwargs)
+        if tags is not None:
+            bucket.set_tags(**tags)
+        return bucket
 
     def delete(self):
         """
@@ -563,13 +594,14 @@ class Bucket:
     ) -> Optional[dict]:
         """
         Create an S3 object from a byte stream via a managed multipart upload.
-        Useful for uploading large files, but can also handle intermittent
-        streams, larger-than-memory transfers, direct streams from remote URLs,
-        and streams of unknown length.
+        Intended primarily for intermittent streams, incremental writes of
+        larger-than-memory data, direct streams from remote resources, and
+        streams of unknown length. If you are just uploading on-disk files
+        or discrete in-memory objects, Bucket.put() is usuallygh preferable.
 
         Args:
             obj: source of stream to upload. May be a path, a URL, a filelike
-                object, or any iterator that yields bytes.
+                object, or any iterator that yields `bytes` objects.
             key: key of object to create from stream (fully-qualified 'path'
                 relative to bucket root)
             config: optional transfer config
@@ -1028,6 +1060,77 @@ class Bucket:
                 file.close()
         return resp
 
+    @cached_property
+    def bucket_type(self) -> BUCKET_TYPE:
+        """
+        Top-level type of bucket, 'general' or 'directory'. Does not
+        distinguish directory bucket subtypes.
+        """
+        head = self.client.head_bucket(Bucket=self.name)
+        if 'BucketLocationType' in head:
+            return 'directory'
+        return 'general'
+
+    @cached_property
+    def tags(self) -> dict:
+        """
+        Bucket tags represented as a dict. If there are no tags, returns
+        an empty dict. Note that directory buckets do not support tags;
+        attempting to access this attribute for a directory bucket will
+        raise a ValueError.
+        """
+        try:
+            response = self.client.get_bucket_tagging(Bucket=self.name)
+        except ClientError as ce:
+            if "NoSuchTagSet" in str(ce):
+                return {}
+            if "MethodNot" in str(ce) and self.bucket_type == "directory":
+                raise ValueError("Directory buckets do not support tags.")
+            raise ce
+        return {rec["Key"]: rec["Value"] for rec in response['TagSet']}
+
+    def set_tags(self, *, replace_all: bool = False, **tags: str):
+        """
+        Set tags for this bucket.
+
+        Args:
+            replace_all: if True, removes _all_ existing tags along with
+                setting passed tag values (this is the default behavior of the
+                PutBucketTagging API operation). If False, leaves existing
+                tags unchanged unless they are redefined in `tags`.
+            **tags: Argument names are tag keys; argument values are tag
+                values. At least one tag must be defined.
+
+        Returns:
+            API response for PutBucketTagging operation.
+
+        Note:
+            AWS directory buckets do not support tags. Calling this method for
+            a directory bucket will raise a ValueError.
+        """
+        if len(tags) == 0:
+            raise ValueError("No tags to set")
+        if not all(isinstance(x, str) for x in tags.values()):
+            raise TypeError("Tag values must be strings")
+        if replace_all is False:
+            tags = self.tags | tags
+        try:
+            response = self.client.put_bucket_tagging(
+                Bucket=self.name,
+                Tagging={
+                    'TagSet': [{'Key': k, 'Value': v} for k, v in tags.items()]
+                }
+            )
+        except ClientError as ce:
+            if "BucketConfig" in str(ce) and self.bucket_type == "directory":
+                raise ValueError("Directory buckets do not support tags.")
+            raise ce
+        try:
+            # noinspection PyPropertyAccess
+            del self.tags
+        except AttributeError:
+            pass
+        return response
 
     # TODO: verify types of returned dict values
     @splitwrap(seq_arity=1)
