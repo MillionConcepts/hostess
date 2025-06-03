@@ -1,5 +1,21 @@
 # Version History
 
+## [0.11.3] - 2025-06-03
+
+### Added
+
+- `ServerPool` now supports a `task_delay` argument that enforces
+a minimum time interval between assigning any two tasks to any
+one worker. This can be passed directly to dependent methods such as
+`aws.ec2.Cluster.commandmap()`.
+- `aws.s3.Bucket` now supports simple bucket tag access and management.
+Tags may be set by passing kwargs to the `Bucket.set_tags()` method,
+and may be inspected as the `Bucket.tags` attribute.
+
+### Changed
+
+- Assorted linting and documentation cleanup
+
 ## [0.11.2] - 2025-05-18
 
 - Assorted cleanup, refactoring, and bugfixes in `aws.s3`.`
