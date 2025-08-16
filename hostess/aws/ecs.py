@@ -1,3 +1,4 @@
+import time
 from typing import Optional, Any, Sequence, Collection, Literal
 
 import boto3
@@ -228,6 +229,19 @@ class ECSTask:
         https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_StopTask.html
         """
         self.ecs.stop_task(cluster=self.cluster, task=self.task)
+
+    def wait_while_pending(self, poll=0.1, timeout=60):
+        """
+        Blocks until the task's status is not 'PENDING' or `timeout` seconds
+        have passed.
+        """
+        self.update()
+        start = time.time()
+        while self.status == "PENDING":
+            if time.time() - start > timeout:
+                raise TimeoutError(f"Task still pending after {timeout} s")
+            time.sleep(poll)
+            self.update()
 
     def __str__(self):
         parts = [
