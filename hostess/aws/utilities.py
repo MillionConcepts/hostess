@@ -15,8 +15,14 @@ from cytoolz.curried import mapcat, get
 
 
 def tag_dict(tag_records, lower=False):
+    if len(tag_records) == 0:
+        return {}
+    # regularize APIs that return titlecase 'Key' vs. lowercase 'key'
+    tag_records = [
+        {k.lower(): v for k, v in rec.items()} for rec in tag_records
+    ]
     formatter = str.lower if lower is True else identity
-    return {formatter(tag["Key"]): tag["Value"] for tag in tag_records}
+    return {formatter(tag["key"]): tag["value"] for tag in tag_records}
 
 
 def parse_aws_identity_file(
@@ -242,9 +248,17 @@ def tagfilter(
 
     Returns:
         True if all filters pass; False if any fail. Note that a filter will
-            always fail if the API response simply lacks a Tags array.
+            always fail if the API response lacks a Tags/tags array, but also
+            that this function will always return True if filters has length 0.
     """
-    tags = tag_dict(description.get("Tags", []), lower=True)
+    if "Tags" in description:
+        tags = tag_dict(description.get("Tags"), lower=True)
+    elif "tags" in description:
+        tags = tag_dict(description.get("tags"), lower=True)
+    elif len(filters) > 0:
+        return False
+    else:
+        return True
     # noinspection PyArgumentList
     matcher = flip(contains) if regex is False else re.search
     for key, value in filters.items():
