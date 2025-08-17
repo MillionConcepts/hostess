@@ -160,7 +160,7 @@ def docker_push_commands_for_ecr(
 
 def summarize_task_description(task):
     container = task["containers"][0]
-    return {
+    summary = {
         "az": task["availabilityZone"],
         "id": container.get("runtimeId"),
         "group": task["group"],
@@ -172,9 +172,13 @@ def summarize_task_description(task):
         "image": container["image"],
         "start": task.get("startedAt"),
         "container_name": container["name"],
-        "name": tag_dict(task.get("tags", {})).get("Name"),
+        "name": tag_dict(task.get("tags", [])).get("Name"),
         "launch_type": task["launchType"],
+        "tags": tag_dict(task.get("tags", []))
     }
+    if summary["start"] is not None:
+        summary["start"] = summary["start"].isoformat()
+    return summary
 
 
 def definition_from_summary(client, summary):
@@ -234,11 +238,10 @@ def ls_tasks(
         tasks = client.describe_tasks(cluster=c, tasks=arns, include=["TAGS"])[
             "tasks"
         ]
+        tasks = [t for t in tasks if tagfilter(t, tag_filters, tag_regex)]
         csums = [summarize_task_description(t) for t in tasks]
         filtered = []
         for cs in csums:
-            if not tagfilter(cs, tag_filters, tag_regex):
-                continue
             if cs["definition_arn"] in task_defs:
                 def_ = task_defs[cs["definition_arn"]]
             else:
