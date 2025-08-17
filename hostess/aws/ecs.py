@@ -1,11 +1,161 @@
+import re
 import time
-from typing import Optional, Any, Sequence, Collection, Literal
+from typing import Optional, Any, Sequence, Collection, Literal, NamedTuple
 
 import boto3
 import botocore.client
 import pandas as pd
 
 from hostess.aws.utilities import tagfilter, tag_dict, init_client
+
+
+class ECRImage(NamedTuple):
+    registry: str  # e.g. "123456789012.dkr.ecr.us-east-1.amazonaws.com"
+    repository: str  # e.g. "my/app"
+    ref_type: str  # "tag" | "digest" | "none"
+    ref_value: Optional[
+        str
+    ]  # tag string or "sha256:..." (without leading "@")
+    is_public: bool
+    region: Optional[
+        str
+    ]  # us-east-1, cn-north-1, etc (public uses us-east-1 for login)
+    account: Optional[str]  # None for public
+    partition: str  # "aws" | "aws-cn" | "aws-us-gov"
+
+
+_ECR_PRIVATE = re.compile(
+    r"^(?P<account>\d+)\.dkr\.ecr\.(?P<region>[\w-]+)\.amazonaws\.com(?P<suffix>\.cn)?/(?P<repo>[^:@]+)(?::(?P<tag>[^@]+))?(?:@(?P<digest>sha256:[0-9a-fA-F]{64}))?$"
+)
+
+# public.ecr.aws/<alias-or-namespace>/<repo>(:tag)?(@sha256:...)?
+_ECR_PUBLIC = re.compile(
+    r"^public\.ecr\.aws/(?P<repo>[^:@]+)(?::(?P<tag>[^@]+))?(?:@(?P<digest>sha256:[0-9a-fA-F]{64}))?$"
+)
+
+
+def parse_ecr_image_uri(image_uri: str) -> ECRImage:
+    """
+    Parse an ECR image URI (private or public). Supports tags and digest pins.
+
+    Examples:
+      123456789012.dkr.ecr.us-east-1.amazonaws.com/my/app:abc123
+      123456789012.dkr.ecr.us-gov-west-1.amazonaws.com/thing@sha256:...
+      public.ecr.aws/abc1d2e3/myimg:latest
+    """
+    m = _ECR_PRIVATE.match(image_uri)
+    if m:
+        account = m.group("account")
+        region = m.group("region")
+        suffix = m.group("suffix") or ""
+        partition = (
+            "aws-cn"
+            if suffix == ".cn"
+            else ("aws-us-gov" if "us-gov" in region else "aws")
+        )
+        repo = m.group("repo")
+        tag = m.group("tag")
+        digest = m.group("digest")
+        ref_type, ref_value = (
+            ("tag", tag)
+            if tag
+            else (("digest", digest) if digest else ("none", None))
+        )
+        return ECRImage(
+            registry=f"{account}.dkr.ecr.{region}.amazonaws.com{suffix}",
+            repository=repo,
+            ref_type=ref_type,
+            ref_value=ref_value,
+            is_public=False,
+            region=region,
+            account=account,
+            partition=partition,
+        )
+
+    m = _ECR_PUBLIC.match(image_uri)
+    if m:
+        repo = m.group("repo")
+        tag = m.group("tag")
+        digest = m.group("digest")
+        ref_type, ref_value = (
+            ("tag", tag)
+            if tag
+            else (("digest", digest) if digest else ("none", None))
+        )
+        # ECR Public logins use us-east-1 region with ecr-public
+        return ECRImage(
+            registry="public.ecr.aws",
+            repository=repo,
+            ref_type=ref_type,
+            ref_value=ref_value,
+            is_public=True,
+            region="us-east-1",
+            account=None,
+            partition="aws",
+        )
+
+    raise ValueError(f"Not an ECR image URI I recognize: {image_uri!r}")
+
+
+def docker_push_commands_for_ecr(
+    image_uri: str, local_tag: Optional[str] = None
+) -> str:
+    """
+    Generate a login → build → tag → push command sequence for an ECR image URI.
+
+    - If `image_uri` has a tag, that tag is used for local build unless `local_tag` is provided.
+    - If `image_uri` is pinned by digest, a tag is required to push; we synthesize a
+      local/remote tag like 'repro-<shortdigest>' unless `local_tag` is provided.
+
+    Returns a newline-joined shell snippet.
+    """
+    info = parse_ecr_image_uri(image_uri)
+    # Pick a safe local image name (no slashes). Use repo basename locally.
+    repo_basename = info.repository.rsplit("/", 1)[-1]
+
+    if info.ref_type == "tag":
+        chosen_tag = local_tag or info.ref_value  # type: ignore[arg-type]
+        remote_ref = f"{info.registry}/{info.repository}:{chosen_tag}"
+    else:
+        # Digest or none -> must pick a tag to push
+        if local_tag:
+            chosen_tag = local_tag
+        elif info.ref_type == "digest" and info.ref_value:
+            short = info.ref_value.split(":")[1][:12]
+            chosen_tag = f"repro-{short}"
+        else:
+            chosen_tag = "latest"
+        remote_ref = f"{info.registry}/{info.repository}:{chosen_tag}"
+
+    # Login command differs for public vs private ECR
+    if info.is_public:
+        login = (
+            f"aws ecr-public get-login-password --region {info.region} | "
+            f"docker login --username AWS --password-stdin {info.registry}"
+        )
+    else:
+        login = (
+            f"aws ecr get-login-password --region {info.region} | "
+            f"docker login --username AWS --password-stdin {info.registry}"
+        )
+
+    build = f"docker build -t {repo_basename}:{chosen_tag} ."
+
+    # If original had a tag and the tag matches chosen_tag and the registry/repo are the same,
+    # we *could* build directly to remote_ref to skip the extra `docker tag`. Keeping the
+    # explicit tag step for clarity/parity with AWS console snippets.
+    tag_cmd = f"docker tag {repo_basename}:{chosen_tag} {remote_ref}"
+    push = f"docker push {remote_ref}"
+
+    # If the original reference included a digest, add a comment to signal the mismatch.
+    digest_note = ""
+    if info.ref_type == "digest":
+        digest_note = (
+            "# Note: original task definition pinned by digest; pushing by tag.\n"
+            "#       Consider updating the task definition to a tag or re-pinning to the new digest after push.\n"
+        )
+
+    return "\n".join([login, digest_note + build, tag_cmd, push]).strip()
 
 
 def summarize_task_description(task):
@@ -43,8 +193,10 @@ def ls_tasks(
     task_arn: str | None = None,
     client: Optional[botocore.client.BaseClient] = None,
     session: Optional[boto3.Session] = None,
-    status: Collection[Literal["RUNNING", "STOPPED"]]
-    | Literal["RUNNING", "STOPPED"] = ("RUNNING", "STOPPED"),
+    status: (
+        Collection[Literal["RUNNING", "STOPPED"]]
+        | Literal["RUNNING", "STOPPED"]
+    ) = ("RUNNING", "STOPPED"),
     tag_regex: bool = True,
     raw_filters: dict[str, Any] | None = None,
     **tag_filters: str,
@@ -73,14 +225,12 @@ def ls_tasks(
             arns += client.list_tasks(cluster=c, **filts, desiredStatus=s)[
                 "taskArns"
             ]
-        if arns is None:
+        if not arns:
             continue
         if task_arn is not None and task_arn not in arns:
             continue
         elif task_arn is not None:
             arns = [a for a in arns if a == task_arn]
-        tasks = []
-
         tasks = client.describe_tasks(cluster=c, tasks=arns, include=["TAGS"])[
             "tasks"
         ]
@@ -114,6 +264,13 @@ def ls_tasks(
 
 
 class ECSTask:
+    """
+    Class providing a minimal interface to a running task.
+
+    NOTE: like other objects in this module, this class assumes that one and
+        only one container is associated with each task.
+    """
+
     def __init__(self, summary, session=None):
         self.summary = summary.copy()
         self.cluster_arn = summary["cluster_arn"]
@@ -206,18 +363,7 @@ class ECSTask:
            to push this image
         """
         image_uri = self.definition["containerDefinitions"][0]["image"]
-        image_name = image_uri.split("/")[-1].split(":")[0]
-        image_tag = image_uri.split("/")[-1]
-        region = self.ecs._client_config.region_name
-        endpoint = image_uri.split('/')[0]
-        auth_token_cmd = (
-            f"aws ecr get-login-password --region {region} | "
-            f"docker login --username AWS --password-stdin {endpoint}"
-        )
-        build_cmd = f"docker build -t {image_name} ."
-        tag_cmd = f"docker tag {image_tag} {image_uri}"
-        push_cmd = f"docker push {image_uri}"
-        return "\n".join([auth_token_cmd, build_cmd, tag_cmd, push_cmd])
+        return docker_push_commands_for_ecr(image_uri)
 
     def stop(self):
         """
