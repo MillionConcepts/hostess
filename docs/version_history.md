@@ -1,5 +1,11 @@
 # Version History
 
+## [0.11.3] - 2025-08-19
+
+- Adds `hostess.aws.ecs`, which offers some simple convenience functionality
+  for inspecting and managing ECS tasks. This module will likely be
+  significantly expanded in the future. 
+
 ## [0.11.2] - 2025-05-18
 
 - Assorted cleanup, refactoring, and bugfixes in `aws.s3`.`
