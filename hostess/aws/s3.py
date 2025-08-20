@@ -208,7 +208,8 @@ AZ_NAMEPAT = re.compile(r"[a-z]{2}-[a-z]{3,10}-\d(?P<letter>[a-z])")
 AZ_IDPAT = re.compile(r"[a-z]{3}\d-az(?P<number>\d)")
 """Legal AZ id"""
 BUCKET_TYPE = Literal["general", "directory"]
-
+"""Pull account ID of owner out of directory bucket ARN"""
+DIRECTORY_BUCKET_ARN_ACCOUNTPAT = re.compile(r".*?:(\d+):bucket/")
 
 def _should_be_file(obj, literal_str):
     return (
@@ -372,6 +373,7 @@ class Bucket:
         """
         self.client = init_client("s3", client, session)
         self.resource = init_resource("s3", resource, session)
+        self.session = session
         self.name = bucket_name
         self.contents = []
         if config is None:
@@ -442,8 +444,6 @@ class Bucket:
             have the ListBuckets permission to use `Bucket.create()` in
             us-east-1.
         """
-        if tags is not None and bucket_type == "directory":
-            raise ValueError("Directory buckets do not support tags.")
         client = init_client("s3", client, session)
         if bucket_type not in ("general", "directory"):
             raise ValueError("'bucket_type' must be 'general' or 'directory'.")
@@ -1061,33 +1061,48 @@ class Bucket:
         return resp
 
     @cached_property
+    def _buckethead(self):
+        """
+        Cached response to HeadBucket call against this bucket. Not currently
+        formatted in an interesting way for public use.
+        """
+        return self.client.head_bucket(Bucket=self.name)
+
+    @cached_property
     def bucket_type(self) -> BUCKET_TYPE:
         """
         Top-level type of bucket, 'general' or 'directory'. Does not
         distinguish directory bucket subtypes.
         """
-        head = self.client.head_bucket(Bucket=self.name)
-        if 'BucketLocationType' in head:
+        if 'BucketLocationType' in self._buckethead:
             return 'directory'
         return 'general'
+
+    def _s3c_kwargs(self):
+        """Produces a dict containing kwargs s3control actions want."""
+        arn = self._buckethead["BucketArn"]
+        account_id = DIRECTORY_BUCKET_ARN_ACCOUNTPAT.search(arn).group(1)
+        return {'AccountId': account_id, 'ResourceArn': arn}
+
+    def _directory_bucket_tagrecs(self):
+        if self.bucket_type != "directory":
+            raise ValueError(
+                "Don't call this method on general-purpose buckets"
+            )
+        s3c = init_client("s3control", None, self.session)
+        return s3c.list_tags_for_resource(**self._s3c_kwargs()).get('Tags', [])
 
     @cached_property
     def tags(self) -> dict:
         """
         Bucket tags represented as a dict. If there are no tags, returns
-        an empty dict. Note that directory buckets do not support tags;
-        attempting to access this attribute for a directory bucket will
-        raise a ValueError.
+        an empty dict.
         """
-        try:
-            response = self.client.get_bucket_tagging(Bucket=self.name)
-        except ClientError as ce:
-            if "NoSuchTagSet" in str(ce):
-                return {}
-            if "MethodNot" in str(ce) and self.bucket_type == "directory":
-                raise ValueError("Directory buckets do not support tags.")
-            raise ce
-        return {rec["Key"]: rec["Value"] for rec in response['TagSet']}
+        if self.bucket_type == "directory":
+            recs = self._directory_bucket_tagrecs()
+        else:
+            recs = self.client.get_bucket_tagging(Bucket=self.name)['TagSet']
+        return {rec["Key"]: rec["Value"] for rec in recs}
 
     def set_tags(self, *, replace_all: bool = False, **tags: str):
         """
@@ -1097,34 +1112,36 @@ class Bucket:
             replace_all: if True, removes _all_ existing tags along with
                 setting passed tag values (this is the default behavior of the
                 PutBucketTagging API operation). If False, leaves existing
-                tags unchanged unless they are redefined in `tags`.
+                tags unchanged unless they are redefined in `tags`. Raises
+                a ValueError if passed for a directory bucket, because the
+                API call required to set tags behaves entirely differently,
+                and we do not wish to implement that behavior here.
             **tags: Argument names are tag keys; argument values are tag
                 values. At least one tag must be defined.
 
         Returns:
             API response for PutBucketTagging operation.
-
-        Note:
-            AWS directory buckets do not support tags. Calling this method for
-            a directory bucket will raise a ValueError.
         """
         if len(tags) == 0:
             raise ValueError("No tags to set")
         if not all(isinstance(x, str) for x in tags.values()):
             raise TypeError("Tag values must be strings")
+        if replace_all is True and self.bucket_type == 'directory':
+            raise ValueError(
+                "replace_all=True not supported for directory buckets."
+            )
         if replace_all is False:
             tags = self.tags | tags
-        try:
-            response = self.client.put_bucket_tagging(
-                Bucket=self.name,
-                Tagging={
-                    'TagSet': [{'Key': k, 'Value': v} for k, v in tags.items()]
-                }
+        tagset = [{'Key': k, 'Value': v} for k, v in tags.items()]
+        if self.bucket_type == "directory":
+            s3c = init_client("s3control", None, self.session)
+            response = s3c.tag_resource(
+                **self._s3c_kwargs(), Tags=tagset
             )
-        except ClientError as ce:
-            if "BucketConfig" in str(ce) and self.bucket_type == "directory":
-                raise ValueError("Directory buckets do not support tags.")
-            raise ce
+        else:
+            response = self.client.put_bucket_tagging(
+                Bucket=self.name, Tagging={'TagSet': tagset}
+            )
         try:
             # noinspection PyPropertyAccess
             del self.tags
