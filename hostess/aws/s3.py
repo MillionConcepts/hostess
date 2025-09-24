@@ -886,7 +886,12 @@ class Bucket:
         """
         # TODO: add more useful error messages for streams opened in text mode
         config = self.config if config is None else config
-        dest = BytesIO() if destination is None else destination
+        if destination is None:
+            dest = BytesIO()
+        elif isinstance(destination, Path):
+            dest = str(destination)
+        else:
+            dest = destination
         start_byte = None if start_byte == 0 else start_byte
         args, kwargs = (self.name, key, dest), {'extra_args': extra_args}
         if start_byte is not None or end_byte is not None:
