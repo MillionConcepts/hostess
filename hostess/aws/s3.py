@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import (
     Any,
     IO,
+    Iterable,
     Iterator,
     Literal,
     Mapping,
@@ -78,13 +79,94 @@ BMethTwoList = Callable[
 ]
 
 
-def split_threaded(method, bucket, seq_iter, bound):
+def is_split_sequence(value):
+    return hasattr(value, "index") and not isinstance(value, (str, bytes))
+
+
+def validate_splittable(sig, splittable, reserved):
+    names = tuple(dict.fromkeys(splittable or ()))
+
+    missing = [name for name in names if name not in sig.parameters]
+    if missing:
+        raise TypeError(
+            f"splittable arguments not in signature: {', '.join(missing)}"
+        )
+
+    conflicts = [name for name in names if name in reserved]
+    if conflicts:
+        raise TypeError(
+            f"splittable arguments already handled by seq_arity: "
+            f"{', '.join(conflicts)}"
+        )
+
+    posonly = [
+        name for name in names
+        if sig.parameters[name].kind is inspect.Parameter.POSITIONAL_ONLY
+    ]
+    if posonly:
+        raise TypeError(
+            f"splittable arguments cannot be positional-only: "
+            f"{', '.join(posonly)}"
+        )
+
+    return names
+
+
+def split_optional_kwargs(bound, splittable, split_len):
+    """
+    Remove splittable kwargs from bound and return an iterator of per-call
+    kwarg patches.
+
+    Scalar values repeat.
+    Sequence values split item-by-item.
+    Missing values remain missing, so normal defaults still work.
+    """
+    per_item = {}
+
+    for name in splittable:
+        if name not in bound:
+            continue
+
+        value = bound.pop(name)
+
+        if is_split_sequence(value):
+            if len(value) != split_len:
+                raise ValueError(f"Mismatched {name!r} sequence length")
+            per_item[name] = iter(value)
+        else:
+            per_item[name] = repeat(value, split_len)
+
+    if not per_item:
+        return ({} for _ in range(split_len))
+
+    keys = tuple(per_item)
+
+    return (
+        dict(zip(keys, values))
+        for values in zip(*(per_item[name] for name in keys))
+    )
+
+
+def call_iter_with_optional_kwargs(seq_iter, bound, splittable, split_len):
+    optional_iter = split_optional_kwargs(bound, splittable, split_len)
+
+    return (
+        (pre, {**bound, **optional})
+        for pre, optional in zip(seq_iter, optional_iter)
+    )
+
+
+def split_threaded(method, bucket, call_iter):
     output = []
+
     with ThreadPoolExecutor(bucket.n_threads) as exc:
         futures = [
-            exc.submit(method, bucket, *pre, **bound) for pre in seq_iter
+            exc.submit(method, bucket, *pre, **bound)
+            for pre, bound in call_iter
         ]
+
         concurrent.futures.wait(futures)
+
         # loop over the original list rather than what .wait returns,
         # to preserve the original order
         for f in futures:
@@ -92,96 +174,156 @@ def split_threaded(method, bucket, seq_iter, bound):
                 output.append(f.result())
             except BaseException as ex:
                 output.append(ex)
+
     return output
 
 
-def split_sequential(method, bucket, seq_iter, bound):
+def split_sequential(method, bucket, call_iter):
     output = []
-    for pre in seq_iter:
+
+    for pre, bound in call_iter:
         try:
             output.append(method(bucket, *pre, **bound))
         except Exception as ex:
             output.append(ex)
+
     return output
 
 
-def splitwrap_arity_1(method: BMethOne) -> BMethOneList:
+def splitwrap_arity_1(
+    method: BMethOne,
+    *,
+    splittable: Iterable[str] = (),
+) -> BMethOneList:
     sig = inspect.signature(method)
     params = list(sig.parameters)
     defaults = {n: p.default for n, p in sig.parameters.items()}
+
+    splittable = validate_splittable(
+        sig,
+        splittable,
+        reserved={params[0], params[1]},
+    )
 
     @wraps(method)
     def maybesplit_arity_1(*args, **kwargs):
         bound = sig.bind(*args, **kwargs).arguments
+
         source = bound.get(params[1], defaults[params[1]])
-        sseq = hasattr(source, "index") and not isinstance(
-            source, (str, bytes)
-        )
+        sseq = is_split_sequence(source)
+
         if sseq is False:
             return method(*args, **kwargs)
+
+        sseq_len = len(source)
         seq_iter = ((x,) for x in source)
+
         bound.pop(params[1])
         bucket = bound.pop(params[0])
+
+        call_iter = call_iter_with_optional_kwargs(
+            seq_iter,
+            bound,
+            splittable,
+            sseq_len,
+        )
+
         if bucket.n_threads is None:
-            return split_sequential(method, bucket, seq_iter, bound)
+            return split_sequential(method, bucket, call_iter)
         else:
-            return split_threaded(method, bucket, seq_iter, bound)
+            return split_threaded(method, bucket, call_iter)
+
     return maybesplit_arity_1
 
 
-def splitwrap_arity_2(method: BMethTwo) -> BMethTwoList:
+def splitwrap_arity_2(
+    method: BMethTwo,
+    *,
+    splittable: Iterable[str] = (),
+) -> BMethTwoList:
     sig = inspect.signature(method)
     params = list(sig.parameters)
     defaults = {n: p.default for n, p in sig.parameters.items()}
 
+    splittable = validate_splittable(
+        sig,
+        splittable,
+        reserved={params[0], params[1], params[2]},
+    )
+
     @wraps(method)
     def maybesplit_arity_2(*args, **kwargs):
         bound = sig.bind(*args, **kwargs).arguments
+
         source = bound.get(params[1], defaults[params[1]])
         target = bound.get(params[2], defaults[params[2]])
-        sseq = hasattr(source, "index") and not isinstance(
-            source, (str, bytes)
-        )
+
+        sseq = is_split_sequence(source)
         sseq_len = len(source) if sseq else -1
+
         if target is None:
             tseq = sseq
             tseq_len = sseq_len
+
             if sseq:
                 target = repeat(target, tseq_len)
         else:
-            tseq = hasattr(target, "index") and not isinstance(
-                target, (str, bytes)
-            )
+            tseq = is_split_sequence(target)
             tseq_len = len(target) if tseq else -1
+
         if tseq != sseq:
             raise TypeError("Mismatched sequence/nonsequence call")
+
         if not sseq:
             return method(*args, **kwargs)
+
         if tseq_len != sseq_len:
             raise ValueError("Mismatched source/target sequence lengths")
+
         seq_iter = zip(source, target)
+
         bound.pop(params[1])
         bound.pop(params[2], None)
         bucket = bound.pop(params[0])
+
+        call_iter = call_iter_with_optional_kwargs(
+            seq_iter,
+            bound,
+            splittable,
+            sseq_len,
+        )
+
         if bucket.n_threads is None:
-            return split_sequential(method, bucket, seq_iter, bound)
+            return split_sequential(method, bucket, call_iter)
         else:
-            return split_threaded(method, bucket, seq_iter, bound)
+            return split_threaded(method, bucket, call_iter)
+
     return maybesplit_arity_2
 
 
 @overload
 def splitwrap(
-    *, seq_arity: Literal[1]
+    *,
+    seq_arity: Literal[1],
+    splittable: Iterable[str] = (),
 ) -> Callable[[BMethOne], BMethOneList]: ...
+
+
 @overload
 def splitwrap(
-    *, seq_arity: Literal[2]
+    *,
+    seq_arity: Literal[2],
+    splittable: Iterable[str] = (),
 ) -> Callable[[BMethTwo], BMethTwoList]: ...
 
 
-def splitwrap(*, seq_arity: Literal[1, 2]) -> (
-    Callable[[BMethOne], BMethOneList] | Callable[[BMethTwo], BMethTwoList]
+def splitwrap(
+    *,
+    seq_arity: Literal[1, 2],
+    splittable: Iterable[str] = (),
+) -> (
+    Callable[[BMethOne], BMethOneList]
+    | Callable[[BMethTwo], BMethTwoList]
 ):
     """
     Decorator for methods of Bucket that permits them to accept either single
@@ -189,13 +331,24 @@ def splitwrap(*, seq_arity: Literal[1, 2]) -> (
     maps sequences into a thread pool, unless instructed to run serially,
     and returns all results in a list. Fails gracefully, returning Exceptions
     raised by any individual function call rather than raising them.
-    """
-    if seq_arity == 1:
-        return splitwrap_arity_1
-    elif seq_arity == 2:
-        return splitwrap_arity_2
-    raise ValueError(f'seq_arity must be 1 or 2, not {seq_arity!r}')
 
+    Extra named arguments listed in splittable may be either scalar or sequence.
+    Scalars are repeated for every split call. Sequences are split item-by-item.
+    """
+
+    if seq_arity == 1:
+        return lambda method: splitwrap_arity_1(
+            method,
+            splittable=splittable,
+        )
+
+    elif seq_arity == 2:
+        return lambda method: splitwrap_arity_2(
+            method,
+            splittable=splittable,
+        )
+
+    raise ValueError(f"seq_arity must be 1 or 2, not {seq_arity!r}")
 
 DIRECTORY_BUCKET_NAMEPAT = re.compile(
     r"[a-z0-9-.]{1,45}--[a-z]{3}\d-az\d--x-s3"
@@ -777,13 +930,14 @@ class Bucket:
             Bucket=self.name, Key=key, RestoreRequest=restore_request
         )
 
-    @splitwrap(seq_arity=2)
+    @splitwrap(seq_arity=2, splittable=["checksum"])
     def put(
         self,
         obj: Union[Puttable, Sequence[Puttable]] = b"",
         key: Optional[Union[str, Sequence[str]]] = None,
         literal_str: bool = False,
         config: Optional[boto3.s3.transfer.TransferConfig] = None,
+        checksum: Optional[Union[str, Sequence[str]]] = None,
         **extra_args: str
     ) -> Union[None, list[Optional[Exception]]]:
         """
@@ -801,6 +955,10 @@ class Bucket:
                 containing strings, write all such strings directly to objects.
                 Otherwise, interpret them as paths to local files
             config: boto3.s3.transfer.TransferConfig; bucket's default if None
+            checksum: Optional base64-encoded raw 4-byte CRC32 checksum of
+                object, or sequence of such checksums for each object. Used
+                for full-object S3 checksum verification. Other checksum
+                types and algorithms are not supported.
             extra_args: ExtraArgs for boto3 bucket object
 
         Returns:
@@ -811,6 +969,13 @@ class Bucket:
         # If S3 key was not specified, use string rep of
         # passed object, up to 1024 characters
         key = str(obj)[:1024] if key is None else key
+        if checksum is not None:
+            extra_args |= {
+                "ChecksumAlgorithm": "CRC32",
+                "ChecksumCRC32": checksum,
+                "ChecksumType": "FULL_OBJECT"
+            }
+
         base_kwargs = {
             "Bucket": self.name,
             "Key": key,

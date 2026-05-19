@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import base64
 import csv
 import datetime as dt
+import struct
+import zlib
 from operator import contains
 from pathlib import Path
 import re
@@ -410,3 +413,24 @@ def _clear_cached_results(folder: Path, pre: str):
     """
     for result in filter(lambda p: p.name.startswith(pre), folder.iterdir()):
         result.unlink()
+
+
+def crc32_base64(path: Union[Path, str]) -> str:
+    """
+    Checksum a file the way S3 likes: base64-encoded 32-bit CRC32 bytes,
+    MSB.
+
+    Args:
+        path: Path to file to checksum.
+
+    Returns:
+        Base64-encoded raw CRC32 bytes, suitable for passing as
+        `Bucket.put()`'s `checksum` argument.
+    """
+    crc = 0
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            crc = zlib.crc32(chunk, crc)
+    return (
+        base64.b64encode(struct.pack(">I", crc & 0xFFFFFFFF)).decode("ascii")
+    )
