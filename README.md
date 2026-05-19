@@ -76,7 +76,7 @@ to `pytest`. They will only run successfully if the available AWS credentials
 are valid and if their associated account has the required permissions: 
 ListObjectsV2, CreateBucket, DeleteBucket, GetObject, PutObject, DeleteObject, 
 HeadObject, DescribeInstances, CreateFleet, StartInstances, StopInstances, 
-TerminateInstances, CreateLaunchTemplate, and DeleteLaunchTemplete. 
+TerminateInstances, CreateLaunchTemplate, and DeleteLaunchTemplate. 
 
 **Warning**:
 If the available AWS account has permissions to create but 
