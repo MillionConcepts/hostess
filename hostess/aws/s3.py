@@ -1335,7 +1335,9 @@ class Bucket:
             a multi-object call, a list containing a dict for each
             successful head and an Exception for each failed
         """
-        response = self.client.head_object(Bucket=self.name, Key=key)
+        response = self.client.head_object(
+            Bucket=self.name, Key=key, ChecksumMode="ENABLED"
+        )
         headers = response["ResponseMetadata"].get("HTTPHeaders", {})
         interesting_responses = (
             "ContentLength",
@@ -1352,7 +1354,10 @@ class Bucket:
             "x-amz-restore-tier",
         )
         head_dict = {}
-        head_dict |= keyfilter(lambda k: k in interesting_responses, response)
+        head_dict |= keyfilter(
+            lambda k: k in interesting_responses or k.startswith("Checksum"),
+            response
+        )
         head_dict |= keyfilter(lambda k: k in interesting_headers, headers)
         if "LastModified" in head_dict:
             head_dict["LastModified"] = head_dict["LastModified"].isoformat()
