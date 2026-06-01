@@ -291,7 +291,9 @@ class ECSTask:
         self.definition = definition_from_summary(self.ecs, self.summary)
 
     def update(self):
-        listing = ls_tasks(cluster=self.cluster_arn, task_arn=self.task_arn)
+        listing = ls_tasks(
+            cluster=self.cluster_arn, task_arn=self.task_arn, client=self.ecs
+        )
         if not listing:
             self.status = "MISSING"
             self.summary["status"] = "MISSING"
