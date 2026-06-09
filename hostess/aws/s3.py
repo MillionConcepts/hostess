@@ -412,7 +412,7 @@ def _poll_obj(
             with destination.open(mode) as stream:
                 stream.write(result)
         else:
-            stream.write(result)
+            destination.write(result)
         time.sleep(poll)
 
 
